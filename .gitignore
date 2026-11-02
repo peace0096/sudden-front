@@ -1,0 +1,5 @@
+server/target/
+client/node_modules/
+client/dist/
+client/src/gen/
+client/e2e-shots/

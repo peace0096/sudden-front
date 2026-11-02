@@ -1,0 +1,446 @@
+syntax = "proto3";
+
+package game.v1;
+
+// ---------------------------------------------------------------- enums
+
+enum Team {
+  TEAM_UNSPECIFIED = 0;
+  TEAM_RED = 1;
+  TEAM_BLUE = 2;
+}
+
+enum RoomPhase {
+  ROOM_PHASE_UNSPECIFIED = 0;
+  ROOM_PHASE_WAITING = 1;
+  ROOM_PHASE_IN_GAME = 2;
+}
+
+enum WeaponKind {
+  WEAPON_KIND_UNSPECIFIED = 0;
+  WEAPON_KIND_RIFLE = 1;
+  WEAPON_KIND_SNIPER = 2;
+  WEAPON_KIND_MACHINE_GUN = 3;
+  WEAPON_KIND_SMG = 4;
+  WEAPON_KIND_PISTOL = 5;
+  WEAPON_KIND_KNIFE = 6;
+  WEAPON_KIND_SHOTGUN = 7;
+  WEAPON_KIND_MISSILE = 8;
+  WEAPON_KIND_PISTOL_PLUS = 9;
+  WEAPON_KIND_MAGNUM = 10;
+  WEAPON_KIND_AKIMBO_SMG = 11;
+  WEAPON_KIND_TASER = 12;
+}
+
+enum GameMode {
+  GAME_MODE_UNSPECIFIED = 0;
+  GAME_MODE_NORMAL = 1;
+  GAME_MODE_AUGMENT = 2;
+}
+
+enum AugmentGrade {
+  AUGMENT_GRADE_UNSPECIFIED = 0;
+  AUGMENT_GRADE_SILVER = 1;
+  AUGMENT_GRADE_GOLD = 2;
+  AUGMENT_GRADE_PRISM = 3;
+}
+
+enum Augment {
+  AUGMENT_UNSPECIFIED = 0;
+  AUGMENT_INFINITE_AMMO = 1;
+  AUGMENT_SOUL_DRAIN = 2;
+  AUGMENT_PISTOL_UPGRADE = 3;
+  AUGMENT_QUICK_RELOAD = 4;
+  AUGMENT_SHOTGUN = 5;
+  AUGMENT_REST = 6;
+  AUGMENT_SHIELD = 7;
+  AUGMENT_SMALL_HEAD = 8;
+  AUGMENT_WALLHACK = 9;
+  AUGMENT_POSSESSION = 10;
+  AUGMENT_NO_RECOIL = 11;
+  AUGMENT_BORROW = 12;
+  AUGMENT_MISSILE = 13;
+  AUGMENT_MAGNUM = 14;
+  AUGMENT_BIG_HEAD = 15;
+  AUGMENT_VEST = 16;
+  AUGMENT_AKIMBO = 17;
+  AUGMENT_DOUBLE_TIME = 18;
+  AUGMENT_TASER = 19;
+}
+
+enum MapId {
+  MAP_ID_UNSPECIFIED = 0;
+  MAP_ID_SUPPLY_YARD = 1;
+  MAP_ID_WAREHOUSE = 2;
+}
+
+enum HitZone {
+  HIT_ZONE_UNSPECIFIED = 0;
+  HIT_ZONE_HEAD = 1;
+  HIT_ZONE_BODY = 2;
+  HIT_ZONE_LEGS = 3;
+}
+
+enum BoxKind {
+  BOX_KIND_UNSPECIFIED = 0;
+  BOX_KIND_BRICK = 1;
+  BOX_KIND_CONCRETE = 2;
+  BOX_KIND_CONTAINER_BLUE = 3;
+  BOX_KIND_CONTAINER_GRAY = 4;
+  BOX_KIND_CONTAINER_RUST = 5;
+  BOX_KIND_CRATE = 6;
+  BOX_KIND_BARREL = 7;
+  BOX_KIND_ROOF = 8;
+  BOX_KIND_CONTAINER_PALE = 9;
+  // Collides and stops bullets but draws nothing; a prop supplies the visuals.
+  BOX_KIND_INVISIBLE = 10;
+}
+
+enum PropKind {
+  PROP_KIND_UNSPECIFIED = 0;
+  PROP_KIND_SHUTTER = 1;
+  PROP_KIND_BILLBOARD = 2;
+  PROP_KIND_LAMP = 3;
+  PROP_KIND_WINDOW = 4;
+  PROP_KIND_CEILING_LIGHT = 5;
+  PROP_KIND_FLOOR_LINE = 6;
+  PROP_KIND_TRUSS = 7;
+  PROP_KIND_LOUVER = 8;
+  PROP_KIND_TILTED_CONTAINER = 9;
+}
+
+// ---------------------------------------------------------------- client -> server
+
+message ClientMessage {
+  oneof payload {
+    Hello hello = 1;
+    CreateRoom create_room = 2;
+    JoinRoom join_room = 3;
+    LeaveRoom leave_room = 4;
+    SwitchTeam switch_team = 5;
+    StartGame start_game = 6;
+    InputBatch input = 7;
+    Ping ping = 8;
+    SelectWeapon select_weapon = 9;
+    PickAugment pick_augment = 10;
+    RefreshAugments refresh_augments = 11;
+    SetKillsToWin set_kills_to_win = 12;
+  }
+}
+
+message Hello { string name = 1; }
+message CreateRoom {
+  string name = 1;
+  bool fill_bots = 2;
+  MapId map = 3;
+  GameMode mode = 4;
+}
+message SetKillsToWin { uint32 kills = 1; }
+message PickAugment { Augment augment = 1; }
+message RefreshAugments { uint32 slot = 1; }
+message SelectWeapon { WeaponKind weapon = 1; }
+message JoinRoom { uint32 room_id = 1; }
+message LeaveRoom {}
+message SwitchTeam {}
+message StartGame {}
+message Ping { double client_time = 1; }
+
+message InputBatch { repeated InputCmd cmds = 1; }
+
+// One fixed 1/60 s simulation step of a player's input.
+message InputCmd {
+  uint32 seq = 1;
+  bool forward = 2;
+  bool back = 3;
+  bool left = 4;
+  bool right = 5;
+  bool fire = 6;
+  bool reload = 7;
+  float yaw = 8;
+  float pitch = 9;
+  // Server tick the client was rendering remote players at (lag compensation).
+  uint32 render_tick = 10;
+  // Looking through the scope (only meaningful for weapons that have one).
+  bool aim = 11;
+  // Weapon slot to switch to first: 1 primary, 2 pistol, 3 knife, 0 no change.
+  uint32 slot = 12;
+  bool crouch = 13;
+}
+
+// ---------------------------------------------------------------- server -> client
+
+message ServerMessage {
+  oneof payload {
+    Welcome welcome = 1;
+    RoomList room_list = 2;
+    RoomState room_state = 3;
+    LeftRoom left_room = 4;
+    ErrorMessage error = 5;
+    MatchStart match_start = 6;
+    Snapshot snapshot = 7;
+    RosterUpdate roster_update = 8;
+    MatchEnd match_end = 9;
+    Pong pong = 10;
+  }
+}
+
+message Welcome {
+  uint32 player_id = 1;
+  string name = 2;
+  repeated WeaponStats weapons = 3;
+}
+
+message WeaponStats {
+  WeaponKind kind = 1;
+  string name = 2;
+  uint32 magazine = 3;
+  uint32 reserve = 4;
+  float fire_interval = 5;
+  float reload_time = 6;
+  float move_speed = 7;
+  int32 damage_head = 8;
+  int32 damage_body = 9;
+  int32 damage_legs = 10;
+  float spread_still = 11;
+  float spread_moving = 12;
+  float bloom_per_shot = 13;
+  float bloom_max = 14;
+  bool has_scope = 15;
+  // Reach in metres for melee weapons, 0 for guns.
+  float melee_range = 16;
+  // Projectiles per shot; 0 means one.
+  uint32 pellets = 17;
+  // Reloads a round at a time and can fire between rounds.
+  bool shell_reload = 18;
+  // Blast radius in metres for explosive weapons, 0 for others.
+  float splash_radius = 19;
+}
+
+message RoomInfo {
+  uint32 id = 1;
+  string name = 2;
+  string host_name = 3;
+  uint32 player_count = 4;
+  uint32 max_players = 5;
+  RoomPhase phase = 6;
+  bool fill_bots = 7;
+  MapId map = 8;
+  GameMode mode = 9;
+  uint32 kills_to_win = 10;
+}
+
+message RoomList { repeated RoomInfo rooms = 1; }
+
+message RoomPlayer {
+  uint32 id = 1;
+  string name = 2;
+  Team team = 3;
+  bool is_host = 4;
+  WeaponKind weapon = 5;
+}
+
+message RoomState {
+  RoomInfo room = 1;
+  repeated RoomPlayer players = 2;
+}
+
+message LeftRoom {}
+message ErrorMessage { string message = 1; }
+message Pong { double client_time = 1; }
+
+message RosterEntry {
+  uint32 id = 1;
+  string name = 2;
+  Team team = 3;
+  bool is_bot = 4;
+}
+
+message RosterUpdate { repeated RosterEntry roster = 1; }
+
+message MapBox {
+  BoxKind kind = 1;
+  float min_x = 2;
+  float max_x = 3;
+  float min_y = 4;
+  float max_y = 5;
+  float min_z = 6;
+  float max_z = 7;
+}
+
+message MapProp {
+  PropKind kind = 1;
+  float x = 2;
+  float y = 3;
+  float z = 4;
+  float rotation = 5;
+  float width = 6;
+  float height = 7;
+}
+
+message MapData {
+  string name = 1;
+  MapId id = 6;
+  float half_x = 2;
+  float half_z = 3;
+  repeated MapBox boxes = 4;
+  repeated MapProp props = 5;
+}
+
+message GameConfig {
+  uint32 tick_rate = 1;
+  uint32 kills_to_win = 2;
+  float player_half_width = 3;
+  float player_height = 4;
+  float eye_height = 5;
+  float respawn_time = 6;
+  repeated WeaponStats weapons = 7;
+  float draw_time = 8;
+  float crouch_eye_height = 9;
+  float crouch_speed_factor = 10;
+  float crouch_spread_factor = 11;
+  int32 max_hp = 12;
+  GameMode mode = 13;
+  float start_wait = 14;
+}
+
+message MatchStart {
+  uint32 your_id = 1;
+  GameConfig config = 2;
+  MapData map = 3;
+  repeated RosterEntry roster = 4;
+}
+
+message PlayerState {
+  uint32 id = 1;
+  float x = 2;
+  float z = 3;
+  float yaw = 4;
+  float pitch = 5;
+  int32 hp = 6;
+  bool alive = 7;
+  bool moving = 8;
+  bool reloading = 9;
+  bool protected = 10;
+  float respawn_in = 11;
+  uint32 kills = 12;
+  uint32 deaths = 13;
+  WeaponKind weapon = 14;
+  bool crouching = 15;
+  Augment augment = 16;
+  int32 shield_hp = 17;
+  float head_scale = 18;
+  // What actually applies: the card, or the two Double Time drew.
+  repeated Augment active = 19;
+  // Seconds of paralysis left.
+  float stun_left = 20;
+}
+
+message ShotEvent {
+  uint32 shooter_id = 1;
+  float from_x = 2;
+  float from_y = 3;
+  float from_z = 4;
+  float to_x = 5;
+  float to_y = 6;
+  float to_z = 7;
+  // 0 when the shot hit the world or nothing.
+  uint32 hit_player_id = 8;
+  bool hit_world = 9;
+  bool melee = 10;
+  // A shotgun's extra projectile: shares the first one's sound and flash.
+  bool pellet = 11;
+  bool explosive = 12;
+}
+
+message DamageEvent {
+  uint32 attacker_id = 1;
+  uint32 victim_id = 2;
+  int32 amount = 3;
+  HitZone zone = 4;
+  // The damage went into the victim's shield.
+  bool shield = 5;
+}
+
+message KillEvent {
+  uint32 killer_id = 1;
+  uint32 victim_id = 2;
+  bool headshot = 3;
+  WeaponKind weapon = 4;
+}
+
+message ReloadEvent { uint32 player_id = 1; }
+message RespawnEvent { uint32 player_id = 1; }
+message ExplosionEvent {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+// A projectile in flight, at this snapshot's moment.
+message Missile {
+  uint32 id = 1;
+  float x = 2;
+  float y = 3;
+  float z = 4;
+  float vx = 5;
+  float vy = 6;
+  float vz = 7;
+}
+
+message GameEvent {
+  oneof event {
+    ShotEvent shot = 1;
+    DamageEvent damage = 2;
+    KillEvent kill = 3;
+    ReloadEvent reload = 4;
+    RespawnEvent respawn = 5;
+    ExplosionEvent explosion = 6;
+  }
+}
+
+message Snapshot {
+  uint32 tick = 1;
+  // Per-recipient fields.
+  uint32 last_input_seq = 2;
+  uint32 magazine = 3;
+  uint32 reserve = 4;
+  float reload_remaining = 5;
+  // Shared fields.
+  uint32 red_score = 6;
+  uint32 blue_score = 7;
+  repeated PlayerState players = 8;
+  repeated GameEvent events = 9;
+  // Per-recipient: weapon used from the next spawn.
+  WeaponKind selected_weapon = 10;
+  // Per-recipient: the primary carried in this life.
+  WeaponKind primary_weapon = 11;
+  // Shared: seconds until the match starts.
+  float freeze_left = 12;
+  // Per-recipient: cards to choose from, empty once chosen.
+  repeated Augment offered = 13;
+  reserved 14;
+  WeaponKind sidearm_weapon = 15;
+  // Seconds left to choose a card; `freeze_left` starts counting after that.
+  float pick_left = 16;
+  // Seconds of play so far.
+  float clock = 17;
+  // For each card on offer, whether it can still be swapped.
+  repeated bool refreshable = 18;
+  repeated Missile missiles = 19;
+}
+
+message ScoreEntry {
+  uint32 id = 1;
+  string name = 2;
+  Team team = 3;
+  uint32 kills = 4;
+  uint32 deaths = 5;
+  bool is_bot = 6;
+}
+
+message MatchEnd {
+  Team winner = 1;
+  uint32 red_score = 2;
+  uint32 blue_score = 3;
+  repeated ScoreEntry scoreboard = 4;
+  float return_in = 5;
+}
