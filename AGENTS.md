@@ -1,0 +1,99 @@
+# AGENTS.md
+
+Sudden Front는 웹 브라우저에서 하는 1인칭 5대5 팀 데스매치 FPS(서든어택 스타일)입니다. 이 파일은 프로젝트 요약과 작업 규칙을 담습니다. 무기·증강 수치표, 프로토콜 필드 번호 같은 세부 사항은 [docs/](docs/README.md)에 정리되어 있어 여기에 옮겨 적지 않습니다. docs와 코드가 다르면 코드가 기준입니다.
+
+- **서버**: Rust, `bevy_ecs` 0.18(방마다 `World` 하나, 30Hz 틱), `axum` WebSocket, `prost`
+- **클라이언트**: TypeScript(strict), three.js, Vite, protobuf-es. 모델·텍스처·사운드를 모두 코드로 절차 생성(에셋 파일 없음)
+- **통신**: `proto/game.proto`(패키지 `game.v1`)의 메시지를 WebSocket `/ws` 바이너리 프레임 하나에 하나씩 전송
+- **판정**: 서버 권위. 클라이언트는 이동 예측·보정, 원격 플레이어 보간, 반동, 렌더링·HUD·사운드를 담당
+- **모드**: 일반모드(HP 100), 증강모드(HP 150, 시작 시 증강 카드 1장 선택)
+
+## 빌드·실행·검증
+
+Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@bufbuild/protoc-gen-es`와 Vite 8의 요구 버전). 각 명령은 적힌 폴더에서 실행합니다.
+
+1. **클라이언트 빌드** — `client/`에서 `npm ci` 후 `npm run build`. proto 코드 생성 → `tsc --noEmit` → `client/dist` 번들 순서로 돌며, 오류 없이 끝나면 완료입니다. 별도 lint 명령은 없으므로 TypeScript 변경은 이 명령으로 검사합니다. 의존성을 바꿀 때가 아니면 `npm install` 대신 `npm ci`를 씁니다. `npm install`은 npm 버전에 따라 `package-lock.json`을 고쳐 씁니다.
+2. **서버 실행** — `server/`에서 `cargo run --release`. `Sudden Front server: http://localhost:<포트>`가 출력되면 준비된 것입니다. 서버가 `/ws`와 `client/dist` 정적 파일을 함께 제공하며, 정적 파일 경로는 `CLIENT_DIST`로 바꿉니다.
+   - 포트: `PORT`가 없으면 8800, 사용 중이면 8801~8819 중 빈 포트로 열고 준비 줄 앞에 알려 줍니다. `PORT`를 지정하면 그 포트만 쓰고, 사용 중이면 한 줄 오류로 종료합니다(exit 1). 여러 서버를 띄우는 검증에서는 `PORT`를 직접 지정해 포트를 확정합니다.
+   - 클라이언트를 고치는 중에는 서버를 켠 채 `client/`에서 `npm run dev`로 http://localhost:5173 을 씁니다. Vite가 `/ws`를 `PORT`(없으면 8800)로 프록시하므로, 서버가 다른 포트로 열렸으면 같은 `PORT`를 주고 실행합니다.
+3. **서버 테스트** — `server/`에서 `cargo test --release`. 모두 통과하면 완료입니다. 게임 규칙 테스트는 `server/src/game/tests.rs`, 대기실 칸 배정 테스트는 `server/src/hub.rs`의 `tests` 모듈에 있으므로, 규칙을 바꾸면 해당 위치에 테스트를 추가하거나 고칩니다.
+4. **브라우저 e2e** — release 서버를 켠 상태에서 `client/`에서 `node e2e/<스크립트>.mjs [URL] [스크린샷 폴더]`(URL을 생략하면 `client/e2e/server.mjs`가 `PORT`(없으면 8800)로 만든 주소, 스크린샷 폴더 기본값은 `e2e-shots`). 종료 코드 0이면 통과이며, `SKIP`으로 출력된 항목은 검증되지 않은 것입니다. 스크립트별 검증 범위는 [docs/development.md](docs/development.md)에 있습니다.
+   - Microsoft Edge가 필요합니다. `playwright-core`가 `msedge` 채널의 headless Edge와 SwiftShader로 렌더링합니다. Edge가 없으면 스크립트를 `client/e2e/` 안에 임시 사본으로 복사해 `channel`만 `"chrome"` 등 설치된 브라우저로 바꿔 실행하고, 끝나면 사본을 지웁니다. 사본이 `client/e2e/` 안에 있어야 `playwright-core`를 찾습니다.
+   - 기본 URL은 Rust 서버가 제공하는 `client/dist`를 엽니다. 클라이언트를 고쳤으면 `npm run build`를 먼저 해야 새 코드가 테스트됩니다.
+   - 이전 서버 프로세스를 종료하고 새로 빌드한 서버를 띄웁니다. 남아 있으면 옛 바이너리로 테스트하게 되고, Windows에서는 exe가 잠겨 빌드가 실패합니다.
+
+## 작업 규칙
+
+1. **판정 규칙과 수치의 원본은 서버입니다.** 무기 스탯, 증강 효과, HP, 각종 시간은 `server/src/game/`에서 정하고, 클라이언트는 `MatchStart`의 `GameConfig`로 받은 값을 씁니다. 이유: 판정을 일관되게 하고 치트를 막습니다. 다만 클라이언트에는 예측·표시용으로 서버 값을 손으로 옮긴 사본이 있습니다: `client/src/game/game.ts`의 `MAX_PITCH`·`BLOOM_DECAY`·`BLOOM_HOLD_EXTRA`·`VEST_MAX_HP`·`BURST_*`와 `reloadTime()`의 장전 배율, `movement.ts`의 `CMD_DT`·`CONTACT_EPS`, `character.ts`의 `CROUCH_DROP`·방패 크기, `lobby.ts`의 `TEAM_SIZE`·`KILL_TARGETS`, `augments.ts`의 증강 등급과 설명 속 수치. 서버의 해당 값을 바꾸면 같은 변경에서 사본도 고칩니다. 이유: 사본이 어긋나도 컴파일 오류가 나지 않고, 예측·HUD만 서버 판정과 달라집니다.
+2. **이동 규칙은 서버와 클라이언트를 함께 고칩니다.** `server/src/game/physics.rs`의 `step_move`, `systems.rs` `consume_inputs`의 이동 부분, `client/src/game/movement.ts`는 규칙과 상수(`CONTACT_EPS` 등)가 같아야 합니다. 이유: 클라이언트 예측이 서버와 어긋나면 보정할 때 위치가 튑니다. 확인: `e2e/wall-rub.mjs`, `e2e/play.mjs`(예측 오차).
+3. **프로토콜은 `proto/game.proto`에서만 바꿉니다.** 서버는 `cargo build`가(`build.rs`, protoc 내장이라 따로 설치할 필요 없음), 클라이언트는 `npm run gen`(`dev`·`build`가 자동 실행)이 코드를 다시 만듭니다. 생성물(`client/src/gen/`, 서버 `OUT_DIR`)은 손대지 않습니다. 지운 필드 번호는 `reserved`로 남깁니다(예: `Snapshot`의 `reserved 14`). 이유: 옛 클라이언트와 번호가 충돌하지 않게 합니다.
+4. **봇의 이동·조준·사격·장전은 사람과 같은 `InputCmd` 큐로 넣습니다.** `server/src/game/bot.rs`의 `bot_think`가 명령을 만들어 넣으면 사람과 같은 시스템이 판정합니다. 새 봇 행동도 입력 생성으로 구현합니다. 이유: 규칙 구현을 하나로 유지합니다. 무기 관리만 예외로 직접 처리합니다: 탄이 떨어진 테이저를 1번 무기로 바꾸기와 예비 탄약 보충(`bot.rs`), 증강 무기가 2번 칸이면 그 무기를 든 채 시작(`systems.rs`의 `issue_weapons`), 재투입 때 주무기 재추첨(`respawn_players`), 우지 아킴보 봇의 기관단총 고정(`mod.rs`).
+5. **반동은 클라이언트, 탄퍼짐은 서버가 정합니다.** 클라이언트(`client/src/game/game.ts`)가 반동을 더한 조준각을 `InputCmd`의 yaw/pitch로 보내고, 서버가 무작위 탄퍼짐을 더해 판정합니다. 서버는 한 틱 안의 **첫 번째** 사격 명령의 조준각을 씁니다. 이유: 화면과 판정이 일치해야 하고, 마지막 명령을 쓰면 반동이 이미 더해진 각도로 첫 발이 위로 튑니다.
+6. **증강 효과는 `Perks.active`로 판정합니다.** `Perks.augment`는 고른 카드(배지 표시용)이고, 실제 효과 목록은 `Perks.active`(더블 타임이면 뽑힌 2개)입니다. `Perks::has()`와 `&[Augment]`를 받는 헬퍼(`weapons.rs`의 `sidearm_for` 등)가 모두 `active`를 봅니다. 새 증강을 추가할 때는 `proto`의 `Augment` 열거형, `augments.rs`의 등급 풀과 무기 칸 충돌 목록(`SLOT_ONE`·`SLOT_TWO`, 더블 타임이 같은 칸 증강을 함께 뽑지 않게 함), 무기를 바꾸는 증강이면 `weapons.rs`의 `sidearm_for`·`primary_for`와 `systems.rs`의 `forced_primary`, 클라이언트 `augments.ts` 문구를 함께 고칩니다.
+7. **에셋은 코드로 생성합니다.** 모델은 three.js 지오메트리, 텍스처는 캔버스(`client/src/game/textures.ts`), 사운드는 WebAudio(`client/src/game/audio.ts`)로 만들고, 이미지·사운드·모델 파일은 추가하지 않습니다. 이유: 외부 에셋의 라이선스·다운로드 문제를 만들지 않습니다.
+8. **`Game`의 필드·메서드 이름을 바꾸면 e2e도 고칩니다.** `?debug`로 열면 `client/src/main.ts`가 `Game` 인스턴스를 `window.__game`으로 노출합니다. `client/e2e/*.mjs`는 `pos`·`lastSnapshot`·`locked` 같은 private 필드와 `stats()` 같은 메서드를 직접 쓰고, `augment.mjs`·`wall-rub.mjs`는 필드에 값을 쓰거나 메서드를 바꿔 끼웁니다. 확인: 바꾼 이름을 `client/e2e/`에서 검색합니다.
+9. **수치나 규칙을 바꾸면 같은 변경에서 문서도 고칩니다.** 무기·조작·맵·봇 → `docs/gameplay.md`, 증강 → `docs/augment-mode.md`, 프로토콜 → `docs/protocol.md`, 구조·동기화 → `docs/architecture.md`, 빌드·테스트·수치 위치 → `docs/development.md`, 설계 결정·알려진 이슈 → `docs/history.md`, 조작·무기·증강 표 → 루트 `README.md`. 이유: 수치표와 설명이 문서에 따로 있어 코드만 고치면 문서가 어긋납니다.
+10. **문서는 한국어, 코드 주석·식별자·커밋 메시지는 영어로 씁니다.** 기존 코드와 커밋 이력이 이 방식을 따릅니다.
+
+## 구조
+
+```
+proto/game.proto           패킷 정의의 단일 원본
+server/src/
+  main.rs                  axum 라우터: /ws, client/dist 정적 파일
+  net.rs                   연결별 WebSocket 세션 ↔ 허브 스레드(mpsc). 16KB 초과 프레임은 연결 종료, 디코딩 실패 프레임은 버림
+  hub.rs                   로비, 방(팀별 5칸 좌석), 방장 권한, 30Hz 틱 루프, 칸 배정 테스트
+  game/
+    mod.rs                 Match(World + Schedule), 스냅샷, 증강 적용, 선택·대기 단계, 틱·HP·부활 상수
+    systems.rs             틱 규칙 시스템. 상단에 사격·미사일·방패 판정 상수
+    physics.rs             step_move(축별 미끄러짐 충돌), 레이·시야 판정
+    nav.rs                 봇용 보행 격자와 BFS 경로 탐색
+    bot.rs                 봇 AI. 상단에 반응·조준 상수
+    weapons.rs             무기 스탯, 공용 계수, 모드별 대미지, 증강별 무기 지급
+    augments.rs            증강 등급 풀·확률, 카드 배분, 더블 타임, 선택·대기 시간, 증강 수치
+    map.rs                 맵 데이터(점대칭 생성)
+    components.rs          ECS 컴포넌트·리소스(Perks 등)
+    tests.rs               게임 규칙 단위 테스트
+client/src/
+  main.ts, net.ts, lobby.ts   진입점·화면 전환, WebSocket encode/decode, 로그인·방 목록·대기실
+  weapons.ts, augments.ts     무기 설명·B키 메뉴 카드, 증강 카드 문구·등급
+  game/game.ts             게임 루프, 입력, 예측·보정, 반동, 스냅샷 반영, HUD·증강 카드 연결
+  game/movement.ts         이동 예측(서버 step_move와 같은 규칙)
+  game/*.ts                world(맵), character(원격 캐릭터), viewmodel(1인칭 무기), effects, hud(HUD·점수판·증강 카드·B키 무기 메뉴), audio(무기별 발사음을 미리 렌더링해 재생), textures
+  gen/game_pb.ts           npm run gen 생성물(gitignore)
+client/e2e/*.mjs           Playwright 브라우저 테스트
+```
+
+수치를 바꿀 위치 전체 표는 [docs/development.md](docs/development.md)의 "수치 조정 위치"에 있습니다.
+
+## 서버 틱과 네트워크 동기화
+
+- **스레드**: tokio가 WebSocket 연결을 받고, `game-hub` 스레드 하나가 모든 방을 소유해 30Hz로 진행합니다. 방 사이 공유 상태가 없어 락을 쓰지 않습니다. 클라이언트별 송신 큐(512)가 차면 그 연결을 끊습니다.
+- **방 상태**: 대기실 → 진행 → 결과(8초) → 대기실. 최대 10명, 팀당 5명.
+- **틱 순서**(`Match`의 chained `Schedule`): `bot_think → consume_inputs → update_weapons → fire_weapons → update_perks → respawn_players → record_history → advance_tick`. 증강모드의 선택(15초)·대기(5초) 동안은 스케줄 대신 `freeze_tick`만 돌고, 그 틱 수(`frozen_ticks`)는 경기 시계에서 뺍니다.
+- **입력**: 클라이언트는 60Hz 고정 스텝으로 `InputCmd`(seq, 이동키, yaw/pitch, 사격, 장전, 스코프, 무기 칸, 앉기, `render_tick`)를 만들어 `InputBatch`로 보냅니다. 서버는 틱마다 명령 2개분의 예산을 더해(최대 8) 그만큼만 적용하며, 더 빠른 입력은 스피드핵으로 봅니다.
+- **예측·보정**: 클라이언트는 입력을 즉시 자기 위치에 적용하고, 스냅샷의 `last_input_seq` 이후 명령을 다시 적용(replay)해 서버 위치에 맞춥니다.
+- **Lag compensation**: 클라이언트는 원격 플레이어를 보간해 그리며 그 서버 틱을 `render_tick`으로 보냅니다. 서버는 사격 시 표적을 그 틱 위치(`History`, 최대 15틱 = 0.5초)로 되돌려 판정합니다. 미사일은 실제 투사체라 대상이 아닙니다.
+- **스냅샷**: 매 틱 모든 플레이어 상태와 그 틱의 이벤트(사격·대미지·킬·장전·부활·폭발)를 보냅니다. 탄약·장전·무기·증강 카드는 수신자별 필드, 점수·남은 시간·경기 시계·미사일은 공용 필드입니다.
+- 메시지 흐름과 필드 번호: [docs/protocol.md](docs/protocol.md)
+
+## 게임 규칙 요약
+
+- 5대5 팀 데스매치. 방장이 대기실에서 고른 목표 킬(10/20/30/50, 기본 30)을 먼저 채운 팀이 이깁니다. 아군 사격은 없습니다.
+- 사망 3초 후 탄약을 채워 재투입되고 3초간 보호됩니다(먼저 쏘면 해제).
+- 대기실은 팀마다 위치가 고정된 5칸(사람·봇·빈칸)이고, 방장이 빈칸마다 봇을 넣거나 뺍니다. 방 생성 때 "빈 자리는 봇으로 채우기"를 켜면 방장 외 모든 칸이 봇으로 시작합니다. 봇 칸만 남은 팀에 사람이 입장하면 봇이 빠지고, 팀을 바꿔 들어오면 그 봇이 옮긴 사람의 원래 칸으로 갑니다. 양 팀에 사람이나 봇이 1명 이상 있어야 시작합니다.
+- 경기 중 나간 자리는 비워 두고, 한 팀에 아무도 남지 않으면 남은 팀이 기권승합니다. 시간 제한이 없어 상대가 없으면 경기가 끝나지 않기 때문입니다.
+- 맵: 보급창고(야외 100×64m), 웨어하우스(실내 컨테이너 창고). `map.rs`가 점대칭으로 만들어 `MatchStart`로 보냅니다.
+- 무기 칸: 1 주무기(소총 M416·저격소총 AWP·기관총 M249·기관단총 UZI 중 게임 중 B키로 선택, 다음 경기에도 유지), 2 권총, 3 나이프. 바꾸면 0.35초 꺼내는 시간이 있고 진행 중인 장전은 취소되며, 탄약은 무기별로 유지됩니다.
+- 무기 표의 이동속도·탄퍼짐에는 공용 계수 `SPEED_SCALE`(0.9)과 `SPREAD_SCALE`(0.75, 샷건 제외)이 곱해집니다. 무기별 상대 밸런스를 유지한 채 전체 체감을 바꿀 때 이 계수를 조정합니다.
+- 증강모드: 카드 3장 중 1장을 15초 안에 고르고(카드마다 1회 교체, 이미 나온 증강은 다시 안 나옴, 안 고르면 무작위, 봇도 무작위) 5초 대기 후 전투합니다. 등급 확률은 실버 40% / 골드 35% / 프리즘 25%이고 증강은 19종이며, 고른 증강은 부활해도 유지됩니다. 증강 전용 무기는 샷건, 권총+, 매그넘, 테이저, 미사일 런처, 우지 아킴보입니다.
+- 세부 수치와 증강 효과: [docs/gameplay.md](docs/gameplay.md), [docs/augment-mode.md](docs/augment-mode.md)
+
+## 알려진 이슈
+
+- 증강·무기 밸런스는 실제 대전으로 검증하지 않았습니다.
+- `e2e/play.mjs`가 예측 오차 0.13m로 한 번 실패한 뒤 재현되지 않았습니다(원인 미확인). 실패하면 재실행해 재현 여부부터 확인합니다.
+- 미사일·테이저는 서버 단위 테스트와 스크린샷으로만 확인했고, 브라우저에서 실제로 쏴서 맞히는 e2e는 없습니다.
+- 미사일은 lag compensation이 없어 빠르게 움직이는 표적은 화면과 폭발 위치가 어긋날 수 있습니다.
+- Ctrl 앉기 중 W를 누르면 브라우저 탭 닫기(Ctrl+W)와 겹칠 수 있으나 사람이 확인하지 않았습니다. C 키 앉기가 대안입니다.
+- 루트 `README.md` 무기 표의 이동속도·탄퍼짐은 공용 계수 적용 전 값입니다. 실제 값은 `server/src/game/weapons.rs`가 기준입니다.
