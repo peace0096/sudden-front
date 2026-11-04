@@ -255,7 +255,7 @@ export class Hud {
     const panel = div(this.weaponMenu, "weapon-menu-panel");
     div(panel, "weapon-menu-title", "주무기 선택");
     div(panel, "weapon-menu-note", note);
-    panel.append(weaponCards(weapons, selected, onPick, true), sidearmNote());
+    panel.append(weaponCards(weapons, selected, onPick), sidearmNote());
     div(panel, "weapon-menu-keys", "1~4 또는 클릭으로 선택 · B / Esc 닫기");
   }
 

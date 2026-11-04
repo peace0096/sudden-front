@@ -42,37 +42,43 @@ pub const CROUCH_EYE_HEIGHT: f32 = EYE_HEIGHT - CROUCH_DROP;
 pub const CROUCH_SPEED_FACTOR: f32 = 0.5;
 pub const CROUCH_SPREAD_FACTOR: f32 = 0.5;
 
-const TEAM_SIZE: usize = 5;
+/// Seats per team.
+pub const TEAM_SIZE: usize = 5;
 const FIRST_BOT_ID: u32 = 1_000_000;
 
 pub struct Match {
     world: World,
     schedule: Schedule,
     entities: HashMap<u32, Entity>,
-    fill_bots: bool,
     next_bot_id: u32,
 }
 
 impl Match {
+    /// A normal-mode match; `fill` tops each team up to five with bots.
     #[cfg(test)]
     pub fn new(
         humans: &[(u32, String, pb::Team, pb::WeaponKind)],
         map_id: pb::MapId,
-        fill_bots: bool,
+        fill: bool,
         seed: u64,
     ) -> Self {
-        Self::with_mode(humans, map_id, pb::GameMode::Normal, fill_bots, seed)
+        let bots = [pb::Team::Red, pb::Team::Blue].map(|team| {
+            let have = humans.iter().filter(|h| h.2 == team).count();
+            if fill { TEAM_SIZE.saturating_sub(have) } else { 0 }
+        });
+        Self::with_mode(humans, map_id, pb::GameMode::Normal, bots, seed)
     }
 
     pub fn set_kills_to_win(&mut self, kills: u32) {
         self.world.resource_mut::<MatchState>().kills_to_win = kills;
     }
 
+    /// `bots` is how many bots each team gets, `[red, blue]`.
     pub fn with_mode(
         humans: &[(u32, String, pb::Team, pb::WeaponKind)],
         map_id: pb::MapId,
         mode: pb::GameMode,
-        fill_bots: bool,
+        bots: [usize; 2],
         seed: u64,
     ) -> Self {
         let augmented = mode == pb::GameMode::Augment;
@@ -115,7 +121,6 @@ impl Match {
             world,
             schedule,
             entities: HashMap::new(),
-            fill_bots,
             next_bot_id: FIRST_BOT_ID,
         };
 
@@ -125,12 +130,11 @@ impl Match {
                 game.deal_offer(*id);
             }
         }
-        if fill_bots {
-            for team in [pb::Team::Red, pb::Team::Blue] {
-                let have = humans.iter().filter(|h| h.2 == team).count();
-                for _ in have..TEAM_SIZE {
-                    game.spawn_bot(team);
-                }
+        for (team, count) in [pb::Team::Red, pb::Team::Blue].into_iter().zip(bots) {
+            let seated = humans.iter().filter(|h| h.2 == team).count() + count;
+            debug_assert!(seated <= TEAM_SIZE, "{team:?} would seat {seated} players");
+            for _ in 0..count {
+                game.spawn_bot(team);
             }
         }
         game
@@ -372,16 +376,29 @@ impl Match {
         }
     }
 
-    /// A human left mid-match: a bot takes the slot if the room uses bots.
+    /// A human left mid-match. Nobody takes the seat: the match goes on a player short, unless
+    /// that leaves a team with nobody, which forfeits.
     pub fn remove_player(&mut self, id: u32) -> Vec<pb::RosterEntry> {
         if let Some(entity) = self.entities.remove(&id) {
-            let team = self.world.get::<Player>(entity).map(|p| p.team);
             self.world.despawn(entity);
-            if let (true, Some(team)) = (self.fill_bots, team) {
-                self.spawn_bot(team);
-            }
+            self.forfeit_an_empty_team();
         }
         self.roster()
+    }
+
+    /// The moment a team has nobody left, the other team wins. A result that is already in stays.
+    fn forfeit_an_empty_team(&mut self) {
+        let mut query = self.world.query::<&Player>();
+        let teams: Vec<pb::Team> = query.iter(&self.world).map(|p| p.team).collect();
+        let winner = match (teams.contains(&pb::Team::Red), teams.contains(&pb::Team::Blue)) {
+            (true, false) => Some(pb::Team::Red),
+            (false, true) => Some(pb::Team::Blue),
+            _ => None,
+        };
+        let mut state = self.world.resource_mut::<MatchState>();
+        if state.winner.is_none() {
+            state.winner = winner;
+        }
     }
 
     pub fn tick(&mut self) {

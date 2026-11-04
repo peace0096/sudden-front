@@ -35,11 +35,12 @@ pub struct Stats {
 
 /// Everyone's move speed, relative to the values in the table.
 const SPEED_SCALE: f32 = 0.9;
-/// Everyone's unscoped spread and bloom, relative to the values in the table.
+/// Everyone's spread and bloom, scoped values included, relative to the values in the
+/// table. The shotgun's pellet cone is not scaled.
 const SPREAD_SCALE: f32 = 0.75;
 
 const RIFLE: Stats = Stats {
-    name: "K-RIFLE",
+    name: "M416",
     magazine: 30,
     reserve: 120,
     fire_interval: 0.1,
@@ -63,7 +64,7 @@ const RIFLE: Stats = Stats {
 };
 
 const SNIPER: Stats = Stats {
-    name: "SR-7",
+    name: "AWP",
     magazine: 5,
     reserve: 20,
     // Bolt cycle.
@@ -88,7 +89,7 @@ const SNIPER: Stats = Stats {
 };
 
 const MACHINE_GUN: Stats = Stats {
-    name: "MG-60",
+    name: "M249",
     magazine: 100,
     reserve: 200,
     fire_interval: 0.06,
@@ -112,7 +113,7 @@ const MACHINE_GUN: Stats = Stats {
 };
 
 const SMG: Stats = Stats {
-    name: "SMG-9",
+    name: "UZI",
     magazine: 25,
     reserve: 125,
     fire_interval: 0.075,
@@ -278,7 +279,7 @@ const TASER: Stats = Stats {
 };
 
 const AKIMBO_SMG: Stats = Stats {
-    name: "SMG-9 x2",
+    name: "UZI Akimbo",
     magazine: SMG.magazine * 2,
     // The same number of reloads as a single gun.
     reserve: SMG.reserve * 2,

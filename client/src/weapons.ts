@@ -1,4 +1,4 @@
-// Human-facing weapon descriptions and the picker used in the room and in-game.
+// Human-facing weapon descriptions and the primary-weapon picker of the in-game B menu.
 import { WeaponKind, type WeaponStats } from "./gen/game_pb";
 
 export const WEAPON_ORDER = [WeaponKind.RIFLE, WeaponKind.SNIPER, WeaponKind.MACHINE_GUN, WeaponKind.SMG];
@@ -56,7 +56,6 @@ export function weaponCards(
   weapons: WeaponStats[],
   selected: WeaponKind,
   onPick: (kind: WeaponKind) => void,
-  showKeys = false,
 ): HTMLElement {
   const grid = document.createElement("div");
   grid.className = "weapon-grid";
@@ -76,7 +75,7 @@ export function weaponCards(
     const head = document.createElement("div");
     head.className = "weapon-card-head";
     const title = document.createElement("strong");
-    title.textContent = showKeys ? `${index + 1}. ${info.type}` : info.type;
+    title.textContent = `${index + 1}. ${info.type}`;
     const name = document.createElement("span");
     name.textContent = stats.name;
     head.append(title, name);

@@ -4,8 +4,9 @@
 import { chromium } from "playwright-core";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { defaultUrl } from "./server.mjs";
 
-const url = process.argv[2] ?? "http://localhost:8080/?debug";
+const url = process.argv[2] ?? defaultUrl;
 const shots = process.argv[3] ?? "e2e-shots";
 mkdirSync(shots, { recursive: true });
 
@@ -30,6 +31,11 @@ const rival = await open("rival");
 await rival.waitForSelector(".room-row button");
 await rival.click(".room-row button");
 await host.waitForFunction(() => document.querySelector(".team.blue")?.textContent.includes("rival"));
+// The create form's checkbox was off, so the room has no bots and every other seat is open.
+const room = await host.evaluate(() => ({
+  header: document.querySelector(".panel-head").textContent,
+  open: [...document.querySelectorAll(".slot.open .muted")].map((e) => e.textContent),
+}));
 await host.click(".actions .primary");
 for (const page of [host, rival]) {
   await page.waitForFunction(() => window.__game?.hasFirstSnapshot, null, { timeout: 30000 });
@@ -42,6 +48,9 @@ const check = (name, ok, detail = "") => {
   results.push(ok);
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  -> ${detail}` : ""}`);
 };
+
+check("a room made without bots shows none", !/봇 \d/.test(room.header), room.header);
+check("its eight other seats all read 빈 자리", room.open.length === 8 && room.open.every((text) => text === "빈 자리"), room.open.join("|"));
 
 const info = await host.evaluate(async () => ({
   fullscreen: !!document.fullscreenElement,

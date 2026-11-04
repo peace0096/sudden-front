@@ -3,8 +3,9 @@
 import { chromium } from "playwright-core";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { defaultUrl } from "./server.mjs";
 
-const url = process.argv[2] ?? "http://localhost:8080/?debug";
+const url = process.argv[2] ?? defaultUrl;
 const shots = process.argv[3] ?? "e2e-shots";
 mkdirSync(shots, { recursive: true });
 
@@ -30,7 +31,7 @@ await rival.waitForSelector(".room-row button");
 await rival.click(".room-row button");
 await page.waitForFunction(() => document.querySelector(".team.blue")?.textContent.includes("rival"));
 await page.click(".actions .primary");
-await rival.close();
+// The rival stays connected: with nobody left on blue, the match would end at once by forfeit.
 await page.waitForFunction(() => window.__game?.hasFirstSnapshot, null, { timeout: 30000 });
 await page.click("#ui-root .pause");
 await page.waitForFunction(() => window.__game.locked, null, { timeout: 5000 });

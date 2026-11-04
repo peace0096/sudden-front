@@ -894,7 +894,8 @@ export class Game {
     }
     this.viewModel.fire();
     this.audio.gunshot(this.weaponKind, 0, 0);
-    if (stats.hasScope || stats.shellReload) this.audio.bolt();
+    if (stats.hasScope) this.audio.bolt();
+    if (stats.shellReload) this.audio.pump();
     const noRecoil = this.has(Augment.NO_RECOIL);
     if (!noRecoil) {
       this.bloom = Math.min(this.bloom + stats.bloomPerShot, stats.bloomMax);

@@ -125,17 +125,26 @@ message ClientMessage {
     PickAugment pick_augment = 10;
     RefreshAugments refresh_augments = 11;
     SetKillsToWin set_kills_to_win = 12;
+    SetBotSlot set_bot_slot = 13;
   }
 }
 
 message Hello { string name = 1; }
 message CreateRoom {
   string name = 1;
+  // Start with a bot in every seat but the host's; the host then changes seats one by one.
   bool fill_bots = 2;
   MapId map = 3;
   GameMode mode = 4;
 }
 message SetKillsToWin { uint32 kills = 1; }
+// Host only: puts a bot in, or takes it out of, one seat that no player holds.
+message SetBotSlot {
+  Team team = 1;
+  // Seat on the team, 0 to 4.
+  uint32 slot = 2;
+  bool bot = 3;
+}
 message PickAugment { Augment augment = 1; }
 message RefreshAugments { uint32 slot = 1; }
 message SelectWeapon { WeaponKind weapon = 1; }
@@ -187,7 +196,8 @@ message ServerMessage {
 message Welcome {
   uint32 player_id = 1;
   string name = 2;
-  repeated WeaponStats weapons = 3;
+  // Weapon stats for the old waiting-room picker; the B menu reads GameConfig.weapons.
+  reserved 3;
 }
 
 message WeaponStats {
@@ -223,10 +233,13 @@ message RoomInfo {
   uint32 player_count = 4;
   uint32 max_players = 5;
   RoomPhase phase = 6;
-  bool fill_bots = 7;
+  // Whether the room filled its empty seats with bots; the host now chooses seat by seat.
+  reserved 7;
   MapId map = 8;
   GameMode mode = 9;
   uint32 kills_to_win = 10;
+  // Seats held by bots.
+  uint32 bot_count = 11;
 }
 
 message RoomList { repeated RoomInfo rooms = 1; }
@@ -236,12 +249,22 @@ message RoomPlayer {
   string name = 2;
   Team team = 3;
   bool is_host = 4;
-  WeaponKind weapon = 5;
+  // Weapon picked in the waiting room; picking moved to the in-game B menu.
+  reserved 5;
+  // Seat on the team, 0 to 4.
+  uint32 slot = 6;
+}
+
+message RoomBot {
+  Team team = 1;
+  uint32 slot = 2;
 }
 
 message RoomState {
   RoomInfo room = 1;
   repeated RoomPlayer players = 2;
+  // Seats held by bots. A seat on neither list is open.
+  repeated RoomBot bots = 3;
 }
 
 message LeftRoom {}

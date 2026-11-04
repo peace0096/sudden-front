@@ -3,8 +3,9 @@
 import { chromium } from "playwright-core";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { defaultUrl } from "./server.mjs";
 
-const url = process.argv[2] ?? "http://localhost:8080/?debug";
+const url = process.argv[2] ?? defaultUrl;
 const shots = process.argv[3] ?? "e2e-shots";
 mkdirSync(shots, { recursive: true });
 
@@ -220,12 +221,13 @@ await host.page.waitForTimeout(150);
 await host.page.screenshot({ path: join(shots, "7-scoreboard.png") });
 await host.page.keyboard.up("Tab");
 
-// Guest leaving mid-match: its slot goes to a bot and the match keeps running.
+// Guest leaving mid-match: nobody takes its seat, and the match keeps running a player short.
 await guest.page.evaluate(() => window.__game.connection.send({ case: "leaveRoom", value: {} }));
 await guest.page.waitForSelector(".room-list");
 await host.page.waitForTimeout(500);
 s = await state(host.page);
-check("match continues 5v5 after a player leaves", s.players === 10, `${s.players} players`);
+const bots = await host.page.evaluate(() => [...window.__game.roster.values()].filter((e) => e.isBot).length);
+check("a leaver is not replaced: nine players, still eight bots", s.players === 9 && s.remotes === 8 && bots === 8, `${s.players} players, ${s.remotes} others, ${bots} bots`);
 
 check("no page errors (host)", host.errors.length === 0, host.errors.slice(0, 3).join(" | "));
 check("no page errors (guest)", guest.errors.length === 0, guest.errors.slice(0, 3).join(" | "));

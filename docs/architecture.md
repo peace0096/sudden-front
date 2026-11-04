@@ -6,23 +6,25 @@
 proto/game.proto            패킷 정의의 단일 원본 (Rust·TS 코드 모두 여기서 생성)
 server/
   build.rs                  prost-build로 game.proto → game.v1.rs
-  src/main.rs               axum 라우터: /ws 와 client/dist 정적 파일
+  src/main.rs               axum 라우터: /ws 와 client/dist 정적 파일, 포트 선택 (기본 8800, 사용 중이면 빈 포트)
   src/net.rs                WebSocket 세션 ↔ 허브 스레드 (mpsc 채널)
-  src/hub.rs                로비, 방, 방장 권한, 30Hz 틱 루프
+  src/hub.rs                로비, 방(팀별 5칸: 사람·봇·빈칸), 방장 권한, 30Hz 틱 루프, 칸 배정 단위 테스트 (23개)
   src/game/
     mod.rs                  Match: World + Schedule, 스냅샷 생성, 증강 적용, 대기/선택 단계
     components.rs           ECS 컴포넌트와 리소스
     systems.rs              틱마다 도는 규칙 시스템 (이동, 무기, 사격, 미사일, 부활, 기록)
+    physics.rs              이동 충돌(step_move), 레이·시야 판정
     weapons.rs              무기 스탯 표, 모드별 대미지, 증강에 따른 무기 교체
     augments.rs             증강 등급 풀, 카드 배분, 더블 타임 추첨, 증강 상수
     bot.rs                  봇 AI
+    nav.rs                  봇용 보행 격자와 BFS 경로 탐색
     map.rs                  맵 데이터 (보급창고, 웨어하우스)
-    tests.rs                규칙 단위 테스트 (85개)
+    tests.rs                규칙 단위 테스트 (91개, 1개는 디버그 빌드 전용)
 client/
   src/main.ts               진입점, 화면 전환
   src/net.ts                WebSocket 연결, encode/decode
-  src/lobby.ts              로그인, 방 목록, 대기실 (모드·맵·목표 킬 선택)
-  src/weapons.ts            무기 설명 문구
+  src/lobby.ts              로그인, 방 목록·방 생성 (모드·맵·봇 채우기 초기값), 대기실 (팀 변경, 방장의 목표 킬·칸별 봇 설정). 로비가 떠 있으면 방 목록 패널만 다시 그림
+  src/weapons.ts            무기 설명 문구, 게임 중 B키 무기 선택 카드
   src/augments.ts           증강 카드 이름·설명·등급 (규칙은 서버에 있음)
   src/game/
     game.ts                 게임 루프, 입력, 예측·보정, 반동, 스냅샷 반영, 증강 UI 연결
@@ -32,7 +34,7 @@ client/
     viewmodel.ts            1인칭 무기 모델
     effects.ts              총구 화염, 탄흔, 폭발, 미사일 꼬리
     hud.ts                  HUD, 점수판, 증강 카드 화면, 무기 슬롯, 마비 오버레이
-    audio.ts                WebAudio 절차 사운드
+    audio.ts                WebAudio 절차 합성 사운드. 무기별 발사음·볼트·펌프를 OfflineAudioContext로 미리 렌더링해 재생, 마스터 리미터
     textures.ts             캔버스 절차 텍스처
   src/gen/game_pb.ts        npm run gen 으로 생성 (gitignore)
   e2e/*.mjs                 Playwright 브라우저 테스트
@@ -40,9 +42,10 @@ client/
 
 ## 서버 스레드 모델
 
-- tokio 런타임이 WebSocket 연결을 받고, 연결마다 `net::client_session`이 돕니다. 받은 바이너리 프레임은 `ClientMessage`로 디코딩해 `std::sync::mpsc`로 허브 스레드에 넘깁니다. 16KB를 넘는 프레임과 디코딩 실패 프레임은 버립니다.
+- tokio 런타임이 WebSocket 연결을 받고, 연결마다 `net::client_session`이 돕니다. 받은 바이너리 프레임은 `ClientMessage`로 디코딩해 `std::sync::mpsc`로 허브 스레드에 넘깁니다. 디코딩에 실패한 프레임은 버리고, 16KB를 넘는 프레임이 오면 연결을 끊습니다.
 - `game-hub` 스레드 하나가 모든 방을 소유합니다. 30Hz로 돌며 받은 메시지를 처리하고 진행 중인 방마다 `Match`를 한 틱씩 진행한 뒤 스냅샷을 보냅니다. 클라이언트별 송신 큐(512)가 가득 차면 그 클라이언트를 끊습니다.
 - 방 상태: 대기실(Lobby) → 진행(InGame) → 결과(8초) → 대기실 복귀. 최대 10명, 팀당 5명.
+- 대기실 자리는 팀마다 위치가 고정된 5칸(사람·봇·빈칸)입니다. 경기를 시작하면 팀마다 봇 칸 수만큼 봇이 들어가고, 경기 중 나간 사람의 자리는 채우지 않습니다. 한 팀이 비면 `Match::remove_player`가 남은 팀을 승자로 정하고(기권승), 평소처럼 결과 → 대기실 복귀로 이어집니다.
 
 ## 방마다 하나의 ECS World
 
@@ -70,12 +73,12 @@ bot_think → consume_inputs → update_weapons → fire_weapons → update_perk
 
 ### 클라이언트 → 서버
 - 클라이언트는 60Hz 고정 스텝으로 `InputCmd`(seq, 이동키, yaw/pitch, 사격, 장전, 스코프, 슬롯, 앉기, render_tick)를 만들어 `InputBatch`로 보냅니다.
-- 사격 명령에는 반동이 반영된 조준각(`aimYaw`/`aimPitch`)이 실립니다. 서버는 한 틱 안의 첫 번째 사격 명령의 조준각을 씁니다(마지막 것을 쓰면 첫 발이 위로 튀는 문제가 있었음).
+- 사격 명령의 `yaw`/`pitch`에는 반동이 반영된 조준각이 실립니다. 서버는 한 틱 안의 첫 번째 사격 명령의 조준각을 씁니다(마지막 것을 쓰면 첫 발이 위로 튀는 문제가 있었음).
 - 연사 쿨다운은 `COOLDOWN_SLACK = 0.002`초의 여유를 둬서 60Hz 명령과 30Hz 틱 사이의 반올림 오차로 발사가 밀리지 않게 합니다.
 
 ### 이동 예측과 보정
 - 클라이언트는 입력을 즉시 자기 위치에 적용(예측)하고, 스냅샷의 `last_input_seq` 이후 명령을 다시 적용(replay)해 서버 위치에 맞춥니다.
-- `client/src/game/movement.ts`는 서버 `systems.rs`의 `step_move`와 같은 규칙이어야 합니다. 벽에 비비는 경우 축별로 미끄러지게 처리합니다.
+- `client/src/game/movement.ts`는 서버 `physics.rs`의 `step_move`, `systems.rs` `consume_inputs`의 이동 부분과 같은 규칙이어야 합니다. 벽에 비비는 경우 축별로 미끄러지게 처리합니다.
 
 ### Lag compensation
 - 클라이언트는 원격 플레이어를 보간해서 그리며, 지금 보고 있는 서버 틱을 `render_tick`으로 보냅니다.

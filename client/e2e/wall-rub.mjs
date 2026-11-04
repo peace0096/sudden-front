@@ -3,8 +3,9 @@
 import { chromium } from "playwright-core";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { defaultUrl } from "./server.mjs";
 
-const url = process.argv[2] ?? "http://localhost:8080/?debug";
+const url = process.argv[2] ?? defaultUrl;
 const shots = process.argv[3] ?? "e2e-shots";
 mkdirSync(shots, { recursive: true });
 

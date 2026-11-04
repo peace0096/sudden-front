@@ -265,6 +265,31 @@ body {
   border-color: var(--accent);
 }
 
+/* The host's open and bot seats are buttons that flip the seat. */
+.seat-btn {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.seat-btn:hover {
+  border-color: #8c8f7c;
+}
+
+.seat-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.seat-action {
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .host-tag {
   flex: none;
   font-size: 11px;
@@ -807,18 +832,6 @@ body {
 
 /* ----------------------------- Weapons ----------------------------- */
 
-.pick-title {
-  margin: 16px 0 8px;
-  font-size: 15px;
-}
-
-.slot-tags {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-}
-
 .weapon-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -941,7 +954,7 @@ body {
   }
 }
 
-/* Keeps the start button on screen at 720p now the room also holds weapon cards. */
+/* Compact lobby header and room rows. */
 .brand {
   margin: 10px 0 12px;
 }
@@ -954,10 +967,6 @@ body {
   min-height: 32px;
   padding: 4px 12px;
   margin-bottom: 3px;
-}
-
-.room .pick-title {
-  margin-top: 10px;
 }
 
 .room .actions {

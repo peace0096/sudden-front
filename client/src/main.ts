@@ -19,7 +19,7 @@ const connection: Connection = new Connection(
     switch (message.case) {
       case "welcome":
         myId = message.value.playerId;
-        lobby.setIdentity(myId, message.value.name, message.value.weapons);
+        lobby.setIdentity(myId, message.value.name);
         lobby.showRooms(rooms);
         break;
       case "roomList":

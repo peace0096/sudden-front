@@ -370,11 +370,86 @@ fn fill_bots_makes_it_five_versus_five() {
 }
 
 #[test]
-fn leaving_player_is_replaced_by_a_bot() {
+fn each_team_gets_as_many_bots_as_it_is_given() {
+    // One human on red, then two bots for red and three for blue.
+    let humans = [(SHOOTER, "a".into(), pb::Team::Red, RIFLE)];
+    let mut game = Match::with_mode(&humans, YARD, pb::GameMode::Normal, [2, 3], 3);
+    let roster = game.roster();
+    let on = |team: pb::Team, bots: bool| roster.iter().filter(|r| r.team == team as i32 && r.is_bot == bots).count();
+    assert_eq!((on(pb::Team::Red, false), on(pb::Team::Red, true)), (1, 2));
+    assert_eq!((on(pb::Team::Blue, false), on(pb::Team::Blue, true)), (0, 3));
+    assert_eq!(roster.len(), 6);
+}
+
+#[test]
+fn a_leaving_player_is_not_replaced() {
     let mut game = Match::new(&[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)], YARD, true, 3);
     let roster = game.remove_player(SHOOTER);
-    assert_eq!(roster.len(), 10);
-    assert_eq!(roster.iter().filter(|r| r.is_bot).count(), 10);
+    // The seat stays empty: nine bots are left, four of them on the leaver's team.
+    assert_eq!(roster.len(), 9);
+    assert!(roster.iter().all(|r| r.is_bot));
+    assert_eq!(roster.iter().filter(|r| r.team == pb::Team::Red as i32).count(), 4);
+}
+
+/// One human on each team, plus the bots for each, as `[red, blue]`.
+fn duel_with_bots(bots: [usize; 2], mode: pb::GameMode) -> Match {
+    let humans = [
+        (SHOOTER, "a".into(), pb::Team::Red, RIFLE),
+        (VICTIM, "b".into(), pb::Team::Blue, RIFLE),
+    ];
+    Match::with_mode(&humans, YARD, mode, bots, 3)
+}
+
+#[test]
+fn a_team_left_with_nobody_forfeits_the_match() {
+    // Blue is only its human, so with them gone red wins at once, with no kill scored.
+    let mut game = duel_with_bots([2, 0], pb::GameMode::Normal);
+    assert_eq!(game.winner(), None);
+    game.remove_player(VICTIM);
+    assert_eq!(game.winner(), Some(pb::Team::Red));
+    let end = game.end_message(pb::Team::Red, 8.0);
+    assert_eq!((end.winner, end.red_score, end.blue_score), (pb::Team::Red as i32, 0, 0));
+    // It is over: the clock no longer runs.
+    let frozen = tick_now(&game);
+    game.tick();
+    assert_eq!(tick_now(&game), frozen);
+}
+
+#[test]
+fn a_forfeit_ends_a_match_that_is_still_choosing_augments() {
+    let mut game = duel_with_bots([0, 0], pb::GameMode::Augment);
+    assert!(game.world.resource::<MatchState>().freeze_left > 0.0, "still frozen before play");
+    game.remove_player(SHOOTER);
+    assert_eq!(game.winner(), Some(pb::Team::Blue));
+}
+
+#[test]
+fn a_team_that_still_has_a_bot_does_not_forfeit() {
+    let mut game = duel_with_bots([1, 1], pb::GameMode::Normal);
+    game.remove_player(VICTIM);
+    assert_eq!(game.winner(), None);
+    // The bots carry on; the empty seat does not stop or crash the match.
+    for _ in 0..(10 * TICK_RATE) {
+        game.tick();
+    }
+    assert_eq!(game.roster().len(), 3);
+    assert_eq!(game.winner(), None);
+}
+
+#[test]
+fn a_forfeit_does_not_overwrite_a_result_already_in() {
+    let mut game = duel_with_bots([0, 0], pb::GameMode::Normal);
+    game.world.resource_mut::<MatchState>().winner = Some(pb::Team::Red);
+    game.remove_player(SHOOTER);
+    assert_eq!(game.winner(), Some(pb::Team::Red));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "would seat 6 players")]
+fn a_team_cannot_be_given_more_than_five_players() {
+    let humans = [(SHOOTER, "a".into(), pb::Team::Red, RIFLE)];
+    Match::with_mode(&humans, YARD, pb::GameMode::Normal, [5, 0], 3);
 }
 
 #[test]
@@ -909,7 +984,7 @@ fn augment_duel() -> Match {
         ],
         YARD,
         pb::GameMode::Augment,
-        false,
+        [0, 0],
         42,
     )
 }
@@ -1038,7 +1113,7 @@ fn each_card_can_be_swapped_once_for_one_not_seen_yet() {
             &[(SHOOTER, "a".into(), pb::Team::Red, RIFLE), (VICTIM, "b".into(), pb::Team::Blue, RIFLE)],
             YARD,
             pb::GameMode::Augment,
-            false,
+            [0, 0],
             seed,
         );
         let e = game.entities[&SHOOTER];
@@ -1230,7 +1305,8 @@ fn only_a_card_on_offer_can_be_picked_and_time_picks_for_you() {
 fn bots_choose_at_random() {
     let mut chosen = std::collections::HashSet::new();
     for seed in 1..40 {
-        let mut game = Match::with_mode(&[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)], YARD, pb::GameMode::Augment, true, seed);
+        // The human on red, and each team filled to five with bots.
+        let mut game = Match::with_mode(&[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)], YARD, pb::GameMode::Augment, [4, 5], seed);
         let mut query = game.world.query::<(&Player, &Perks)>();
         for (player, perks) in query.iter(&game.world) {
             if player.is_bot {
@@ -1572,7 +1648,7 @@ fn big_head_grows_the_victims_head_additively_for_every_contributor() {
         ],
         YARD,
         pb::GameMode::Augment,
-        false,
+        [0, 0],
         42,
     );
     game.apply_augment(SHOOTER, Aug::SoulDrain);
@@ -1787,7 +1863,8 @@ fn bots_fire_their_taser_once_then_use_their_gun() {
 #[test]
 fn full_augment_matches_run_clean() {
     for seed in 1..=8 {
-        let mut game = Match::with_mode(&[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)], YARD, pb::GameMode::Augment, true, seed);
+        // The human on red, and each team filled to five with bots.
+        let mut game = Match::with_mode(&[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)], YARD, pb::GameMode::Augment, [4, 5], seed);
         for _ in 0..(TICK_RATE * 300) {
             game.tick();
             let mut query = game.world.query::<(&Vitals, &Weapon, &Perks)>();
