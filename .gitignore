@@ -3,3 +3,15 @@ client/node_modules/
 client/dist/
 client/src/gen/
 client/e2e-shots/
+.omc/
+
+# JetBrains IDE
+/.idea/shelf/
+/.idea/workspace.xml
+/.idea/httpRequests/
+/.idea/queries/
+/.idea/dataSources/
+/.idea/dataSources.local.xml
+/.idea/modules.xml
+/.idea/sudden-front.iml
+/.idea/vcs.xml
