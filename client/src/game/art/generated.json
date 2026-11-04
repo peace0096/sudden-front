@@ -1,0 +1,240 @@
+{
+  "files": {
+    "characters/swat-blue.glb": {
+      "hash": "30d7ac91a7133cb5",
+      "sha256": "30d7ac91a7133cb553f199bb0208d213da8012247ff041b7eceafd5d8aa9a3d3",
+      "bytes": 332152,
+      "triangles": 4790,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "characters/swat-red.glb": {
+      "hash": "2e5c1d3732924776",
+      "sha256": "2e5c1d37329247763b50b0ee7a11644e5cf5a6d6b77729eee0a95034aa16c0bd",
+      "bytes": 332152,
+      "triangles": 4790,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "fx/decals.webp": {
+      "hash": "e30ac4ac0df9e241",
+      "sha256": "e30ac4ac0df9e24191d7e871f18eb8137ef5cca08f23cec751676f3a18f8714a",
+      "bytes": 20494,
+      "images": [
+        {
+          "width": 512,
+          "height": 512
+        }
+      ]
+    },
+    "fx/particles.webp": {
+      "hash": "132e0375b32df6c1",
+      "sha256": "132e0375b32df6c17182220e7fb4a59652a798388d4140358336ba06331385fd",
+      "bytes": 166436,
+      "images": [
+        {
+          "width": 1024,
+          "height": 1024
+        }
+      ]
+    },
+    "map/barrel.glb": {
+      "hash": "43bc961a5555824c",
+      "sha256": "43bc961a5555824cf153bdada6ff4d5a93e48d8799dbe71ea1cbadab049e944a",
+      "bytes": 6572,
+      "triangles": 516,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "map/container.glb": {
+      "hash": "fba2a28c9d5f4c21",
+      "sha256": "fba2a28c9d5f4c21176598bbc1be3a73ee404cefb0d5c3ae5c73f56d75686d90",
+      "bytes": 14760,
+      "triangles": 1336
+    },
+    "map/crate.glb": {
+      "hash": "63a7e4b4724e6666",
+      "sha256": "63a7e4b4724e6666486b207960afcb3866b42d19697bffd346ec50c5be96fba7",
+      "bytes": 5432,
+      "triangles": 264,
+      "images": [
+        {
+          "width": 8,
+          "height": 4
+        }
+      ]
+    },
+    "map/street-light.glb": {
+      "hash": "8ddb576c6c66f3c2",
+      "sha256": "8ddb576c6c66f3c2268dc3c042074469b8dcfe4f952162fb1f308634e8d9eed4",
+      "bytes": 5216,
+      "triangles": 324,
+      "images": [
+        {
+          "width": 8,
+          "height": 4
+        },
+        {
+          "width": 8,
+          "height": 4
+        }
+      ]
+    },
+    "projectiles/missile.glb": {
+      "hash": "83fe15043177f052",
+      "sha256": "83fe15043177f052281741884a275448730f5a96edba7d9932cbb4944cfe12f4",
+      "bytes": 4056,
+      "triangles": 122,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/knife.glb": {
+      "hash": "1b0bcd7f4dda75bc",
+      "sha256": "1b0bcd7f4dda75bc62dc3d69581f80734a88026491127d817702b4c9d78bd4c2",
+      "bytes": 7984,
+      "triangles": 687,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/machine_gun.glb": {
+      "hash": "99465f0871557dc6",
+      "sha256": "99465f0871557dc6ac05278efb259b755997365c48099a31d15e67b8d33d2789",
+      "bytes": 30776,
+      "triangles": 2418,
+      "images": [
+        {
+          "width": 32,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/magnum.glb": {
+      "hash": "2044a7bae1f71352",
+      "sha256": "2044a7bae1f713526d0f8795609e152e8ab350f0d12b30ebe0fd28aa04326ad5",
+      "bytes": 19276,
+      "triangles": 1334,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/missile.glb": {
+      "hash": "47db1aa72303aa4b",
+      "sha256": "47db1aa72303aa4b4da9d3629dada0bf73d0cd3c0a411a31f0eed76cf6230591",
+      "bytes": 12504,
+      "triangles": 1228,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/pistol.glb": {
+      "hash": "e455d58689704a66",
+      "sha256": "e455d58689704a66d43dc80687a03c69037ea2e9c463d97efad1c55d271f71fd",
+      "bytes": 15508,
+      "triangles": 968,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/pistol_plus.glb": {
+      "hash": "f04a37b0a955ae9a",
+      "sha256": "f04a37b0a955ae9a3b86e22caa1e67d66477cf6e00ac44f6715904083d6e4df3",
+      "bytes": 23376,
+      "triangles": 1878,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/rifle.glb": {
+      "hash": "18166cd1c3aee858",
+      "sha256": "18166cd1c3aee858a12cfc361efe4cbc998fddaf3ca30f5dc759ef914b27c1fd",
+      "bytes": 25116,
+      "triangles": 1930,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/shotgun.glb": {
+      "hash": "df7f2f551a6178ae",
+      "sha256": "df7f2f551a6178aea0b4b7933d2a882c82b41115df2295460621b6f07e35b55b",
+      "bytes": 11332,
+      "triangles": 746,
+      "images": [
+        {
+          "width": 32,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/smg.glb": {
+      "hash": "e6b961f497a38026",
+      "sha256": "e6b961f497a38026e917abb9d2e1dc8b3fb1833fb951400ec14c51636499c825",
+      "bytes": 17200,
+      "triangles": 1374,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/sniper.glb": {
+      "hash": "81d1993eb756f4c3",
+      "sha256": "81d1993eb756f4c3f6b5e399cde7dd1fad56f887e8823f039c86f4608baf265e",
+      "bytes": 22784,
+      "triangles": 1722,
+      "images": [
+        {
+          "width": 32,
+          "height": 4
+        }
+      ]
+    },
+    "weapons/taser.glb": {
+      "hash": "2ced7a540811651d",
+      "sha256": "2ced7a540811651d1d3e2edf35da22ae2eeae214eb2e831287bd51f7e7bdc8c1",
+      "bytes": 15508,
+      "triangles": 968,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    }
+  }
+}

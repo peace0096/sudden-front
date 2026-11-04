@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
   Augment,
   HitZone,
+  MapId,
   Team,
   type GameConfig,
   type MapBox,
@@ -17,13 +18,18 @@ import {
 } from "../gen/game_pb";
 import { WEAPON_ORDER } from "../weapons";
 import type { Connection } from "../net";
+import { loadedArt, releaseGpu } from "./art/loader";
+import { projectileArt } from "./art/manifest";
+import { toLambert } from "./art/materials";
+import { hitboxFrame, releaseWireGpu, type HitboxFrame } from "./art/view";
 import { GameAudio } from "./audio";
-import { Character } from "./character";
+import { Character, releaseCharacterGpu, setCharacterView } from "./character";
 import { Effects } from "./effects";
 import { Hud, type RadarBlip } from "./hud";
 import { applyMove, CMD_DT, rayBox, rayWorld, type Vec2 } from "./movement";
+import { PerfMeter, type PerfStats } from "./perf";
 import { ViewModel } from "./viewmodel";
-import { buildWorld } from "./world";
+import { buildWorld, disposeWorld } from "./world";
 
 const MOUSE_SENSITIVITY = 0.0022;
 const MAX_PITCH = 1.45;
@@ -64,6 +70,8 @@ const RECOIL_PER_SHOT: Record<number, { up: number; side: number }> = {
 const BURST_GAP = 0.07;
 const BURST_RECOVERY = 0.2;
 const BURST_ROUNDS = 3;
+/** How far out from the camera the local player's tracers start, on the line through the gun's muzzle on screen. */
+const LOCAL_TRACER_START = 1.2;
 
 interface PendingCmd {
   seq: number;
@@ -77,7 +85,7 @@ interface PendingCmd {
 }
 
 interface MissileView {
-  object: THREE.Group;
+  object: THREE.Object3D;
   data: Missile;
   at: number;
   trail: number;
@@ -100,6 +108,8 @@ interface Remote {
   shownX: number;
   shownZ: number;
   lastFired: number;
+  /** The server's hitboxes around the player, under ?debug&hitbox. */
+  hitbox: HitboxFrame | null;
 }
 
 function shortestAngle(from: number, to: number): number {
@@ -110,10 +120,15 @@ function shortestAngle(from: number, to: number): number {
 }
 
 export class Game {
+  // First, so the time to the first frame covers every field below.
+  private readonly constructedAt = performance.now();
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly meter: PerfMeter;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.08, 800);
   private readonly viewModel = new ViewModel();
+  /** The map, the scene's "world" group (world.ts). */
+  private readonly world: THREE.Group;
   private readonly effects: Effects;
   private readonly audio = new GameAudio();
   private readonly hud: Hud;
@@ -139,6 +154,12 @@ export class Game {
   private readonly missileNose = new THREE.ConeGeometry(0.11, 0.2, 10);
   private readonly missileSkin = new THREE.MeshLambertMaterial({ color: 0xc8ccc0 });
   private readonly missileTip = new THREE.MeshLambertMaterial({ color: 0xc23a22 });
+  // Reused for each shot's effects, which copy what they keep.
+  private readonly shotFrom = new THREE.Vector3();
+  private readonly shotEnd = new THREE.Vector3();
+  private readonly shotMuzzle = new THREE.Vector3();
+  private readonly shotDirection = new THREE.Vector3();
+  private readonly missileVelocity = new THREE.Vector3();
   private readonly xrayMaterial = new THREE.MeshBasicMaterial({
     color: 0xff3a2a,
     transparent: true,
@@ -146,7 +167,13 @@ export class Game {
     depthFunc: THREE.GreaterDepth,
     depthWrite: false,
     fog: false,
+    // Pulled toward the camera so the model's own depth from the first pass never speckles it.
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -4,
   });
+  /** ?debug&hitbox draws every remote player's server hitboxes. */
+  private readonly showHitboxes = ((params) => params.has("debug") && params.has("hitbox"))(new URLSearchParams(location.search));
   // Until the server has processed this command, its state still shows the old weapon.
   private pendingSlotSeq = 0;
   private scopeOn = false;
@@ -236,16 +263,17 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.needsUpdate = true;
     this.renderer.autoClear = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.95;
+    this.meter = new PerfMeter(this.renderer, uiRoot, this.constructedAt);
     gameRoot.append(this.renderer.domElement);
 
-    buildWorld(this.scene, start.map!);
-    this.effects = new Effects(this.scene);
+    this.world = buildWorld(this.scene, start.map!);
+    this.effects = new Effects(this.scene, this.boxes, { indoor: start.map!.id === MapId.WAREHOUSE });
     this.scene.add(this.camera);
 
     this.hud = new Hud(
@@ -486,10 +514,12 @@ export class Game {
   onRoster(roster: RosterEntry[]): void {
     this.roster = new Map(roster.map((entry) => [entry.id, entry]));
     this.myTeam = this.roster.get(this.myId)?.team ?? this.myTeam;
+    this.viewModel.setTeam(this.myTeam);
 
     for (const [id, remote] of this.remotes) {
       if (!this.roster.has(id)) {
         remote.character.dispose();
+        remote.hitbox?.dispose();
         this.remotes.delete(id);
       }
     }
@@ -498,6 +528,8 @@ export class Game {
       const character = new Character(entry.name, entry.team);
       if (entry.team !== this.myTeam) character.enableXray();
       this.scene.add(character.root);
+      const hitbox = this.showHitboxes ? hitboxFrame() : null;
+      if (hitbox) this.scene.add(hitbox.group);
       this.remotes.set(entry.id, {
         entry,
         character,
@@ -506,6 +538,7 @@ export class Game {
         shownX: 0,
         shownZ: 0,
         lastFired: -100,
+        hitbox,
       });
     }
   }
@@ -665,6 +698,9 @@ export class Game {
 
   private onShot(shot: {
     shooterId: number;
+    fromX: number;
+    fromY: number;
+    fromZ: number;
     toX: number;
     toY: number;
     toZ: number;
@@ -674,17 +710,22 @@ export class Game {
     pellet: boolean;
     explosive: boolean;
   }): void {
-    const end = new THREE.Vector3(shot.toX, shot.toY, shot.toZ);
+    const from = this.shotFrom.set(shot.fromX, shot.fromY, shot.fromZ);
+    const end = this.shotEnd.set(shot.toX, shot.toY, shot.toZ);
+    // The server's world ray leaves the ground out: a shot into it ends under it, so it is stopped
+    // where it crosses the ground, and kicks up dust there.
+    const grounded = !shot.explosive && !shot.hitWorld && !shot.hitPlayerId && end.y < 0 && from.y > 0;
+    if (grounded) end.lerpVectors(from, end, from.y / (from.y - end.y));
     if (shot.explosive) {
       // A launch: the missile itself comes with the snapshots.
-    } else if (shot.hitWorld) this.effects.impact(end);
-    else if (shot.hitPlayerId) this.effects.bloodPuff(end);
+    } else if (shot.hitWorld || grounded) this.effects.impact(end, from, shot.melee);
+    else if (shot.hitPlayerId) this.effects.bloodPuff(end, from);
 
     // A shotgun's other pellets share the first one's flash and sound.
     if (shot.pellet) {
       const remote = this.remotes.get(shot.shooterId);
       if (remote && shot.shooterId !== this.myId) {
-        this.effects.tracer(remote.character.muzzleWorldPosition(new THREE.Vector3()), end);
+        this.effects.tracer(remote.character.muzzleWorldPosition(this.shotMuzzle), end);
       }
       return;
     }
@@ -693,9 +734,11 @@ export class Game {
     const remote = this.remotes.get(shot.shooterId);
     if (!remote) return;
     remote.lastFired = performance.now() / 1000;
-    const muzzle = remote.character.muzzleWorldPosition(new THREE.Vector3());
+    remote.character.kick();
+    const muzzle = remote.character.muzzleWorldPosition(this.shotMuzzle);
     if (!shot.melee) {
-      this.effects.muzzleFlash(muzzle);
+      // A launch reports no end (it is the shooter's eye), so its flash has no flame along the barrel.
+      this.effects.muzzleFlash(muzzle, shot.explosive ? undefined : this.shotDirection.subVectors(end, muzzle));
       if (!shot.explosive) this.effects.tracer(muzzle, end);
     }
     const { distance, pan } = this.relative(muzzle.x, muzzle.z);
@@ -902,13 +945,15 @@ export class Game {
       this.bloomHold = stats.fireInterval + BLOOM_HOLD_EXTRA;
     }
 
-    // Local tracer from the gun towards where the crosshair points.
+    // Local tracer from the gun towards where the crosshair points, stopped by the map or the ground.
     const eye: [number, number, number] = [this.pos.x, this.eyeHeight(), this.pos.z];
     const dir = this.aimDirection();
-    const t = rayWorld(this.boxes, eye, dir, 200) ?? 200;
+    let t = rayWorld(this.boxes, eye, dir, 200) ?? 200;
+    if (dir[1] < 0) t = Math.min(t, eye[1] / -dir[1]);
     const end = new THREE.Vector3(eye[0] + dir[0] * t, eye[1] + dir[1] * t, eye[2] + dir[2] * t);
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const from = new THREE.Vector3(eye[0], eye[1] - 0.16, eye[2]).addScaledVector(right, 0.15);
+    // It starts where the gun's muzzle is on screen, a little way out along that line of sight.
+    const from = this.viewModel.muzzleNdc(this.shotFrom).setZ(0.5).unproject(this.camera).sub(this.camera.position);
+    from.setLength(LOCAL_TRACER_START).add(this.camera.position);
     if (stats.splashRadius === 0) this.effects.tracer(from, end);
     // The server's own pellets land where they land; these only show the spread.
     for (let i = 1; i < stats.pellets; i++) {
@@ -965,8 +1010,21 @@ export class Game {
     }
   }
 
-  /** A warhead pointing along +Z, which is what lookAt aims. */
-  private buildMissile(): THREE.Group {
+  /** A warhead pointing along +Z, which is what lookAt aims: the art's model, or one built here. */
+  private buildMissile(): THREE.Object3D {
+    const art = projectileArt(WeaponKind.MISSILE);
+    const gltf = art && loadedArt()?.models.get(art.file);
+    if (art && gltf) {
+      const model = gltf.scene.clone();
+      toLambert(model);
+      if (!art.placement) return model;
+      const holder = new THREE.Group();
+      model.position.fromArray(art.placement.position ?? [0, 0, 0]);
+      model.rotation.fromArray([...(art.placement.rotation ?? [0, 0, 0]), "XYZ"] as [number, number, number, THREE.EulerOrder]);
+      model.scale.setScalar(art.placement.scale ?? 1);
+      holder.add(model);
+      return holder;
+    }
     const group = new THREE.Group();
     const body = new THREE.Mesh(this.missileBody, this.missileSkin);
     body.rotation.x = Math.PI / 2;
@@ -986,10 +1044,12 @@ export class Game {
       const z = data.z + data.vz * flown;
       view.object.position.set(x, y, z);
       view.object.lookAt(x + data.vx, y + data.vy, z + data.vz);
+      // A puff every 25 ms of flight, each where the missile was when it was due, so the trail
+      // keeps its spacing at any frame rate.
       view.trail -= dt;
-      if (view.trail <= 0) {
-        view.trail = 0.025;
-        this.effects.missileTrail(view.object.position);
+      const velocity = this.missileVelocity.set(data.vx, data.vy, data.vz);
+      for (; view.trail <= 0; view.trail += 0.025) {
+        this.effects.missileTrail(this.shotEnd.copy(view.object.position).addScaledVector(velocity, view.trail), velocity);
       }
     }
   }
@@ -1080,6 +1140,7 @@ export class Game {
     if (this.disposed) return;
     this.frameHandle = requestAnimationFrame(() => this.frame());
     const now = performance.now();
+    this.meter.beginFrame(now);
     const dt = Math.min((now - this.lastFrame) / 1000, 0.1);
     this.lastFrame = now;
     const time = now / 1000;
@@ -1110,15 +1171,37 @@ export class Game {
     const x = this.prev.x + (this.pos.x - this.prev.x) * alpha + this.errX;
     const z = this.prev.z + (this.pos.z - this.prev.z) * alpha + this.errZ;
 
+    // The stance changes at once in the simulation; only the view eases into it.
+    this.viewEye += (this.eyeHeight() - this.viewEye) * Math.min(1, dt * 14);
+    const eyeY = this.alive ? this.viewEye : 0.35;
+    this.camera.position.set(x, eyeY, z);
+    this.camera.rotation.order = "YXZ";
+    this.camera.rotation.set(this.aimPitch(), this.aimYaw(), this.alive ? 0 : 0.5);
+    const scoped = this.scoped();
+    const targetFov = scoped ? SCOPE_FOV : BASE_FOV;
+    if (this.camera.fov !== targetFov) {
+      // Snaps in like a real scope view rather than a slow zoom.
+      this.camera.fov = targetFov;
+      this.camera.updateProjectionMatrix();
+    }
+    // The view is final before the remote players are updated, so those out of it skip their pose.
+    setCharacterView(this.camera);
+
     const renderTick = this.smoothTick - INTERP_TICKS;
     const aimed = this.aimedEnemy();
     const blips: RadarBlip[] = [];
     for (const [id, remote] of this.remotes) {
       const sample = this.sampleRemote(remote, renderTick);
       const state = remote.state;
+      if (remote.hitbox) remote.hitbox.group.visible = !!sample && !!state?.alive;
       if (!sample || !state) {
         remote.character.root.visible = false;
         continue;
+      }
+      if (remote.hitbox) {
+        remote.hitbox.group.position.set(sample.x, 0, sample.z);
+        const shielded = state.shieldHp > 0 && state.weapon === WeaponKind.PISTOL;
+        remote.hitbox.pose(sample.crouching, state.headScale, shielded ? sample.yaw : null);
       }
       remote.shownX = sample.x;
       remote.shownZ = sample.z;
@@ -1140,25 +1223,11 @@ export class Game {
       }
     }
 
-    // The stance changes at once in the simulation; only the view eases into it.
-    this.viewEye += (this.eyeHeight() - this.viewEye) * Math.min(1, dt * 14);
-    const eyeY = this.alive ? this.viewEye : 0.35;
-    this.camera.position.set(x, eyeY, z);
-    this.camera.rotation.order = "YXZ";
-    this.camera.rotation.set(this.aimPitch(), this.aimYaw(), this.alive ? 0 : 0.5);
-
     const stats = this.stats();
     const reloadFraction = this.reloadRemaining > 0 && this.reloadTime() > 0 ? 1 - this.reloadRemaining / this.reloadTime() : 0;
     const boltFraction = stats.hasScope || stats.shellReload ? this.fireCooldown / stats.fireInterval : 0;
     this.viewModel.update(dt, this.movingNow, reloadFraction, boltFraction, this.alive);
 
-    const scoped = this.scoped();
-    const targetFov = scoped ? SCOPE_FOV : BASE_FOV;
-    if (this.camera.fov !== targetFov) {
-      // Snaps in like a real scope view rather than a slow zoom.
-      this.camera.fov = targetFov;
-      this.camera.updateProjectionMatrix();
-    }
     this.hud.setScope(scoped);
     this.updateMissiles(dt, now / 1000);
     this.effects.update(dt);
@@ -1184,6 +1253,12 @@ export class Game {
       this.renderer.clearDepth();
       this.renderer.render(this.viewModel.scene, this.viewModel.camera);
     }
+    this.meter.endFrame();
+  }
+
+  /** Rendering cost and frame times, for e2e/perf.mjs and the ?debug&perf overlay. */
+  perf(): PerfStats {
+    return this.meter.stats();
   }
 
   /** Wallhack: enemy models again, only where the world hides them. */
@@ -1217,8 +1292,24 @@ export class Game {
     document.removeEventListener("pointerlockchange", this.onLockChange);
     if (document.pointerLockElement) document.exitPointerLock();
     this.hud.dispose();
+    this.meter.dispose();
     this.audio.dispose();
+    // The art outlives the match; its GPU copies belong to this renderer and go first.
+    this.effects.dispose();
+    this.viewModel.dispose();
+    disposeWorld(this.world);
+    releaseGpu();
+    releaseCharacterGpu();
+    releaseWireGpu();
+    setCharacterView(null);
+    for (const remote of this.remotes.values()) {
+      remote.character.dispose();
+      remote.hitbox?.dispose();
+    }
     this.renderer.dispose();
+    // Whatever the renderer still holds (shader programs, the drawing buffer) goes with the context
+    // now, rather than when the page collects it: browsers keep only so many WebGL contexts alive.
+    this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
     this.gameRoot.replaceChildren();
   }

@@ -8,7 +8,7 @@
 ## 빌드와 실행
 
 ```powershell
-cd client; npm install; npm run build      # proto 생성 → 타입 검사 → client/dist
+cd client; npm ci; npm run build           # proto 생성 → 에셋 검사 → 타입 검사 → client/dist
 cd ..\server; cargo run --release          # http://localhost:8800
 ```
 
@@ -20,6 +20,53 @@ cd ..\server; cargo run --release          # http://localhost:8800
 - 같은 네트워크의 다른 PC는 `http://<서버 IP>:8800`으로 접속합니다.
 - 클라이언트 개발: 서버를 켠 채 `cd client; npm run dev` → http://localhost:5173. Vite는 `/ws`를 `PORT`(없으면 8800)로 프록시하므로, 서버가 다른 포트로 열렸으면 같은 `PORT`를 주고 실행합니다.
 - `http://localhost:8800/?debug`로 열면 `window.__game`이 노출됩니다.
+
+## 에셋
+
+- 런타임 에셋(glTF·WebP)은 `client/public/art/`에 두고 `client/src/game/art/manifest.json`에 등록합니다. 출처·라이선스는 `client/public/art/LICENSES.json`에 파일별로 기록합니다(AGENTS.md 규칙 7).
+- `npm run build`의 `scripts/check-art.mjs`가 빌드를 실패시키는 경우:
+  - 등록되지 않은 파일이 있거나, 등록됐는데 파일이 없을 때
+  - 라이선스가 허용되지 않을 때(CC0, 또는 표기 문구가 있는 CC-BY만 허용)
+  - manifest가 가리키는 파일이 없을 때
+  - 예산(`manifest.json`의 `budgets`)을 넘을 때
+  - 무기를 하나라도 등록했는데 `WeaponKind` 전체를 채우지 않았을 때
+  - 파일 내용이 `generated.json`의 sha256·크기와 다를 때(내용 잠금), GLB에 삼각형 수 기록이 없을 때, manifest가 이름을 대지 않는 파일이 있을 때 (`.DS_Store`는 무시)
+- `http://localhost:8800/?art`는 서버에 접속하지 않고 에셋을 불러와 manifest 요약·로드 실패·예산을 보여 줍니다.
+- 로더는 실패한 에셋마다 `[art]` 경고 한 줄을 남기고 대체 모형을 씁니다. `console.error`는 남기지 않습니다(`play.mjs`가 콘솔 에러로 실패하기 때문).
+
+### 에셋 파이프라인 (`tools/art/`)
+
+```powershell
+cd tools/art; npm ci
+node fetch.mjs                 # sources.json의 팩을 art-src/로 받고 SHA-256 확인 (art-src/는 gitignore)
+node build-art.mjs             # recipes/로 client/public/art/, generated.json, LICENSES.json, docs/credits.md 생성
+node build-art.mjs --check     # 다시 만들어도 바이트가 같은지 확인
+node inspect.mjs <파일.glb>    # 노드·뼈·클립·삼각형·재질·크기 측정 (--json, --summary)
+```
+
+- 에셋을 바꿀 때는 런타임 파일이 아니라 레시피(`tools/art/recipes/`)를 고칩니다. `build-art.mjs`가 manifest와 만든 결과가 서로 맞는지도 검사합니다.
+- 후보 비교: `node stage-candidates.mjs`로 후보를 `client/public/art/_candidates/`(gitignore, 빌드에서 제외)에 모으면, 개발 서버의 `?art&candidates`가 비교 갤러리를 보여 줍니다.
+- 스크린샷: `node gallery-shots.mjs`는 후보 갤러리를 `client/e2e-shots/art-gallery/`에, `--final`은 등록된 에셋을 `client/e2e-shots/art-final/`에 저장합니다.
+- 출처·라이선스 목록은 [credits.md](credits.md)(자동 생성)에 있습니다.
+
+## 성능 측정
+
+- `?debug&perf`로 열면 화면 왼쪽 위에 draw call·삼각형·셰이더 프로그램·프레임 시간 오버레이가 뜹니다. 같은 값을 `window.__game.perf()`로 읽을 수 있습니다.
+- `node e2e/perf.mjs`는 두 맵에서 봇 경기를 열어 20초 동안 측정하고 `e2e-shots/perf.json`에 저장합니다.
+- 기준선(그래픽 개선 전): 2026-11-04, headless Chrome + SwiftShader, 1280×720, 이 Mac(16코어). e2e 스크립트의 기본 브라우저는 Edge이고, 이 측정은 `channel`만 `"chrome"`으로 바꾼 사본으로 했습니다. 프레임 시간은 실행마다 ±30% 흔들립니다.
+
+| 맵 | draw call 평균(최대) | 삼각형 평균 | 셰이더 프로그램 | 평균 / p95 프레임(ms) | 첫 프레임(ms) |
+| --- | --- | --- | --- | --- | --- |
+| 보급창고 | 190–204 (224) | 약 4,000 | 10 | 38–60 / 88–127 | 2,900–3,150 |
+| 웨어하우스 | 180–193 (224) | 약 3,400 | 8–9 | 47–52 / 124–153 | 2,380–2,450 |
+
+- 3단계(glTF 캐릭터) 뒤: 그리기 호출이 보급창고 103(최대 110), 웨어하우스 112(최대 128)로 줄었습니다. 삼각형은 약 5.4만 개, 셰이더 프로그램은 10~11개입니다. 첫 프레임은 그대로이고, SwiftShader 평균 프레임은 스킨드 메시 때문에 20~40% 느려졌습니다. 실제 GPU에서는 사람이 다시 재야 합니다.
+- 4단계(1인칭) 뒤: 그리기 호출 보급창고 95(최대 112), 웨어하우스 100(최대 109). 1인칭은 약 12회에서 2~3회가 됐습니다. 삼각형은 약 6만 개, 셰이더 프로그램은 11~12개입니다.
+- 5단계(맵) 뒤:
+  - 정적 맵 그리기 호출은 74 → 16(보급창고), 91 → 12(웨어하우스)입니다. 경기 전체로는 보급창고 49(최대 69), 웨어하우스 41(최대 55)입니다.
+  - 삼각형은 약 8.5만~9.5만 개, 셰이더 프로그램은 14~18개입니다.
+  - 첫 프레임은 +2~9%입니다.
+- 6단계(이펙트) 뒤: 경기 전체 그리기 호출 평균 44(최대 49, 보급창고)·40(최대 45, 웨어하우스). 이펙트는 최대 4회이고, 10초 연사 중에도 지오메트리 수가 그대로입니다. 셰이더 프로그램은 17~23개(예산 30)입니다.
 
 ## 프로토콜을 바꿀 때
 
@@ -71,6 +118,8 @@ node e2e/play.mjs "http://localhost:8800/?debug" e2e-shots
 | name-tags.mjs | 벽 뒤 이름표 숨김 |
 | wall-rub.mjs | 벽에 비비며 이동 시 끼임 없음 |
 | crouch-keys.mjs | Ctrl/C 앉기, 봇 없이 만든 방에 봇 없음 |
+| art.mjs | `?art` 미리보기: 에셋 로드 실패·콘솔 에러·`[art]` 경고 0건, 서버 미접속. 캐릭터 벤치로 히트박스 일치(목 높이 서기 1.50·앉기 1.00, pitch ±1.45에서 목 위치, 머리 크기별 머리 꼭대기, 발 높이), 무기별 총구, 캐릭터당 그리기 호출 확인. 1인칭 벤치(무기별 대기·반동·재장전·볼트/펌프·칼질, 빨강/파랑)로 손과 IK 목표의 거리 1.5cm 이내, 대기 중 총구가 화면 안, 그리기 호출 5 이하, 팔 삼각형 예산 확인. 맵 벤치(모든 BoxKind·PropKind)로 키트 인스턴스와 충돌 박스의 1cm 이내 일치, 컨테이너 색, 텍스처 붙은 소품 판(셔터·광고판·창·환기창)이 원래 텍스처와 상관 0.8 이상, 정적 맵 그리기 호출 35 이하 확인. 이펙트 벤치로 모든 레시피 동시 재생 시 그리기 호출 예산, 풀 상한, 데칼이 박스 면(6방향)에 붙는지 확인 |
+| perf.mjs | 맵별 봇 경기에서 draw call·삼각형·셰이더 프로그램·프레임 시간 측정(`e2e-shots/perf.json`). manifest 예산으로 판정: 경기 전체 평균 100·최대 130 이하, 정적 맵(`"world"` 그룹) 35 이하. 10초 연사 구간에서 이펙트 그리기 호출 예산과 지오메트리 수 고정(발사마다 할당 없음) 확인 |
 
 Windows에서 서버를 띄우고 테스트하는 패턴:
 

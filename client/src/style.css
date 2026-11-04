@@ -1225,3 +1225,62 @@ body {
 .hidden.stun-overlay {
   display: none;
 }
+
+/* ------------------------------- Art ------------------------------- */
+
+/* A match that started before the art finished loading waits behind this. */
+.art-wait {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+/* The ?debug&perf readout, below the radar. */
+.perf-overlay {
+  position: fixed;
+  z-index: 20;
+  top: 240px;
+  left: 12px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #d8f0c8;
+  font: 12px / 1.45 var(--num-font);
+  white-space: pre;
+  pointer-events: none;
+}
+
+.art-preview .panel {
+  margin-bottom: 14px;
+}
+
+.art-rows {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 18px;
+  margin: 0;
+}
+
+.art-rows dt {
+  color: var(--muted);
+}
+
+.art-rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.art-failures {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--red);
+  overflow-wrap: anywhere;
+}

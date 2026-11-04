@@ -1,4 +1,4 @@
-// All surfaces are drawn procedurally so the game ships with no image assets.
+// Textures painted in code: wall, floor and roof surfaces, signs, the sky and name tags.
 import * as THREE from "three";
 
 type Paint = (g: CanvasRenderingContext2D, w: number, h: number) => void;
@@ -74,76 +74,6 @@ export const sandTexture = () =>
     speckle(g, w, h, 42000, 0.09);
     stain(g, w, h, 34, "rgba(96,80,52,0.15)");
     stain(g, w, h, 20, "rgba(235,220,180,0.13)");
-  });
-
-export const containerTexture = (base: string, dark: string, code: string) =>
-  canvasTexture(512, 256, (g, w, h) => {
-    g.fillStyle = base;
-    g.fillRect(0, 0, w, h);
-    const ribs = 16;
-    const rib = w / ribs;
-    for (let i = 0; i < ribs; i++) {
-      const gradient = g.createLinearGradient(i * rib, 0, (i + 1) * rib, 0);
-      gradient.addColorStop(0, dark);
-      gradient.addColorStop(0.35, "rgba(255,255,255,0.13)");
-      gradient.addColorStop(0.7, "rgba(0,0,0,0)");
-      gradient.addColorStop(1, dark);
-      g.fillStyle = gradient;
-      g.fillRect(i * rib, 0, rib, h);
-    }
-    g.fillStyle = "rgba(0,0,0,0.3)";
-    g.fillRect(0, 0, w, 10);
-    g.fillRect(0, h - 12, w, 12);
-    g.fillStyle = "rgba(235,235,225,0.72)";
-    g.font = "bold 34px Arial";
-    g.fillText(code, 28, 62);
-    speckle(g, w, h, 2500, 0.1);
-    stain(g, w, h, 8, "rgba(84,50,26,0.28)");
-  });
-
-export const crateTexture = () =>
-  canvasTexture(256, 256, (g, w, h) => {
-    g.fillStyle = "#8d6f49";
-    g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 7; i++) {
-      const v = 120 + Math.random() * 30;
-      g.fillStyle = `rgb(${v},${v * 0.78},${v * 0.52})`;
-      g.fillRect(0, (i * h) / 7 + 1, w, h / 7 - 2);
-    }
-    g.strokeStyle = "rgba(50,34,18,0.45)";
-    for (let i = 0; i < 30; i++) {
-      const y = Math.random() * h;
-      g.beginPath();
-      g.moveTo(0, y);
-      g.bezierCurveTo(w * 0.3, y + 4, w * 0.6, y - 4, w, y + 2);
-      g.stroke();
-    }
-    const frame = 26;
-    g.fillStyle = "#6f5535";
-    g.fillRect(0, 0, w, frame);
-    g.fillRect(0, h - frame, w, frame);
-    g.fillRect(0, 0, frame, h);
-    g.fillRect(w - frame, 0, frame, h);
-    g.strokeStyle = "#6f5535";
-    g.lineWidth = 22;
-    g.beginPath();
-    g.moveTo(frame, frame);
-    g.lineTo(w - frame, h - frame);
-    g.stroke();
-    g.strokeStyle = "rgba(30,20,8,0.7)";
-    g.lineWidth = 3;
-    g.strokeRect(1, 1, w - 2, h - 2);
-    g.strokeRect(frame, frame, w - frame * 2, h - frame * 2);
-  });
-
-export const barrelTexture = () =>
-  canvasTexture(256, 256, (g, w, h) => {
-    g.fillStyle = "#4c5a3c";
-    g.fillRect(0, 0, w, h);
-    g.fillStyle = "rgba(0,0,0,0.3)";
-    for (const y of [0.05, 0.36, 0.66, 0.94]) g.fillRect(0, y * h, w, 7);
-    stain(g, w, h, 8, "rgba(70,40,20,0.4)");
-    speckle(g, w, h, 1500, 0.1);
   });
 
 export const roofTexture = () =>
@@ -260,28 +190,6 @@ export const skyTexture = () =>
       }
     }
   });
-
-export const camoTexture = (base: string, patches: string[]) =>
-  canvasTexture(128, 128, (g, w, h) => {
-    g.fillStyle = base;
-    g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 50; i++) {
-      g.fillStyle = patches[i % patches.length];
-      g.beginPath();
-      g.ellipse(Math.random() * w, Math.random() * h, 5 + Math.random() * 12, 3 + Math.random() * 8, Math.random() * 3, 0, 7);
-      g.fill();
-    }
-  });
-
-export const glowTexture = (inner: string, outer: string) =>
-  canvasTexture(128, 128, (g, w, h) => {
-    const gradient = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
-    gradient.addColorStop(0, inner);
-    gradient.addColorStop(0.35, outer);
-    gradient.addColorStop(1, "rgba(0,0,0,0)");
-    g.fillStyle = gradient;
-    g.fillRect(0, 0, w, h);
-  }, false);
 
 export function nameTexture(name: string, color: string): THREE.CanvasTexture {
   return canvasTexture(256, 48, (g, w, h) => {

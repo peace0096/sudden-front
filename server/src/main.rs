@@ -9,7 +9,8 @@ pub mod pb {
 use axum::{routing::get, Router};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::Sender;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tower_http::services::{ServeDir, ServeFile};
@@ -45,15 +46,23 @@ async fn main() {
     let dist = std::env::var("CLIENT_DIST")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../client/dist"));
-    let static_files = ServeDir::new(&dist).fallback(ServeFile::new(dist.join("index.html")));
-
-    let app = Router::new()
-        .route("/ws", get(net::ws_handler))
-        .fallback_service(static_files)
-        .with_state(inbound_tx);
 
     println!("Sudden Front server: http://localhost:{port}");
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(listener, app(&dist, inbound_tx))
+        .await
+        .expect("server error");
+}
+
+/// The WebSocket, then the client's files from `dist`. A path that matches no file gets the page,
+/// except under /art: a missing art file is a 404, which the client reports as a failed asset
+/// instead of trying to read index.html as a model.
+fn app(dist: &Path, hub: Sender<hub::Inbound>) -> Router {
+    let static_files = ServeDir::new(dist).fallback(ServeFile::new(dist.join("index.html")));
+    Router::new()
+        .route("/ws", get(net::ws_handler))
+        .nest_service("/art", ServeDir::new(dist.join("art")))
+        .fallback_service(static_files)
+        .with_state(hub)
 }
 
 /// Prints a one-line error and exits, without a panic's backtrace.
@@ -222,5 +231,52 @@ mod tests {
         let port = free_port().await;
         let listener = listen(Some(port)).await.unwrap();
         assert_eq!(port_of(&listener), port);
+    }
+
+    /// The status code and body of a plain HTTP/1.1 GET.
+    fn fetch(port: u16, path: &str) -> (u16, String) {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect((LOCALHOST, port)).unwrap();
+        write!(
+            stream,
+            "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let status = response.split(' ').nth(1).unwrap().parse().unwrap();
+        let body = response.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+        (status, body.to_owned())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_missing_art_file_is_a_404_while_other_unknown_paths_get_the_page() {
+        let dist = std::env::temp_dir().join(format!("sudden-front-art-{}", std::process::id()));
+        std::fs::create_dir_all(dist.join("art/weapons")).unwrap();
+        std::fs::write(dist.join("index.html"), "page").unwrap();
+        std::fs::write(dist.join("art/weapons/rifle.glb"), "glTF").unwrap();
+        let (hub, _inbound) = std::sync::mpsc::channel();
+        let router = app(&dist, hub);
+        let listener = TcpListener::bind((LOCALHOST, 0)).await.unwrap();
+        let port = port_of(&listener);
+        tokio::spawn(async move { axum::serve(listener, router).await });
+
+        let answers = tokio::task::spawn_blocking(move || {
+            [
+                "/art/weapons/rifle.glb?v=1a2b",
+                "/art/weapons/missing.glb",
+                "/art/",
+                "/somewhere/else",
+            ]
+            .map(|path| fetch(port, path))
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(&dist).unwrap();
+
+        assert_eq!(answers[0], (200, "glTF".to_owned()));
+        assert_eq!(answers[1].0, 404);
+        assert_eq!(answers[2].0, 404);
+        assert_eq!(answers[3], (200, "page".to_owned()));
     }
 }

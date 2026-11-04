@@ -1,0 +1,353 @@
+{
+  "$comment": "Written by tools/art/build-art.mjs from tools/art/sources.json and the recipes; do not edit. Each file lists its pack, the source path inside the pack and what the pipeline changed.",
+  "packs": {
+    "kenney-particles": {
+      "title": "Particle Pack",
+      "author": "Kenney",
+      "url": "https://opengameart.org/content/particle-pack-80-sprites",
+      "license": "CC0-1.0",
+      "licenseText": "License (Creative Commons Zero, CC0)",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "retrieved": "2026-11-04",
+      "archiveSha256": "163b839ba7f62f8a420da93a62beaa80013588d5d6b1eb30841e1a553635ad70",
+      "downloads": [
+        {
+          "file": "kenney_particlePack.zip",
+          "url": "https://opengameart.org/sites/default/files/kenney_particlePack.zip",
+          "sha256": "163b839ba7f62f8a420da93a62beaa80013588d5d6b1eb30841e1a553635ad70"
+        }
+      ]
+    },
+    "kenney-splat": {
+      "title": "Splat Pack",
+      "author": "Kenney",
+      "url": "https://opengameart.org/content/splat-pack",
+      "license": "CC0-1.0",
+      "licenseText": "License: (Creative Commons Zero, CC0)",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "retrieved": "2026-11-04",
+      "archiveSha256": "cf50b2671c48fd5b957e249447c9b0dff63c878a538c8e38af282b51f1571925",
+      "downloads": [
+        {
+          "file": "kenney_splatpack.zip",
+          "url": "https://opengameart.org/sites/default/files/kenney_splatpack.zip",
+          "sha256": "cf50b2671c48fd5b957e249447c9b0dff63c878a538c8e38af282b51f1571925"
+        }
+      ]
+    },
+    "pp-toon-shooter": {
+      "title": "Toon Shooter Game Kit",
+      "author": "Quaternius",
+      "url": "https://poly.pizza/bundle/Toon-Shooter-Game-Kit-qraiSXoAru",
+      "license": "CC0-1.0",
+      "licenseText": "CC0 1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "retrieved": "2026-11-04",
+      "archiveSha256": "f1ccf3a461c650f62ef45ced8de0ffc8940f718853296d32790e8b66f88c9ed7",
+      "downloads": [
+        {
+          "file": "crate-NlXe0ZJGUd.glb",
+          "url": "https://static.poly.pizza/56f2385f-285a-4df8-a00f-6837a711f5cc.glb",
+          "sha256": "30604302c679a2a9a2c83a28cd54ec8a5664989ec32a75c1f78299b3abfad669"
+        },
+        {
+          "file": "exploding-barrel-1orHe0kCc1.glb",
+          "url": "https://static.poly.pizza/dbb58868-50d4-4ef0-945a-12b07222fb69.glb",
+          "sha256": "730a8da4cb342533ddc20fdb8f52a47f3befd20d0bafa44b668eac066252f2f3"
+        },
+        {
+          "file": "knife-YnC9RcBOWs.glb",
+          "url": "https://static.poly.pizza/10348d8b-44db-4071-914b-db606eadd92c.glb",
+          "sha256": "02fffc2586629b6752ff06f57588b4b52d14d1f6ab002fb3e16fcaa696e6cee9"
+        },
+        {
+          "file": "rocket-launcher-GCqUvqleqN.glb",
+          "url": "https://static.poly.pizza/4b445cbf-38b6-43f3-afd6-32d88e8f074b.glb",
+          "sha256": "a72bedf2d0e5da57d71af7a7aea2e97123dbbce3bf26da2b375fd0abed0142e2"
+        },
+        {
+          "file": "shipping-container-dQXRtm5GbO.glb",
+          "url": "https://static.poly.pizza/e56c8efb-940f-4150-9bf8-d468c0165116.glb",
+          "sha256": "b7e0f6c5775e060ee163a001a155d3dcc978c268edb155a5d6d831e0222a0b97"
+        },
+        {
+          "file": "street-light-nFwrlcLvM5.glb",
+          "url": "https://static.poly.pizza/9a8aac3e-d1ee-4860-b294-edca62ef50be.glb",
+          "sha256": "812b82718233f91850490805b67afd6166a17ed802907521ccc8a2280839f275"
+        }
+      ]
+    },
+    "pp-ultimate-guns": {
+      "title": "Ultimate Guns Pack",
+      "author": "Quaternius",
+      "url": "https://poly.pizza/bundle/Ultimate-Guns-Pack-cpgUfI4t2F",
+      "license": "CC0-1.0",
+      "licenseText": "CC0 1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "retrieved": "2026-11-04",
+      "archiveSha256": "23c3a5fc84cd3846847143bc27b1420471fa57fd7ea254c7f9569a69aab6d4ec",
+      "downloads": [
+        {
+          "file": "assault-rifle-Bgvuu4CUMV.glb",
+          "url": "https://static.poly.pizza/9a0e478c-de82-4773-9b70-a0219bb0057c.glb",
+          "sha256": "a6b90047927c65d0026bb19b5d4625b5ed3270e4ea5e39619cc50f0770aa6259"
+        },
+        {
+          "file": "bipod-Ugy8tjR3Ju.glb",
+          "url": "https://static.poly.pizza/ec8b842c-4dc4-4a81-9fb1-b18cd99c601e.glb",
+          "sha256": "9b4e3a8f54054e4b770d48af106af49a69b3277289472e5a27ea6e2666795ff1"
+        },
+        {
+          "file": "pistol-52kQzphmeF.glb",
+          "url": "https://static.poly.pizza/7a31b522-5632-41d9-8274-031795af5d8d.glb",
+          "sha256": "dd03cc48a55e4b95dabc513d494e5d1516f6b6b5a37f9ecc824850b5784f7acb"
+        },
+        {
+          "file": "pistol-J3i9KDQ3kt.glb",
+          "url": "https://static.poly.pizza/f5a88c73-af97-49ca-8650-4bde579d2f80.glb",
+          "sha256": "4622ab2909aa0f4e88b74a13f52f9e28183a6ff5fca5896fc7e98d44008f2148"
+        },
+        {
+          "file": "revolver-XrnLUz6kQj.glb",
+          "url": "https://static.poly.pizza/7951b3b9-d3a5-4ec8-81b7-11111f1c8e88.glb",
+          "sha256": "3d24e4743b9043e3d2f932b15e9bc558ffb491c04bc63b0384853bf13da02ee9"
+        },
+        {
+          "file": "shotgun-DcNE0HVdW8.glb",
+          "url": "https://static.poly.pizza/032e6589-3188-41bc-b92b-e25528344275.glb",
+          "sha256": "cc6e3dee173d845a032d6e12c9261caadaf47f7c56c34d4f780f472aa663f7f9"
+        },
+        {
+          "file": "sniper-rifle-TKaBjAEofL.glb",
+          "url": "https://static.poly.pizza/d9962f20-fdce-42a5-81c8-2847a4487447.glb",
+          "sha256": "7cdce34dec9a9b1aae6c9e2ef554c88ecdc19554407decc239b159e13d295f3f"
+        },
+        {
+          "file": "submachine-gun-7ehatxr7FY.glb",
+          "url": "https://static.poly.pizza/fb8ae707-d5b9-4eb8-ab8c-1c78d3c1f710.glb",
+          "sha256": "69df22d1aa8603d66366d20c46755cca2a19e1cabe8c1db1b72edb491ae48699"
+        }
+      ]
+    },
+    "pp-ultimate-modular-men": {
+      "title": "Ultimate Modular Men Pack",
+      "author": "Quaternius",
+      "url": "https://poly.pizza/bundle/Ultimate-Modular-Men-Pack-ZiH8muWqwQ",
+      "license": "CC0-1.0",
+      "licenseText": "CC0 1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "retrieved": "2026-11-04",
+      "archiveSha256": "d1ca2edd2a72d123502fb59584c77d27cb84f189a637239f6bffaf8699fad9ce",
+      "downloads": [
+        {
+          "file": "swat-Btfn3G5Xv4.glb",
+          "url": "https://static.poly.pizza/713f6535-f4f3-4367-a4c6-ced126ae0936.glb",
+          "sha256": "a835107bac833eb916c494e10997ae1709e85957ea6f6c59ace3c9a66f6d1fec"
+        }
+      ]
+    },
+    "procedural": {
+      "title": "Sudden Front procedural models",
+      "author": "Sudden Front",
+      "url": "tools/art/recipes/",
+      "license": "CC0-1.0",
+      "licenseText": "CC0 1.0 (이 저장소의 tools/art 스크립트가 만든 모델)",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "retrieved": "2026-11-04",
+      "archiveSha256": "0669f15830be13dad2407a96049598b26b0bd18afec4c0559b7e2ae584df1b06"
+    }
+  },
+  "files": {
+    "characters/swat-blue.glb": {
+      "pack": "pp-ultimate-modular-men",
+      "sourcePath": "swat-Btfn3G5Xv4.glb",
+      "changes": [
+        "클립 24개 중 9개만 남기고 이름 변경 (Idle→idle, Run→run, Run_Back→runBack, Run_Left→strafeL, Run_Right→strafeR, Walk→walk, Death→death, Idle_Gun_Pointing→holdRifle, Gun_Shoot→shoot)",
+        "부위 메시 4개를 스킨 메시 하나로 합침",
+        "Swat 재질에 팀 색 #3f6fa8을 70% 섞음",
+        "미터 단위로 정규화: 머리 뼈 1.5 m, 발 y = 0, 아마추어의 회전·100배 배율을 뼈에 합침 (×0.9632)",
+        "뼈 이름을 게임 표준 이름으로 바꿈 (hips·spine·chest·neck·head·clavicle/upperArm/foreArm/hand·thigh/shin/foot + L/R)",
+        "삼각형 7752개를 4790개로 감량 (면별 법선을 지우고 용접, 평면 셰이딩 유지)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침, 키프레임 정리(resample), meshopt 압축"
+      ]
+    },
+    "characters/swat-red.glb": {
+      "pack": "pp-ultimate-modular-men",
+      "sourcePath": "swat-Btfn3G5Xv4.glb",
+      "changes": [
+        "클립 24개 중 9개만 남기고 이름 변경 (Idle→idle, Run→run, Run_Back→runBack, Run_Left→strafeL, Run_Right→strafeR, Walk→walk, Death→death, Idle_Gun_Pointing→holdRifle, Gun_Shoot→shoot)",
+        "부위 메시 4개를 스킨 메시 하나로 합침",
+        "Swat 재질에 팀 색 #b4483a을 70% 섞음",
+        "미터 단위로 정규화: 머리 뼈 1.5 m, 발 y = 0, 아마추어의 회전·100배 배율을 뼈에 합침 (×0.9632)",
+        "뼈 이름을 게임 표준 이름으로 바꿈 (hips·spine·chest·neck·head·clavicle/upperArm/foreArm/hand·thigh/shin/foot + L/R)",
+        "삼각형 7752개를 4790개로 감량 (면별 법선을 지우고 용접, 평면 셰이딩 유지)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침, 키프레임 정리(resample), meshopt 압축"
+      ]
+    },
+    "fx/decals.webp": {
+      "pack": "kenney-splat",
+      "sourcePath": "PNG/Double (512px)/splat19.png, PNG/Double (512px)/splat02.png, PNG/Double (512px)/splat33.png, PNG/Double (512px)/splat11.png",
+      "changes": [
+        "512 px 얼룩 4장을 256 px로 줄여 512² 아틀라스(2×2)로 모음",
+        "색은 흰색, 모양은 알파로 (straight alpha)",
+        "WebP로 저장"
+      ]
+    },
+    "fx/particles.webp": {
+      "pack": "kenney-particles",
+      "sourcePath": "PNG/muzzle_01.png, PNG/muzzle_02.png, PNG/muzzle_03.png, PNG/smoke_01.png, PNG/smoke_04.png, PNG/smoke_07.png, PNG/star_06.png, PNG/spark_06.png, PNG/fire_01.png, PNG/flame_01.png, PNG/flare_01.png, PNG/scorch_01.png, PNG/scorch_03.png, PNG/dirt_01.png, PNG/trace_01.png, PNG/light_01.png",
+      "changes": [
+        "512 px 스프라이트 16장을 256 px로 줄여 1024² 아틀라스(4×4)로 모음",
+        "검은 바탕의 회색을 알파로 바꾸고 색은 흰색으로 (straight alpha)",
+        "WebP로 저장"
+      ]
+    },
+    "map/barrel.glb": {
+      "pack": "pp-toon-shooter",
+      "sourcePath": "exploding-barrel-1orHe0kCc1.glb",
+      "changes": [
+        "0.9 × 1.1 × 0.9 m에 맞춤 (축별 배율 1.1465 × 1.0739 × 1.1465, Y축으로 90° 돌림), 바닥을 y = 0에",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "meshopt 압축"
+      ]
+    },
+    "map/container.glb": {
+      "pack": "pp-toon-shooter",
+      "sourcePath": "shipping-container-dQXRtm5GbO.glb",
+      "changes": [
+        "6 × 2.6 × 2.4 m에 맞춤 (축별 배율 1.3763 × 1.2202 × 1.1483), 바닥을 y = 0에",
+        "재질별로 body·frame 노드를 나눔 (body은 흰색: 인스턴스마다 색을 곱해 칠함)",
+        "meshopt 압축"
+      ]
+    },
+    "map/crate.glb": {
+      "pack": "pp-toon-shooter",
+      "sourcePath": "crate-NlXe0ZJGUd.glb",
+      "changes": [
+        "1.2 × 1.2 × 1.2 m에 맞춤 (축별 배율 1.5193 × 1.5193 × 1.5193, Y축으로 90° 돌림), 바닥을 y = 0에",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "meshopt 압축"
+      ]
+    },
+    "map/street-light.glb": {
+      "pack": "pp-toon-shooter",
+      "sourcePath": "street-light-nFwrlcLvM5.glb",
+      "changes": [
+        "Light 재질에 발광색 #77735f",
+        "0.4331 × 5.6 × 2.1603 m에 맞춤 (축별 배율 1.0356 × 0.9919 × 1.0356), 바닥을 y = 0에",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "meshopt 압축"
+      ]
+    },
+    "projectiles/missile.glb": {
+      "pack": "procedural",
+      "sourcePath": "tools/art/recipes/projectiles/missile.mjs",
+      "changes": [
+        "스크립트로 만든 모델: 몸통(반지름 0.11 m, 길이 0.65 m)·빨간 탄두(0.2 m)는 지금의 game.ts 미사일과 같은 크기, 날개 4장과 노즐을 더함",
+        "+Z를 향함, 재질 색을 팔레트 텍스처 하나로 모아 primitive 하나로 합침, meshopt 압축"
+      ]
+    },
+    "weapons/knife.glb": {
+      "pack": "pp-toon-shooter",
+      "sourcePath": "knife-YnC9RcBOWs.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.3 m로 배율 조정 (×0.213)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/machine_gun.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "assault-rifle-Bgvuu4CUMV.glb, bipod-Ugy8tjR3Ju.glb",
+      "changes": [
+        "Bipod 모델을 붙임",
+        "박스 탄창을 스크립트로 만들어 붙임",
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 1.04 m로 배율 조정 (×0.2012)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/magnum.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "revolver-XrnLUz6kQj.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.3 m로 배율 조정 (×0.1578)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/missile.glb": {
+      "pack": "pp-toon-shooter",
+      "sourcePath": "rocket-launcher-GCqUvqleqN.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 1 m로 배율 조정 (×0.7683)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/pistol.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "pistol-J3i9KDQ3kt.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.2 m로 배율 조정 (×0.1099)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/pistol_plus.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "pistol-52kQzphmeF.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.24 m로 배율 조정 (×0.0981)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/rifle.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "assault-rifle-Bgvuu4CUMV.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.84 m로 배율 조정 (×0.1625)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/shotgun.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "shotgun-DcNE0HVdW8.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 1 m로 배율 조정 (×0.1729)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/smg.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "submachine-gun-7ehatxr7FY.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.55 m로 배율 조정 (×0.136)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/sniper.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "sniper-rifle-TKaBjAEofL.glb",
+      "changes": [
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 1.2 m로 배율 조정 (×0.1656)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    },
+    "weapons/taser.glb": {
+      "pack": "pp-ultimate-guns",
+      "sourcePath": "pistol-J3i9KDQ3kt.glb",
+      "changes": [
+        "재질 색 변경: Metal → #d8b52c, LightMetal → #e3c650",
+        "총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.2 m로 배율 조정 (×0.1099)",
+        "재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침",
+        "총구 끝에 muzzle 노드 추가, meshopt 압축"
+      ]
+    }
+  }
+}

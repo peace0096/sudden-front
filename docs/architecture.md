@@ -6,7 +6,7 @@
 proto/game.proto            패킷 정의의 단일 원본 (Rust·TS 코드 모두 여기서 생성)
 server/
   build.rs                  prost-build로 game.proto → game.v1.rs
-  src/main.rs               axum 라우터: /ws 와 client/dist 정적 파일, 포트 선택 (기본 8800, 사용 중이면 빈 포트)
+  src/main.rs               axum 라우터: /ws, /art (없는 파일은 404), client/dist 정적 파일, 포트 선택 (기본 8800, 사용 중이면 빈 포트)
   src/net.rs                WebSocket 세션 ↔ 허브 스레드 (mpsc 채널)
   src/hub.rs                로비, 방(팀별 5칸: 사람·봇·빈칸), 방장 권한, 30Hz 틱 루프, 칸 배정 단위 테스트 (23개)
   src/game/
@@ -21,7 +21,7 @@ server/
     map.rs                  맵 데이터 (보급창고, 웨어하우스)
     tests.rs                규칙 단위 테스트 (91개, 1개는 디버그 빌드 전용)
 client/
-  src/main.ts               진입점, 화면 전환
+  src/main.ts               진입점, 화면 전환, 에셋 프리로드(에셋이 준비되기 전 경기가 시작되면 "에셋 불러오는 중…" 오버레이로 대기), ?art 미리보기 분기
   src/net.ts                WebSocket 연결, encode/decode
   src/lobby.ts              로그인, 방 목록·방 생성 (모드·맵·봇 채우기 초기값), 대기실 (팀 변경, 방장의 목표 킬·칸별 봇 설정). 로비가 떠 있으면 방 목록 패널만 다시 그림
   src/weapons.ts            무기 설명 문구, 게임 중 B키 무기 선택 카드
@@ -29,14 +29,30 @@ client/
   src/game/
     game.ts                 게임 루프, 입력, 예측·보정, 반동, 스냅샷 반영, 증강 UI 연결
     movement.ts             이동/충돌 (서버 step_move와 동일해야 함)
-    world.ts                맵 렌더링
-    character.ts            원격 플레이어 모델 (머리 크기, 방패, 마비 스파크, 무기 모델)
-    viewmodel.ts            1인칭 무기 모델
-    effects.ts              총구 화염, 탄흔, 폭발, 미사일 꼬리
+    world.ts                맵 렌더링: 하늘·조명·바닥·맵을 "world" 그룹으로 반환. 컨테이너(4색·기울어진 것)·상자·드럼통·가로등은 키트 모델을 InstancedMesh로 충돌 박스에 맞춤(1cm 이내), 벽돌·콘크리트·지붕은 병합 박스와 코드 텍스처, 트러스·바닥선은 각각 한 메시, 셔터·광고판·창·환기창·천장 조명은 종류별 인스턴스. 키트가 없으면 그 종류만 단색 박스로 그림
+    character.ts            원격 플레이어: glTF SWAT(팀별 템플릿을 SkeletonUtils.clone), AnimationMixer 이동 블렌드, 무기 소켓, 머리 크기, 방패, 마비 스파크, 원격 발사 킥. 시야 절두체 밖 캐릭터는 애니메이션 계산을 건너뛰고 다음에 보일 때 따라잡음(setCharacterView)
+    viewmodel.ts            1인칭: SWAT 팔(빗장뼈 아래 삼각형만 그림)과 glTF 총. 총은 manifest `fp` 위치(기존 화면 구도)에 두고, rig.ts IK로 오른손을 손잡이·왼손을 지지점에 맞춤. 팀 색 소매(setTeam 때 처음 만들고, 만들기에 실패한 팀은 다시 시도하지 않음), 한손 무기는 왼팔을 내림, 아킴보는 왼손에 반전된 두 번째 총
+    effects.ts              이펙트 레시피: 총구 화염, 재질별 착탄, 땅 먼지, 피(벽 핏자국 1.5m 이내), 폭발(섬광·불덩이·충격파·불꽃·연기·그을음, 동적 광원 없음), 미사일 꼬리. 합계 그리기 호출 4 이하, 발사마다 할당 없음
+    particles.ts            ParticleBatch(카메라를 보는 인스턴스 사각형, CPU 시뮬레이션, 알파·가산 두 배치)와 TracerBatch(예광탄 리본 링 버퍼)
+    decals.ts               DecalPool: 박스 면과 땅(y=0)에 붙는 탄흔 96개·핏자국/그을음 32개 링 버퍼(곱하기 합성, 드럼통·INVISIBLE 제외)
     hud.ts                  HUD, 점수판, 증강 카드 화면, 무기 슬롯, 마비 오버레이
     audio.ts                WebAudio 절차 합성 사운드. 무기별 발사음·볼트·펌프를 OfflineAudioContext로 미리 렌더링해 재생, 마스터 리미터
     textures.ts             캔버스 절차 텍스처
+    perf.ts                 draw call·삼각형·셰이더 프로그램·프레임 시간 측정 (Game.perf(), ?debug&perf 오버레이)
+    art/
+      manifest.json         에셋 등록의 단일 원본 (무기·캐릭터와 자세별 뼈 오프셋(holds)·3인칭 왼손 지지점(tp.support)·1인칭 배치(fp: 위치·배율·support·oneHanded·pump·반동)·팔(arms.scale)·맵·이펙트·예산)
+      rig.ts                절차적 뼈 레이어: 상체 정면 유지, 자세(holds)와 왼손 IK, 조준 pitch 분배, 앉기(다리 2관절 IK), 머리 크기
+      manifest.ts           manifest 타입과 조회 함수
+      generated.json        변환 결과의 파일별 sha256·?v=용 앞 16자 해시·크기·삼각형 수 (스크립트가 쓰고 check-art가 내용 잠금으로 대조)
+      loader.ts             loadArt(): GLB·WebP 로드(매직 바이트 확인, meshopt, GLTFLoader 청크 60초 제한, Safari·구 Firefox는 <img>로 디코드), 실패는 [art] 경고와 failures 목록이고 다음 경기 시작 때 한 번 다시 받음, releaseGpu()
+      materials.ts          glTF 재질을 MeshLambertMaterial로 변환·공유
+      placeholder.ts        로드 실패 시 쓰는 대체 모형
+      hitbox.ts             서버 히트박스·CROUCH_DROP·방패 크기의 클라이언트 사본
+      preview.ts            ?art 미리보기 페이지와 캐릭터·1인칭·맵 벤치 (서버 미접속, 결과는 window.__artReport)
+      effects-bench.ts      ?art 이펙트 벤치 (고정 시간 간격·시드 고정으로 레시피별 프레임 재현)
   src/gen/game_pb.ts        npm run gen 으로 생성 (gitignore)
+  public/art/               glTF·WebP 에셋과 LICENSES.json (파일별 출처·라이선스)
+  scripts/check-art.mjs     빌드 때 에셋 등록·라이선스·예산 검사
   e2e/*.mjs                 Playwright 브라우저 테스트
 ```
 
@@ -92,7 +108,12 @@ bot_think → consume_inputs → update_weapons → fire_weapons → update_perk
 
 ## 클라이언트 렌더링
 
-- three.js 씬 하나에 맵, 원격 캐릭터, 1인칭 뷰모델(별도 카메라 레이어), 이펙트를 그립니다.
+- 월드 씬에 맵, 원격 캐릭터, 이펙트를 그립니다. 1인칭 뷰모델은 별도 씬·카메라(FOV 50)로, 깊이를 지운 뒤 그 위에 그립니다(스코프 중에는 생략).
 - 이름표는 벽에 가려지면 숨깁니다(레이캐스트).
-- 투과(Wallhack) 증강은 적 캐릭터를 depthTest 없는 단색 패스로 한 번 더 그립니다.
+- 투과(Wallhack) 증강은 적 캐릭터(카메라 레이어 1)를 깊이 비교를 반대로 한(`GreaterDepth`) 반투명 단색 재질로 한 번 더 그려, 벽에 가려진 부분만 보이게 합니다. 스킨드 메시도 포즈가 적용된 채 그려지고, `polygonOffset`으로 겹침 깜빡임을 막습니다.
+- 원격 캐릭터는 이동 방향·속도를 보간 위치에서 추정해 run·runBack·strafe 클립을 섞고(서버의 `moving` 플래그는 약 3틱 앞서 다리가 일찍 멈추기 때문), 그 위에 `rig.ts`가 자세·조준·앉기를 덧씌웁니다. 앉기는 클립 없이 몸을 `CROUCH_DROP`만큼 내리고 다리를 2관절 IK로 바닥에 붙입니다. 머리 뼈가 히트박스 머리 시작(1.5m)에 있어 머리 크기 증강은 뼈 배율만 바꿉니다.
+- `?debug&hitbox`로 열면 원격 플레이어마다 서버 히트박스(앉기·머리 크기·방패 포함)를 선으로 그립니다.
+- `?debug&collision`으로 열면 모든 MapBox 모서리를 한 `LineSegments`로 그립니다(보이는 상자는 노랑, INVISIBLE은 자홍). 보이는 모델과 충돌 박스가 맞는지 확인할 때 씁니다.
+- 이펙트는 파티클 알파·가산 배치, 예광탄 리본, 데칼 풀의 네 번으로 그립니다(예산은 manifest `budgets.drawCalls.effects`). 파티클이 가득 차면 수명이 가장 많이 지난 것을 바꿔 씁니다.
+- 정적 맵은 그리기 호출 16회(보급창고)·12회(웨어하우스)입니다(예산 35). `InstancedMesh`는 인스턴스 하나라도 보이면 전부 그리므로, 정적 맵의 삼각형은 약 3만 개로 늘었습니다.
 - `?debug` 쿼리로 열면 `window.__game`이 노출되어 e2e 테스트가 내부 상태를 읽습니다.

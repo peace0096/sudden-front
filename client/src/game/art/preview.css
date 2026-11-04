@@ -1,0 +1,94 @@
+/* The ?art page's model sheets (preview.ts); loaded only with it. */
+
+.art-sheet .lobby-frame {
+  max-width: 1480px;
+}
+
+.art-section {
+  margin-bottom: 14px;
+}
+
+.art-section .panel-head select {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font: 600 13px var(--ui-font);
+}
+
+.art-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.art-card {
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.art-card canvas {
+  display: block;
+}
+
+.art-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.art-card-character {
+  width: 562px;
+}
+
+.art-card-weapon {
+  width: 352px;
+}
+
+.art-card-kit {
+  width: 312px;
+}
+
+.art-card-fp {
+  width: 342px;
+}
+
+.art-card-atlas {
+  width: 532px;
+}
+
+.art-legend {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.art-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.art-facts dt {
+  color: var(--muted);
+}
+
+.art-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.art-facts dd.ok {
+  color: #8fd88f;
+}
+
+.art-facts dd.over {
+  color: var(--red);
+}
+
+.art-card-map {
+  width: 962px;
+}

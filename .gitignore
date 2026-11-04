@@ -4,6 +4,12 @@ client/dist/
 client/src/gen/
 client/e2e-shots/
 .omc/
+art-src/
+tools/art/node_modules/
+client/public/art/_candidates/
+
+# macOS Finder folder metadata
+.DS_Store
 
 # JetBrains IDE
 /.idea/shelf/

@@ -1,0 +1,657 @@
+{
+  "$comment": "Every pack tools/art/fetch.mjs downloads into art-src/<id>/. license is the exact wording of the pack's license file or page, licenseEvidence says where it was read, spdx is its identifier. A pack with excluded is never staged (stage-candidates.mjs stages CC0-1.0 only). sha256 pins each download; fetch.mjs refuses a file that does not match.",
+  "packs": [
+    {
+      "id": "pp-ultimate-modular-men",
+      "title": "Ultimate Modular Men Pack",
+      "author": "Quaternius",
+      "page": "https://poly.pizza/bundle/Ultimate-Modular-Men-Pack-ZiH8muWqwQ",
+      "source": "poly.pizza",
+      "license": "CC0 1.0",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "poly.pizza Licence field of every listed model (bundle listing and model page); Poly Pizza GLBs carry no license file",
+      "retrieved": "2026-11-04",
+      "files": [
+        {
+          "name": "swat-Btfn3G5Xv4.glb",
+          "title": "SWAT",
+          "page": "https://poly.pizza/m/Btfn3G5Xv4",
+          "download": "https://static.poly.pizza/713f6535-f4f3-4367-a4c6-ced126ae0936.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "a835107bac833eb916c494e10997ae1709e85957ea6f6c59ace3c9a66f6d1fec"
+        },
+        {
+          "name": "worker-Yg2bQZO6Hj.glb",
+          "title": "Worker",
+          "page": "https://poly.pizza/m/Yg2bQZO6Hj",
+          "download": "https://static.poly.pizza/3a5f3056-ffe6-42eb-bd52-122afcbd22b2.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "9c28614f465b7dc105f908c20c22fc045f4b07caf8c5ef0e9f8049eceb6dd38d"
+        },
+        {
+          "name": "casual-character-kZ3DmIoGip.glb",
+          "title": "Casual Character",
+          "page": "https://poly.pizza/m/kZ3DmIoGip",
+          "download": "https://static.poly.pizza/90a9e2d4-053f-42f1-99a2-8f5e1180ea7f.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "fea7e71271203e7073f1a073fa1208de7402df276f87f80e149bf7589b5d46b4"
+        },
+        {
+          "name": "hoodie-character-gKLBoRsyKe.glb",
+          "title": "Hoodie Character",
+          "page": "https://poly.pizza/m/gKLBoRsyKe",
+          "download": "https://static.poly.pizza/bcd66ec5-5e81-4901-a222-47abc875fe2a.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "0de1bcd789d409214cf82f66f61daeb53d2f7de6d914b23e7b3660bfb3dee61e"
+        },
+        {
+          "name": "punk-BTALZymknF.glb",
+          "title": "Punk",
+          "page": "https://poly.pizza/m/BTALZymknF",
+          "download": "https://static.poly.pizza/e56f23b5-3270-406f-8924-f77cad980c43.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "94afa8718093cc7f9e51cdc0b35f4432c1c2f1901177f98fbbbcb4c6fd79b163"
+        },
+        {
+          "name": "adventurer-5EGWBMpuXq.glb",
+          "title": "Adventurer",
+          "page": "https://poly.pizza/m/5EGWBMpuXq",
+          "download": "https://static.poly.pizza/bbe369ee-a686-42c7-adad-14356f5f2f15.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "4a8639cd8eee9d8a150464edc25eb0536ced464790704a64e40c8620d99f66db"
+        },
+        {
+          "name": "business-man-JFrLIKqvCH.glb",
+          "title": "Business Man",
+          "page": "https://poly.pizza/m/JFrLIKqvCH",
+          "download": "https://static.poly.pizza/e599abbe-7d73-488c-9d7e-3ead281e705c.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "82b81257c1e94cd9ee48cb1dcbe5ff506e81c9ce67cd0c5af542d8712dca546e"
+        }
+      ]
+    },
+    {
+      "id": "pp-ultimate-modular-women",
+      "title": "Ultimate Modular Women Pack",
+      "author": "Quaternius",
+      "page": "https://poly.pizza/bundle/Ultimate-Modular-Women-Pack-aCBDXDdTNN",
+      "source": "poly.pizza",
+      "license": "CC-BY 3.0",
+      "spdx": "CC-BY-3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/3.0/",
+      "licenseEvidence": "poly.pizza Licence field: Soldier, Sci Fi Character, Witch, Worker and Suit are CC-BY 3.0; the other five models of the bundle are CC0 1.0",
+      "excluded": "Not CC0. Kept out of the gallery; downloaded only to be measured. quaternius.com may distribute the same pack as CC0, which a person has to check and download (plan H1).",
+      "retrieved": "2026-11-04",
+      "files": [
+        {
+          "name": "soldier-oAArCNHjFB.glb",
+          "title": "Soldier",
+          "page": "https://poly.pizza/m/oAArCNHjFB",
+          "download": "https://static.poly.pizza/66a55d04-4286-44a3-b289-0d774c27db5b.glb",
+          "license": "CC-BY 3.0",
+          "spdx": "CC-BY-3.0",
+          "licenseUrl": "https://creativecommons.org/licenses/by/3.0/",
+          "sha256": "8df8a98f513dd2236789992f575dbab9552a724e6dd9ce9d2e061690eccfa439"
+        }
+      ]
+    },
+    {
+      "id": "pp-animated-men",
+      "title": "Animated Men Pack",
+      "author": "Quaternius",
+      "page": "https://poly.pizza/bundle/Animated-Men-Pack-DAC9SDgMQT",
+      "source": "poly.pizza",
+      "license": "CC0 1.0",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "poly.pizza Licence field of every listed model (bundle listing and model page); Poly Pizza GLBs carry no license file",
+      "retrieved": "2026-11-04",
+      "files": [
+        {
+          "name": "man-HMnuH5geEG.glb",
+          "title": "Man",
+          "page": "https://poly.pizza/m/HMnuH5geEG",
+          "download": "https://static.poly.pizza/3746be88-6799-4817-929b-6bc067c47caa.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "dad8fa3ca2bc7760892f9ff47f544941179e50acb2aa772cf9f035154a37fc58"
+        },
+        {
+          "name": "man-fjHyMd5Wxw.glb",
+          "title": "Man",
+          "page": "https://poly.pizza/m/fjHyMd5Wxw",
+          "download": "https://static.poly.pizza/985eacbf-9dde-44b7-9270-4e35c8400b13.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "40c62848350df6d13cc6eed20f30c3406a7761542236d8a9f6c3a4060d005e97"
+        },
+        {
+          "name": "man-in-long-sleeves-DLptRuewTn.glb",
+          "title": "Man in Long Sleeves",
+          "page": "https://poly.pizza/m/DLptRuewTn",
+          "download": "https://static.poly.pizza/e6019b9f-aed0-400c-8df4-ce5b648e9b82.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "48536b0e0ea375f0831dbf5154b4c2eafda8b6c9c19ba0996dd298f2fcc9164c"
+        }
+      ]
+    },
+    {
+      "id": "ual1-standard",
+      "title": "Universal Animation Library [Standard]",
+      "author": "Quaternius",
+      "page": "https://opengameart.org/content/universal-animation-library",
+      "source": "opengameart.org",
+      "license": "CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "License.txt in the archive (Animation Library[Standard]/License.txt); the OpenGameArt page lists CC0",
+      "retrieved": "2026-11-04",
+      "download": "https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "archive": "universal_animation_librarystandard.zip",
+      "sha256": "18ff1a7215f4852b320203e8aaf02a1578b5c8eef9027fbaedfcedc7b85a3ac2"
+    },
+    {
+      "id": "pp-ultimate-guns",
+      "title": "Ultimate Guns Pack",
+      "author": "Quaternius",
+      "page": "https://poly.pizza/bundle/Ultimate-Guns-Pack-cpgUfI4t2F",
+      "source": "poly.pizza",
+      "license": "CC0 1.0",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "poly.pizza Licence field of every listed model (bundle listing and model page); Poly Pizza GLBs carry no license file",
+      "retrieved": "2026-11-04",
+      "files": [
+        {
+          "name": "bipod-Ugy8tjR3Ju.glb",
+          "title": "Bipod",
+          "page": "https://poly.pizza/m/Ugy8tjR3Ju",
+          "download": "https://static.poly.pizza/ec8b842c-4dc4-4a81-9fb1-b18cd99c601e.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "9b4e3a8f54054e4b770d48af106af49a69b3277289472e5a27ea6e2666795ff1"
+        },
+        {
+          "name": "bayonet-D81P2smzCy.glb",
+          "title": "Bayonet",
+          "page": "https://poly.pizza/m/D81P2smzCy",
+          "download": "https://static.poly.pizza/e1d818e1-c3b2-41cd-b2bb-293de2c556ae.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "bc98c48701beb01c9bada351b959efdf06ccbff2a6ecaee383de730cbac381cb"
+        },
+        {
+          "name": "scope-Y9DSevnvGq.glb",
+          "title": "Scope",
+          "page": "https://poly.pizza/m/Y9DSevnvGq",
+          "download": "https://static.poly.pizza/4d8fd75b-9b1d-45cc-ba3e-403b633a91f2.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "fa163559e4073db4bc7b0d29d8e34b59e904f1216d9a5f0edc3f8429be3b75f9"
+        },
+        {
+          "name": "shotgun-DcNE0HVdW8.glb",
+          "title": "Shotgun",
+          "page": "https://poly.pizza/m/DcNE0HVdW8",
+          "download": "https://static.poly.pizza/032e6589-3188-41bc-b92b-e25528344275.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "cc6e3dee173d845a032d6e12c9261caadaf47f7c56c34d4f780f472aa663f7f9"
+        },
+        {
+          "name": "tripod-sVTKUSz3m2.glb",
+          "title": "Tripod",
+          "page": "https://poly.pizza/m/sVTKUSz3m2",
+          "download": "https://static.poly.pizza/0bf83614-f70b-4b16-826e-246b04320b62.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "b9af94d1da83eabece1dd282f625d7200722cb2da79f376449a24fa9fb79dc8a"
+        },
+        {
+          "name": "assault-rifle-K2lXTYFSLC.glb",
+          "title": "Assault Rifle",
+          "page": "https://poly.pizza/m/K2lXTYFSLC",
+          "download": "https://static.poly.pizza/b3e6be61-0299-4866-a227-58f5f3fe610b.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "5cdb78109f81e2f31cd657bbd133c2c63c3bc0d55a4e7ba4264f09456452a5d7"
+        },
+        {
+          "name": "assault-rifle-fpLucho45C.glb",
+          "title": "Assault Rifle",
+          "page": "https://poly.pizza/m/fpLucho45C",
+          "download": "https://static.poly.pizza/db2d564c-63b2-4316-a89e-0f7d7a2416c9.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "34f9ea1e664444b024e29c3ad5e910912716b570fe803ce965df19c8ce6907a1"
+        },
+        {
+          "name": "pistol-Jyn9qex4ba.glb",
+          "title": "Pistol",
+          "page": "https://poly.pizza/m/Jyn9qex4ba",
+          "download": "https://static.poly.pizza/3b53f0fe-f86e-451c-816d-6ab9bd265cdc.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "267c2dc0652798aeac335e89c739111ace0ba1090a361c1de16d7bf09ab1b472"
+        },
+        {
+          "name": "pistol-J3i9KDQ3kt.glb",
+          "title": "Pistol",
+          "page": "https://poly.pizza/m/J3i9KDQ3kt",
+          "download": "https://static.poly.pizza/f5a88c73-af97-49ca-8650-4bde579d2f80.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "4622ab2909aa0f4e88b74a13f52f9e28183a6ff5fca5896fc7e98d44008f2148"
+        },
+        {
+          "name": "revolver-9C26wSpMS0.glb",
+          "title": "Revolver",
+          "page": "https://poly.pizza/m/9C26wSpMS0",
+          "download": "https://static.poly.pizza/9e728565-67a3-44db-9567-982320abff09.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "3e661102b0c277625559316b6d5b6762536e70ac2b071fb9ef0f5f96f4d22158"
+        },
+        {
+          "name": "pistol-Z7aOjJu583.glb",
+          "title": "Pistol",
+          "page": "https://poly.pizza/m/Z7aOjJu583",
+          "download": "https://static.poly.pizza/b0e55406-4b7b-486b-8af7-2d71c681791b.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "6dc98cf2e44dc8cd052e402d72b5fe21af70afbfc48a70f3139e22008991fd47"
+        },
+        {
+          "name": "shotgun-sawed-off-29FXKu7G91.glb",
+          "title": "Shotgun Sawed Off",
+          "page": "https://poly.pizza/m/29FXKu7G91",
+          "download": "https://static.poly.pizza/9a6ee0ee-068b-4774-8b0f-679c3cef0b6e.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "b5d9d6ef843eea412e6422cbed55ac5325e5bd1f8a688c702d51f5cd88dea190"
+        },
+        {
+          "name": "revolver-XrnLUz6kQj.glb",
+          "title": "Revolver",
+          "page": "https://poly.pizza/m/XrnLUz6kQj",
+          "download": "https://static.poly.pizza/7951b3b9-d3a5-4ec8-81b7-11111f1c8e88.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "3d24e4743b9043e3d2f932b15e9bc558ffb491c04bc63b0384853bf13da02ee9"
+        },
+        {
+          "name": "revolver-E7IaG9TptR.glb",
+          "title": "Revolver",
+          "page": "https://poly.pizza/m/E7IaG9TptR",
+          "download": "https://static.poly.pizza/27246319-d573-413d-821a-ad9244bcdb6e.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "d1260ba6e241d589f7a48d88b0350d4c3bb7000b0d81b8b3dadc45d790b7b141"
+        },
+        {
+          "name": "shotgun-ZmPTnh7njL.glb",
+          "title": "Shotgun",
+          "page": "https://poly.pizza/m/ZmPTnh7njL",
+          "download": "https://static.poly.pizza/f71d6771-f512-4374-bd23-ba00b564db68.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "128a0075192f82582e2e2acc363108cabcb32335086f16b1fa2f5e1186b2ff43"
+        },
+        {
+          "name": "pistol-52kQzphmeF.glb",
+          "title": "Pistol",
+          "page": "https://poly.pizza/m/52kQzphmeF",
+          "download": "https://static.poly.pizza/7a31b522-5632-41d9-8274-031795af5d8d.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "dd03cc48a55e4b95dabc513d494e5d1516f6b6b5a37f9ecc824850b5784f7acb"
+        },
+        {
+          "name": "shotgun-short-stock-MHv3uOV6ja.glb",
+          "title": "Shotgun Short Stock",
+          "page": "https://poly.pizza/m/MHv3uOV6ja",
+          "download": "https://static.poly.pizza/08f27141-8e64-425a-9161-1bbd6956dfca.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "3392d33d4a4df0821f52a87b83659e057a13b12973a23deffc200bb396a3fcb4"
+        },
+        {
+          "name": "submachine-gun-7ehatxr7FY.glb",
+          "title": "Submachine Gun",
+          "page": "https://poly.pizza/m/7ehatxr7FY",
+          "download": "https://static.poly.pizza/fb8ae707-d5b9-4eb8-ab8c-1c78d3c1f710.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "69df22d1aa8603d66366d20c46755cca2a19e1cabe8c1db1b72edb491ae48699"
+        },
+        {
+          "name": "sniper-rifle-i65hEldsw6.glb",
+          "title": "Sniper Rifle",
+          "page": "https://poly.pizza/m/i65hEldsw6",
+          "download": "https://static.poly.pizza/2def4aa0-1f3a-40dd-aa92-0661ce39ae50.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "095e918bd89823b1ca726eac0016d7c9daee15cc6f71010ab251fb0365819f02"
+        },
+        {
+          "name": "sniper-rifle-XCIC2Ae4Rb.glb",
+          "title": "Sniper Rifle",
+          "page": "https://poly.pizza/m/XCIC2Ae4Rb",
+          "download": "https://static.poly.pizza/701c17ec-1b9b-4091-8c8b-54ed125078b9.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "c69b8d4088176580819c20f44fc80d7742e6ad00ba1ca09cd064d8677b1c4be5"
+        },
+        {
+          "name": "sniper-rifle-ASOMZIErq3.glb",
+          "title": "Sniper Rifle",
+          "page": "https://poly.pizza/m/ASOMZIErq3",
+          "download": "https://static.poly.pizza/f03e21b7-e3b7-49fd-b47d-d1908649fcee.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "a780e291a22babe8c3472ae9fd0c0f4b98f22382e25c7da3f5507a5761dffc5b"
+        },
+        {
+          "name": "sniper-rifle-TKaBjAEofL.glb",
+          "title": "Sniper Rifle",
+          "page": "https://poly.pizza/m/TKaBjAEofL",
+          "download": "https://static.poly.pizza/d9962f20-fdce-42a5-81c8-2847a4487447.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "7cdce34dec9a9b1aae6c9e2ef554c88ecdc19554407decc239b159e13d295f3f"
+        },
+        {
+          "name": "submachine-gun-nsP3JukU73.glb",
+          "title": "Submachine Gun",
+          "page": "https://poly.pizza/m/nsP3JukU73",
+          "download": "https://static.poly.pizza/100fd5db-d5e8-4db7-8ad3-9a96cc217e56.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "c71d4c083e296cd8cbbbebb70d7016d399cd551af5aa293617443df765b54c40"
+        },
+        {
+          "name": "bullpup-iKAlIbHUFD.glb",
+          "title": "Bullpup",
+          "page": "https://poly.pizza/m/iKAlIbHUFD",
+          "download": "https://static.poly.pizza/44e99086-b803-4f8f-b1e4-302068cff16a.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "55d2040d95e550f0debd9104d8e470ae430ecf5f1fec5334bef937ff03fb61f9"
+        },
+        {
+          "name": "assault-rifle-Bgvuu4CUMV.glb",
+          "title": "Assault Rifle",
+          "page": "https://poly.pizza/m/Bgvuu4CUMV",
+          "download": "https://static.poly.pizza/9a0e478c-de82-4773-9b70-a0219bb0057c.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "a6b90047927c65d0026bb19b5d4625b5ed3270e4ea5e39619cc50f0770aa6259"
+        }
+      ]
+    },
+    {
+      "id": "pp-toon-shooter",
+      "title": "Toon Shooter Game Kit",
+      "author": "Quaternius",
+      "page": "https://poly.pizza/bundle/Toon-Shooter-Game-Kit-qraiSXoAru",
+      "source": "poly.pizza",
+      "license": "CC0 1.0",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "poly.pizza Licence field of every listed model (bundle listing and model page); Poly Pizza GLBs carry no license file",
+      "retrieved": "2026-11-04",
+      "files": [
+        {
+          "name": "character-soldier-PpLF4rt4ah.glb",
+          "title": "Character Soldier",
+          "page": "https://poly.pizza/m/PpLF4rt4ah",
+          "download": "https://static.poly.pizza/1083c1d3-d1d4-4682-adf6-bc516d06ac84.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "06597e2cd20840eee8bed03790f32138e379ba3d6c7f61eb87e29f0c672d4d54"
+        },
+        {
+          "name": "rocket-launcher-GCqUvqleqN.glb",
+          "title": "Rocket Launcher",
+          "page": "https://poly.pizza/m/GCqUvqleqN",
+          "download": "https://static.poly.pizza/4b445cbf-38b6-43f3-afd6-32d88e8f074b.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "a72bedf2d0e5da57d71af7a7aea2e97123dbbce3bf26da2b375fd0abed0142e2"
+        },
+        {
+          "name": "knife-YnC9RcBOWs.glb",
+          "title": "Knife",
+          "page": "https://poly.pizza/m/YnC9RcBOWs",
+          "download": "https://static.poly.pizza/10348d8b-44db-4071-914b-db606eadd92c.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "02fffc2586629b6752ff06f57588b4b52d14d1f6ab002fb3e16fcaa696e6cee9"
+        },
+        {
+          "name": "knife-NNzzvlGXzO.glb",
+          "title": "Knife",
+          "page": "https://poly.pizza/m/NNzzvlGXzO",
+          "download": "https://static.poly.pizza/6196245f-ecfc-44d9-b3fc-cad9565d76bc.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "53011e6fcb783f8946084d27b2d03c81851b365493948c085037d7120f66d7d0"
+        },
+        {
+          "name": "container-small-B79i6fHgVU.glb",
+          "title": "Container Small",
+          "page": "https://poly.pizza/m/B79i6fHgVU",
+          "download": "https://static.poly.pizza/2e1f581e-5f9d-42ff-9ef9-600b1cfde0a6.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "ca9fd28f48c71ec27dc5bcb8e4ed2f58e1a6ae4736274ea88091e6384c1ebc0e"
+        },
+        {
+          "name": "shipping-container-dQXRtm5GbO.glb",
+          "title": "Shipping Container",
+          "page": "https://poly.pizza/m/dQXRtm5GbO",
+          "download": "https://static.poly.pizza/e56c8efb-940f-4150-9bf8-d468c0165116.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "b7e0f6c5775e060ee163a001a155d3dcc978c268edb155a5d6d831e0222a0b97"
+        },
+        {
+          "name": "crate-NlXe0ZJGUd.glb",
+          "title": "Crate",
+          "page": "https://poly.pizza/m/NlXe0ZJGUd",
+          "download": "https://static.poly.pizza/56f2385f-285a-4df8-a00f-6837a711f5cc.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "30604302c679a2a9a2c83a28cd54ec8a5664989ec32a75c1f78299b3abfad669"
+        },
+        {
+          "name": "exploding-barrel-1orHe0kCc1.glb",
+          "title": "Exploding Barrel",
+          "page": "https://poly.pizza/m/1orHe0kCc1",
+          "download": "https://static.poly.pizza/dbb58868-50d4-4ef0-945a-12b07222fb69.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "730a8da4cb342533ddc20fdb8f52a47f3befd20d0bafa44b668eac066252f2f3"
+        },
+        {
+          "name": "street-light-nFwrlcLvM5.glb",
+          "title": "Street Light",
+          "page": "https://poly.pizza/m/nFwrlcLvM5",
+          "download": "https://static.poly.pizza/9a8aac3e-d1ee-4860-b294-edca62ef50be.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "812b82718233f91850490805b67afd6166a17ed802907521ccc8a2280839f275"
+        },
+        {
+          "name": "pallet-cUAsYHDqfD.glb",
+          "title": "Pallet",
+          "page": "https://poly.pizza/m/cUAsYHDqfD",
+          "download": "https://static.poly.pizza/e2109848-da3e-41c0-a96f-4471e91f78d9.glb",
+          "license": "CC0 1.0",
+          "spdx": "CC0-1.0",
+          "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "sha256": "b773bbfe85743cd14ccb95b46219d99781b6f402babcc4a7a25f4179232ba1d5"
+        }
+      ]
+    },
+    {
+      "id": "animated-guns",
+      "title": "Low Poly Animated Guns (FPS Pack)",
+      "author": "Quaternius",
+      "page": "https://opengameart.org/content/low-poly-animated-guns",
+      "source": "opengameart.org",
+      "license": "CC0",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "OpenGameArt page, License(s): CC0 (author quaternius); the archive has no license file",
+      "retrieved": "2026-11-04",
+      "download": "https://opengameart.org/sites/default/files/FPS%20Pack_0.zip",
+      "archive": "FPS Pack_0.zip",
+      "sha256": "1af9e37e9852dea6bb5e1db8b93a057e067e740083a5ba48e6bb13fc8d19ccaf"
+    },
+    {
+      "id": "kenney-city-industrial",
+      "title": "City Kit (Industrial) 2.0",
+      "author": "Kenney",
+      "page": "https://opengameart.org/content/city-kit-industrial",
+      "source": "opengameart.org",
+      "license": "License: (Creative Commons Zero, CC0)",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "License.txt in the archive; the OpenGameArt page lists CC0",
+      "retrieved": "2026-11-04",
+      "download": "https://opengameart.org/sites/default/files/kenney_city-kit-industrial_2.0.zip",
+      "archive": "kenney_city-kit-industrial_2.0.zip",
+      "sha256": "5b381164e5760f3830a2dbee43b972deee38b2a695d091b56e238ab2910c96d2"
+    },
+    {
+      "id": "kenney-factory",
+      "title": "Factory Kit 3.0",
+      "author": "Kenney",
+      "page": "https://opengameart.org/content/factory-kit",
+      "source": "opengameart.org",
+      "license": "License: (Creative Commons Zero, CC0)",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "License.txt in the archive; the OpenGameArt page lists CC0",
+      "retrieved": "2026-11-04",
+      "download": "https://opengameart.org/sites/default/files/kenney_factory-kit_3.0.zip",
+      "archive": "kenney_factory-kit_3.0.zip",
+      "sha256": "7e31fb2308e90304672bd15cd18fa9d9f02c03731a8cbc57a8e3e1c181dfb0a7"
+    },
+    {
+      "id": "kaykit-prototype-bits",
+      "title": "KayKit Prototype Bits 1.0",
+      "author": "Kay Lousberg (KayKit)",
+      "page": "https://github.com/KayKit-Game-Assets/KayKit-Prototype-Bits-1.0",
+      "source": "github.com",
+      "license": "License: (Creative Commons Zero, CC0)",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "addons/kaykit_prototype_bits/Assets/LICENSE.txt in the archive",
+      "retrieved": "2026-11-04",
+      "download": "https://codeload.github.com/KayKit-Game-Assets/KayKit-Prototype-Bits-1.0/zip/bb159596f4f5106b663741d002c8eb45c80c0f41",
+      "archive": "KayKit-Prototype-Bits-1.0-bb159596.zip",
+      "sha256": "17985aed180fe2f658c526e92dc300f2fde72db09494433153c7e808c6137afe",
+      "commit": "bb159596f4f5106b663741d002c8eb45c80c0f41"
+    },
+    {
+      "id": "kenney-particles",
+      "title": "Particle Pack",
+      "author": "Kenney",
+      "page": "https://opengameart.org/content/particle-pack-80-sprites",
+      "source": "opengameart.org",
+      "license": "License (Creative Commons Zero, CC0)",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "License.txt in the archive; the OpenGameArt page lists CC0",
+      "retrieved": "2026-11-04",
+      "download": "https://opengameart.org/sites/default/files/kenney_particlePack.zip",
+      "archive": "kenney_particlePack.zip",
+      "sha256": "163b839ba7f62f8a420da93a62beaa80013588d5d6b1eb30841e1a553635ad70"
+    },
+    {
+      "id": "kenney-splat",
+      "title": "Splat Pack",
+      "author": "Kenney",
+      "page": "https://opengameart.org/content/splat-pack",
+      "source": "opengameart.org",
+      "license": "License: (Creative Commons Zero, CC0)",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "License.txt in the archive; the OpenGameArt page lists CC0",
+      "retrieved": "2026-11-04",
+      "download": "https://opengameart.org/sites/default/files/kenney_splatpack.zip",
+      "archive": "kenney_splatpack.zip",
+      "sha256": "cf50b2671c48fd5b957e249447c9b0dff63c878a538c8e38af282b51f1571925"
+    },
+    {
+      "id": "rubberduck-brick",
+      "title": "Handpainted Brick Texture Pack (1K)",
+      "author": "rubberduck",
+      "page": "https://opengameart.org/content/handpainted-brick-texture-pack",
+      "source": "opengameart.org",
+      "license": "CC0",
+      "spdx": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "licenseEvidence": "OpenGameArt page, License(s): CC0 (author rubberduck); the archive has no license file",
+      "retrieved": "2026-11-04",
+      "download": "https://opengameart.org/sites/default/files/handpainted_brick_1k.zip",
+      "archive": "handpainted_brick_1k.zip",
+      "sha256": "449b7ade90043079970b6e209c000e120d381e7d3104499ba421fb4ce150fcae"
+    }
+  ]
+}

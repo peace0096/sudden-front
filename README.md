@@ -63,7 +63,9 @@ server/src/game/          방마다 하나의 Bevy ECS World
   weapons.rs              총기 스탯 표
   bot.rs                  봇 AI (사람과 같은 InputCmd 큐로 입력)
   map.rs                  맵 데이터 (점대칭 생성, MatchStart로 클라이언트에 전송)
-client/src/game/          렌더링, 예측, HUD, 사운드 (에셋 파일 없이 전부 절차적 생성)
+client/src/game/          렌더링, 예측, HUD, 사운드 (캐릭터·총기·맵 소품·이펙트는 glTF/WebP 에셋, 사운드와 벽·하늘·이름표 텍스처는 코드로 생성)
+client/public/art/        glTF·WebP 에셋과 파일별 라이선스 기록(LICENSES.json)
+tools/art/                에셋 파이프라인 (원본 팩 받기, 측정, 레시피로 변환)
 ```
 
 서버가 모든 판정을 결정합니다. 클라이언트는 이동을 예측한 뒤 서버 상태로 보정하고(`movement.ts`는 서버의 `step_move`와 동일해야 합니다), 서버는 사격 시 클라이언트가 보던 시점으로 표적 위치를 되돌려 판정합니다(lag compensation).
@@ -77,6 +79,8 @@ cd client
 node e2e/play.mjs                        # 브라우저 2개로 로비~전투 흐름
 node e2e/kill-target.mjs                 # 방장의 목표 킬 수·칸별 봇 설정과 실제 경기 반영
 node e2e/full-match.mjs                  # 게임 중 무기 선택, 목표 킬 종료~대기실 복귀~재시작
+node e2e/art.mjs                         # ?art 미리보기에서 에셋 로드 실패·콘솔 에러 0건
+node e2e/perf.mjs                        # 맵별 draw call·프레임 시간 측정 (e2e-shots/perf.json)
 ```
 
 ## 게임 모드

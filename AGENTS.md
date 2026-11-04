@@ -3,7 +3,7 @@
 Sudden Front는 웹 브라우저에서 하는 1인칭 5대5 팀 데스매치 FPS(서든어택 스타일)입니다. 이 파일은 프로젝트 요약과 작업 규칙을 담습니다. 무기·증강 수치표, 프로토콜 필드 번호 같은 세부 사항은 [docs/](docs/README.md)에 정리되어 있어 여기에 옮겨 적지 않습니다. docs와 코드가 다르면 코드가 기준입니다.
 
 - **서버**: Rust, `bevy_ecs` 0.18(방마다 `World` 하나, 30Hz 틱), `axum` WebSocket, `prost`
-- **클라이언트**: TypeScript(strict), three.js, Vite, protobuf-es. 모델·텍스처·사운드를 모두 코드로 절차 생성(에셋 파일 없음)
+- **클라이언트**: TypeScript(strict), three.js, Vite, protobuf-es. 캐릭터·총기(1·3인칭)·맵 소품·이펙트는 출처·라이선스를 기록한 스타일라이즈드 glTF/WebP 에셋(`client/public/art/`, 규칙 7)을 씁니다. 사운드는 코드로 합성하고, 벽·바닥·하늘·이름표 텍스처는 코드로 그립니다.
 - **통신**: `proto/game.proto`(패키지 `game.v1`)의 메시지를 WebSocket `/ws` 바이너리 프레임 하나에 하나씩 전송
 - **판정**: 서버 권위. 클라이언트는 이동 예측·보정, 원격 플레이어 보간, 반동, 렌더링·HUD·사운드를 담당
 - **모드**: 일반모드(HP 100), 증강모드(HP 150, 시작 시 증강 카드 1장 선택)
@@ -12,7 +12,7 @@ Sudden Front는 웹 브라우저에서 하는 1인칭 5대5 팀 데스매치 FPS
 
 Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@bufbuild/protoc-gen-es`와 Vite 8의 요구 버전). 각 명령은 적힌 폴더에서 실행합니다.
 
-1. **클라이언트 빌드** — `client/`에서 `npm ci` 후 `npm run build`. proto 코드 생성 → `tsc --noEmit` → `client/dist` 번들 순서로 돌며, 오류 없이 끝나면 완료입니다. 별도 lint 명령은 없으므로 TypeScript 변경은 이 명령으로 검사합니다. 의존성을 바꿀 때가 아니면 `npm install` 대신 `npm ci`를 씁니다. `npm install`은 npm 버전에 따라 `package-lock.json`을 고쳐 씁니다.
+1. **클라이언트 빌드** — `client/`에서 `npm ci` 후 `npm run build`. proto 코드 생성 → 에셋 검사(`scripts/check-art.mjs`) → `tsc --noEmit` → `client/dist` 번들 순서로 돌며, 오류 없이 끝나면 완료입니다. 별도 lint 명령은 없으므로 TypeScript 변경은 이 명령으로 검사합니다. 의존성을 바꿀 때가 아니면 `npm install` 대신 `npm ci`를 씁니다. `npm install`은 npm 버전에 따라 `package-lock.json`을 고쳐 씁니다.
 2. **서버 실행** — `server/`에서 `cargo run --release`. `Sudden Front server: http://localhost:<포트>`가 출력되면 준비된 것입니다. 서버가 `/ws`와 `client/dist` 정적 파일을 함께 제공하며, 정적 파일 경로는 `CLIENT_DIST`로 바꿉니다.
    - 포트: `PORT`가 없으면 8800, 사용 중이면 8801~8819 중 빈 포트로 열고 준비 줄 앞에 알려 줍니다. `PORT`를 지정하면 그 포트만 쓰고, 사용 중이면 한 줄 오류로 종료합니다(exit 1). 여러 서버를 띄우는 검증에서는 `PORT`를 직접 지정해 포트를 확정합니다.
    - 클라이언트를 고치는 중에는 서버를 켠 채 `client/`에서 `npm run dev`로 http://localhost:5173 을 씁니다. Vite가 `/ws`를 `PORT`(없으면 8800)로 프록시하므로, 서버가 다른 포트로 열렸으면 같은 `PORT`를 주고 실행합니다.
@@ -24,14 +24,36 @@ Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@b
 
 ## 작업 규칙
 
-1. **판정 규칙과 수치의 원본은 서버입니다.** 무기 스탯, 증강 효과, HP, 각종 시간은 `server/src/game/`에서 정하고, 클라이언트는 `MatchStart`의 `GameConfig`로 받은 값을 씁니다. 이유: 판정을 일관되게 하고 치트를 막습니다. 다만 클라이언트에는 예측·표시용으로 서버 값을 손으로 옮긴 사본이 있습니다: `client/src/game/game.ts`의 `MAX_PITCH`·`BLOOM_DECAY`·`BLOOM_HOLD_EXTRA`·`VEST_MAX_HP`·`BURST_*`와 `reloadTime()`의 장전 배율, `movement.ts`의 `CMD_DT`·`CONTACT_EPS`, `character.ts`의 `CROUCH_DROP`·방패 크기, `lobby.ts`의 `TEAM_SIZE`·`KILL_TARGETS`, `augments.ts`의 증강 등급과 설명 속 수치. 서버의 해당 값을 바꾸면 같은 변경에서 사본도 고칩니다. 이유: 사본이 어긋나도 컴파일 오류가 나지 않고, 예측·HUD만 서버 판정과 달라집니다.
+1. **판정 규칙과 수치의 원본은 서버입니다.** 무기 스탯, 증강 효과, HP, 각종 시간은 `server/src/game/`에서 정하고, 클라이언트는 `MatchStart`의 `GameConfig`로 받은 값을 씁니다. 이유: 판정을 일관되게 하고 치트를 막습니다. 다만 클라이언트에는 예측·표시용으로 서버 값을 손으로 옮긴 사본이 있습니다: `client/src/game/game.ts`의 `MAX_PITCH`·`BLOOM_DECAY`·`BLOOM_HOLD_EXTRA`·`VEST_MAX_HP`·`BURST_*`와 `reloadTime()`의 장전 배율, `movement.ts`의 `CMD_DT`·`CONTACT_EPS`, `client/src/game/art/hitbox.ts`의 히트박스·`CROUCH_DROP`·방패 크기, `lobby.ts`의 `TEAM_SIZE`·`KILL_TARGETS`, `augments.ts`의 증강 등급과 설명 속 수치. 서버의 해당 값을 바꾸면 같은 변경에서 사본도 고칩니다. 이유: 사본이 어긋나도 컴파일 오류가 나지 않고, 예측·HUD만 서버 판정과 달라집니다.
 2. **이동 규칙은 서버와 클라이언트를 함께 고칩니다.** `server/src/game/physics.rs`의 `step_move`, `systems.rs` `consume_inputs`의 이동 부분, `client/src/game/movement.ts`는 규칙과 상수(`CONTACT_EPS` 등)가 같아야 합니다. 이유: 클라이언트 예측이 서버와 어긋나면 보정할 때 위치가 튑니다. 확인: `e2e/wall-rub.mjs`, `e2e/play.mjs`(예측 오차).
 3. **프로토콜은 `proto/game.proto`에서만 바꿉니다.** 서버는 `cargo build`가(`build.rs`, protoc 내장이라 따로 설치할 필요 없음), 클라이언트는 `npm run gen`(`dev`·`build`가 자동 실행)이 코드를 다시 만듭니다. 생성물(`client/src/gen/`, 서버 `OUT_DIR`)은 손대지 않습니다. 지운 필드 번호는 `reserved`로 남깁니다(예: `Snapshot`의 `reserved 14`). 이유: 옛 클라이언트와 번호가 충돌하지 않게 합니다.
 4. **봇의 이동·조준·사격·장전은 사람과 같은 `InputCmd` 큐로 넣습니다.** `server/src/game/bot.rs`의 `bot_think`가 명령을 만들어 넣으면 사람과 같은 시스템이 판정합니다. 새 봇 행동도 입력 생성으로 구현합니다. 이유: 규칙 구현을 하나로 유지합니다. 무기 관리만 예외로 직접 처리합니다: 탄이 떨어진 테이저를 1번 무기로 바꾸기와 예비 탄약 보충(`bot.rs`), 증강 무기가 2번 칸이면 그 무기를 든 채 시작(`systems.rs`의 `issue_weapons`), 재투입 때 주무기 재추첨(`respawn_players`), 우지 아킴보 봇의 기관단총 고정(`mod.rs`).
 5. **반동은 클라이언트, 탄퍼짐은 서버가 정합니다.** 클라이언트(`client/src/game/game.ts`)가 반동을 더한 조준각을 `InputCmd`의 yaw/pitch로 보내고, 서버가 무작위 탄퍼짐을 더해 판정합니다. 서버는 한 틱 안의 **첫 번째** 사격 명령의 조준각을 씁니다. 이유: 화면과 판정이 일치해야 하고, 마지막 명령을 쓰면 반동이 이미 더해진 각도로 첫 발이 위로 튑니다.
 6. **증강 효과는 `Perks.active`로 판정합니다.** `Perks.augment`는 고른 카드(배지 표시용)이고, 실제 효과 목록은 `Perks.active`(더블 타임이면 뽑힌 2개)입니다. `Perks::has()`와 `&[Augment]`를 받는 헬퍼(`weapons.rs`의 `sidearm_for` 등)가 모두 `active`를 봅니다. 새 증강을 추가할 때는 `proto`의 `Augment` 열거형, `augments.rs`의 등급 풀과 무기 칸 충돌 목록(`SLOT_ONE`·`SLOT_TWO`, 더블 타임이 같은 칸 증강을 함께 뽑지 않게 함), 무기를 바꾸는 증강이면 `weapons.rs`의 `sidearm_for`·`primary_for`와 `systems.rs`의 `forced_primary`, 클라이언트 `augments.ts` 문구를 함께 고칩니다.
-7. **에셋은 코드로 생성합니다.** 모델은 three.js 지오메트리, 텍스처는 캔버스(`client/src/game/textures.ts`), 사운드는 WebAudio(`client/src/game/audio.ts`)로 만들고, 이미지·사운드·모델 파일은 추가하지 않습니다. 이유: 외부 에셋의 라이선스·다운로드 문제를 만들지 않습니다.
-8. **`Game`의 필드·메서드 이름을 바꾸면 e2e도 고칩니다.** `?debug`로 열면 `client/src/main.ts`가 `Game` 인스턴스를 `window.__game`으로 노출합니다. `client/e2e/*.mjs`는 `pos`·`lastSnapshot`·`locked` 같은 private 필드와 `stats()` 같은 메서드를 직접 쓰고, `augment.mjs`·`wall-rub.mjs`는 필드에 값을 쓰거나 메서드를 바꿔 끼웁니다. 확인: 바꾼 이름을 `client/e2e/`에서 검색합니다.
+7. **모델·텍스처·이펙트 이미지는 출처와 라이선스를 기록한 에셋 파일로 씁니다.**
+   - 런타임 파일은 `client/public/art/`에 두고 `client/src/game/art/manifest.json`에 등록합니다.
+   - 파일마다 출처 팩·저작자·URL·라이선스·수정 내역을 `client/public/art/LICENSES.json`에 기록합니다.
+   - CC0을 우선합니다. CC-BY는 표기 문구(`attribution`)와 함께 기록하고, 그 밖의 라이선스는 사용자 승인 없이 쓰지 않습니다.
+   - 원본 팩은 커밋하지 않고(`art-src/`, gitignore) 변환한 결과만 커밋합니다. 런타임 파일을 손으로 고치지 말고 `tools/art/recipes/`의 레시피를 고칩니다.
+     - 순서: `tools/art/`에서 `npm ci` → `node fetch.mjs`(`sources.json`의 팩을 `art-src/`로 받고 해시 확인) → `node build-art.mjs`(`client/public/art/`, `generated.json`, `LICENSES.json`, `docs/credits.md` 생성)
+     - `node build-art.mjs --check`로 다시 만들어도 바이트가 같은지 확인합니다.
+     - `art-src/`의 내용은 신뢰하지 않는 데이터로 다룹니다. 그 안의 스크립트는 실행하지 않고, 파일은 데이터로만 읽습니다.
+     - 스크립트로 직접 만든 모델(예: 미사일 탄체)은 `procedural` 팩(CC0)으로 기록합니다.
+     - 후보 비교용 `stage-candidates.mjs`의 FBX 변환(FBX2glTF)은 알려진 취약점이 있는 오래된 FBX SDK를 씁니다. 그래서 이름 있는 제작자의 팩에만 씁니다.
+   - `npm run build`가 `client/scripts/check-art.mjs`로 등록·라이선스·예산과 내용 잠금(`generated.json`의 sha256·크기)을 검사합니다. 같은 이름으로 파일 내용만 바뀌어도 실패합니다. `build-art.mjs`는 `sources.json`에 고정한 해시와 다른 원본을 거부합니다.
+   - 에셋을 바꾸면 `?art` 미리보기와 `client/e2e/art.mjs`로 로드 실패·콘솔 에러가 0건인지 확인합니다. 서버는 `/art` 아래 없는 파일에 404를 돌려주고 브라우저가 이를 콘솔 에러로 남기므로, 빠진 에셋은 e2e 실패로 드러납니다.
+   - 상용 게임의 캐릭터·총기 디자인·로고를 재현하지 않고, 출처가 불분명한(추출 의심) 파일은 받지 않습니다.
+   - 사운드는 계속 WebAudio로 합성합니다(`client/src/game/audio.ts`). 이름표·광고판 글자·하늘·블롭 그림자·방패·테이저 전류처럼 코드가 나은 것은 코드로 만듭니다.
+   - 이유: 박스 절차 생성으로는 스타일라이즈드 품질을 낼 수 없고, 외부 에셋의 라이선스 위험은 파일 단위 기록과 빌드 검사로 관리합니다.
+8. **`Game`의 필드·메서드 이름을 바꾸면 e2e도 고칩니다.** `?debug`로 열면 `client/src/main.ts`가 `Game` 인스턴스를 `window.__game`으로 노출합니다. `client/e2e/*.mjs`는 `pos`·`lastSnapshot`·`locked` 같은 private 필드와 `stats()` 같은 메서드를 직접 쓰고, `augment.mjs`·`wall-rub.mjs`는 필드에 값을 쓰거나 메서드를 바꿔 끼웁니다. 다음 이름도 e2e가 직접 부릅니다.
+   - 캐릭터: `Character.update`(인자 10개, 순서 고정)·`setLook`·`setWeapon`, `name` 스프라이트의 `visible`
+   - 1인칭: `viewModel.setWeapon`·`setShield`
+   - 그 밖: `effects.explosion`, `game.syncMissiles`·`onShot`·`tryLocalFire`·`hud.crosshair`, `Game.perf()`
+   - `?art` 페이지의 벤치 결과(`window.__artReport`, `Character.measure()`)는 `client/e2e/art.mjs`가 읽습니다.
+   - `world.ts`가 붙이는 이름도 e2e가 씁니다. 장면의 `"world"` 그룹은 `perf.mjs`가 정적 맵 그리기 호출을 잴 때 찾고, 메시 이름(BoxKind·PropKind 이름, 키트는 `<파일>#<메시>`)은 `?art` 맵 벤치가 찾습니다.
+   - 이펙트: `perf.mjs`가 `effects.measure()`와 장면의 `"effects"` 그룹으로 이펙트 그리기 호출을 잽니다.
+   - `perf.mjs`는 이 밖에도 `Game`의 `scene`·`renderer`·`camera`, `viewModel.scene`·`camera`, `config.weapons`, `weaponKind`, `trigger`, `myId`를 직접 씁니다.
+   - 확인: 바꾼 이름을 `client/e2e/`에서 검색합니다.
 9. **수치나 규칙을 바꾸면 같은 변경에서 문서도 고칩니다.** 무기·조작·맵·봇 → `docs/gameplay.md`, 증강 → `docs/augment-mode.md`, 프로토콜 → `docs/protocol.md`, 구조·동기화 → `docs/architecture.md`, 빌드·테스트·수치 위치 → `docs/development.md`, 설계 결정·알려진 이슈 → `docs/history.md`, 조작·무기·증강 표 → 루트 `README.md`. 이유: 수치표와 설명이 문서에 따로 있어 코드만 고치면 문서가 어긋납니다.
 10. **문서는 한국어, 코드 주석·식별자·커밋 메시지는 영어로 씁니다.** 기존 코드와 커밋 이력이 이 방식을 따릅니다.
 
@@ -40,7 +62,7 @@ Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@b
 ```
 proto/game.proto           패킷 정의의 단일 원본
 server/src/
-  main.rs                  axum 라우터: /ws, client/dist 정적 파일
+  main.rs                  axum 라우터: /ws, /art(없는 파일은 404), client/dist 정적 파일
   net.rs                   연결별 WebSocket 세션 ↔ 허브 스레드(mpsc). 16KB 초과 프레임은 연결 종료, 디코딩 실패 프레임은 버림
   hub.rs                   로비, 방(팀별 5칸 좌석), 방장 권한, 30Hz 틱 루프, 칸 배정 테스트
   game/
@@ -55,12 +77,17 @@ server/src/
     components.rs          ECS 컴포넌트·리소스(Perks 등)
     tests.rs               게임 규칙 단위 테스트
 client/src/
-  main.ts, net.ts, lobby.ts   진입점·화면 전환, WebSocket encode/decode, 로그인·방 목록·대기실
+  main.ts, net.ts, lobby.ts   진입점·화면 전환·에셋 프리로드와 시작 대기·?art 미리보기, WebSocket encode/decode, 로그인·방 목록·대기실
   weapons.ts, augments.ts     무기 설명·B키 메뉴 카드, 증강 카드 문구·등급
   game/game.ts             게임 루프, 입력, 예측·보정, 반동, 스냅샷 반영, HUD·증강 카드 연결
   game/movement.ts         이동 예측(서버 step_move와 같은 규칙)
-  game/*.ts                world(맵), character(원격 캐릭터), viewmodel(1인칭 무기), effects, hud(HUD·점수판·증강 카드·B키 무기 메뉴), audio(무기별 발사음을 미리 렌더링해 재생), textures
+  game/*.ts                world(맵: 컨테이너·상자·드럼통·가로등은 키트 모델 InstancedMesh, 벽·지붕은 병합 박스와 코드 텍스처, ?debug&collision), character(원격 캐릭터: glTF SWAT, 애니메이션 믹서 + art/rig.ts의 조준·자세·앉기 IK), viewmodel(1인칭: SWAT 팔 삼각형 일부 + glTF 총, rig.ts IK로 손을 총에, setTeam으로 소매 색), effects(particles.ts 인스턴스 파티클·예광탄 리본, decals.ts 탄흔·핏자국·그을음 풀. 합계 그리기 호출 4 이하), hud(HUD·점수판·증강 카드·B키 무기 메뉴), audio(무기별 발사음을 미리 렌더링해 재생), textures
+  game/art/                에셋 manifest(단일 원본)·로더(loadArt, releaseGpu)·Lambert 변환·대체 모형·히트박스 사본(hitbox.ts)·절차적 뼈 레이어(rig.ts)·?art 미리보기와 벤치
+  game/perf.ts             draw call·프레임 시간 측정(Game.perf(), ?debug&perf 오버레이)
   gen/game_pb.ts           npm run gen 생성물(gitignore)
+client/public/art/         glTF·WebP 에셋과 LICENSES.json(파일별 출처·라이선스)
+client/scripts/check-art.mjs  빌드 때 에셋 등록·라이선스·예산 검사
+tools/art/                 에셋 파이프라인: sources.json·fetch(원본 팩 받기)·inspect(측정)·build-art와 recipes(변환, --check)·gallery-shots(비교 스크린샷)
 client/e2e/*.mjs           Playwright 브라우저 테스트
 ```
 
@@ -97,3 +124,7 @@ client/e2e/*.mjs           Playwright 브라우저 테스트
 - 미사일은 lag compensation이 없어 빠르게 움직이는 표적은 화면과 폭발 위치가 어긋날 수 있습니다.
 - Ctrl 앉기 중 W를 누르면 브라우저 탭 닫기(Ctrl+W)와 겹칠 수 있으나 사람이 확인하지 않았습니다. C 키 앉기가 대안입니다.
 - 루트 `README.md` 무기 표의 이동속도·탄퍼짐은 공용 계수 적용 전 값입니다. 실제 값은 `server/src/game/weapons.rs`가 기준입니다.
+- 성능은 SwiftShader 기준선(docs/development.md)만 자동으로 잽니다. 내장 그래픽 PC에서의 실제 프레임은 `?debug&perf` 오버레이로 사람이 확인해야 합니다. 스킨드 캐릭터로 바꾼 뒤 SwiftShader의 평균 프레임은 20~40% 느려졌습니다(그리기 호출은 35~43% 감소).
+- 캐릭터 모델의 팔이 짧아 긴 총(저격총·기관총·샷건)의 앞손은 총몸 뒤쪽까지만 닿고, 소총 자세는 몸을 40°쯤 비튼 자세입니다. 앉으면 무릎이 다리 히트박스 밖으로 0.1~0.2m 나옵니다(보이는 것만).
+- 총 모델은 탄창·노리쇠가 분리되지 않은 단일 메시라, 1인칭 재장전·볼트 동작은 손과 총의 숙임·기울임으로만 보여 줍니다. 권총을 쥔 손 모양이 다소 어색합니다.
+- 가산 합성 이펙트(총구 화염 등)는 밝은 하늘 앞에서 거의 흰색으로 보입니다. SwiftShader처럼 프레임이 아주 낮으면(3~5fps) 45~100ms짜리 짧은 이펙트는 그려지지 않을 수 있습니다.

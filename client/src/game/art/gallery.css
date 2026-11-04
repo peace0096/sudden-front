@@ -1,0 +1,199 @@
+/* The ?art&candidates gallery (gallery.ts); loaded only with it. */
+
+.art-gallery-page .lobby-frame {
+  max-width: 1480px;
+}
+
+.gallery-toolbar {
+  position: sticky;
+  top: -16px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin-bottom: 14px;
+  padding: 12px 18px;
+}
+
+.gallery-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gallery-toggle .muted {
+  margin-right: 4px;
+}
+
+.gallery-toggle button {
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font: 600 13px var(--ui-font);
+  cursor: pointer;
+}
+
+.gallery-toggle button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #1b1a14;
+}
+
+.gallery-section {
+  margin-bottom: 14px;
+}
+
+.gallery-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.gallery-role {
+  width: 100%;
+}
+
+.gallery-role h4 {
+  margin: 4px 0 8px;
+  color: var(--accent);
+  font: 700 14px var(--ui-font);
+}
+
+.gallery-role + .gallery-role {
+  margin-top: 8px;
+}
+
+.gallery-card {
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.gallery-card canvas {
+  display: block;
+}
+
+.gallery-character {
+  width: 562px;
+}
+
+.gallery-arms {
+  width: 382px;
+}
+
+.gallery-gun {
+  width: 352px;
+}
+
+.gallery-map {
+  width: 312px;
+}
+
+.gallery-surface {
+  width: 272px;
+}
+
+.gallery-fx-demo {
+  width: 582px;
+}
+
+.gallery-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.gallery-pick {
+  padding: 1px 6px;
+  background: var(--accent);
+  color: #1b1a14;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.gallery-views {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.gallery-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.gallery-facts dt {
+  color: var(--muted);
+}
+
+.gallery-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.gallery-facts dd.ok {
+  color: #8fd88f;
+}
+
+.gallery-facts dd.over {
+  color: var(--red);
+}
+
+.gallery-notes {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gallery-clips {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.gallery-clips summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.gallery-clips p {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.gallery-failed {
+  width: 312px;
+  color: var(--red);
+  font-size: 12px;
+}
+
+.gallery-sprites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.gallery-sprite {
+  width: 96px;
+  margin: 0;
+}
+
+.gallery-sprite canvas {
+  display: block;
+  border: 1px solid var(--line);
+}
+
+.gallery-sprite figcaption {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}

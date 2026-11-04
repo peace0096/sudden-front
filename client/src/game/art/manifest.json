@@ -1,0 +1,190 @@
+{
+  "weapons": {
+    "RIFLE": {
+      "file": "weapons/rifle.glb",
+      "hold": "rifle",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.03, -0.02, -0.12] },
+      "fp": { "position": [0, -0.105, 0.09], "scale": 1.274, "support": [-0.06, 0.04, -0.33], "kickScale": 1, "flashScale": 1 }
+    },
+    "SNIPER": {
+      "file": "weapons/sniper.glb",
+      "hold": "rifle",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.03, -0.02, -0.12] },
+      "fp": { "position": [0, -0.1, 0.085], "scale": 1.113, "support": [-0.025, 0.04, -0.346], "kickScale": 3, "flashScale": 1 }
+    },
+    "MACHINE_GUN": {
+      "file": "weapons/machine_gun.glb",
+      "hold": "rifle",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.05, 0.0, -0.12] },
+      "fp": { "position": [0, -0.1, 0.1], "scale": 1.207, "support": [-0.03, 0.03, -0.42], "kickScale": 1.2, "flashScale": 1 }
+    },
+    "SMG": {
+      "file": "weapons/smg.glb",
+      "hold": "rifle",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.03, -0.03, -0.1] },
+      "fp": { "position": [0, -0.08, 0.09], "scale": 1.284, "support": [-0.025, 0.01, -0.24], "kickScale": 0.7, "flashScale": 0.7 }
+    },
+    "PISTOL": {
+      "file": "weapons/pistol.glb",
+      "hold": "pistol",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.04, -0.05, 0.05] },
+      "fp": { "position": [0, -0.08, 0.085], "scale": 1.15, "oneHanded": true, "rigOffset": [-0.03, 0.06, -0.2], "kickScale": 1.6, "flashScale": 1 }
+    },
+    "KNIFE": {
+      "file": "weapons/knife.glb",
+      "hold": "knife",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935] },
+      "fp": { "position": [0, -0.09, 0.07], "rotation": [0.6, 0.3, 0.25], "scale": 1.3, "oneHanded": true, "rigOffset": [-0.02, 0.08, -0.1], "kickScale": 1 }
+    },
+    "SHOTGUN": {
+      "file": "weapons/shotgun.glb",
+      "hold": "rifle",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.03, -0.02, -0.12] },
+      "fp": { "position": [0, -0.085, 0.09], "scale": 1.11, "support": [-0.025, -0.07, -0.37], "pump": 0.09, "kickScale": 2.4, "flashScale": 1 }
+    },
+    "MISSILE": {
+      "file": "weapons/missile.glb",
+      "hold": "launcher",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.06, 0.1, -0.12] },
+      "fp": { "position": [0.09, -0.26, -0.05], "scale": 0.84, "support": [-0.03, 0.07, -0.33], "rigOffset": [-0.02, -0.02, -0.04], "kickScale": 1.8, "flashScale": 1 }
+    },
+    "PISTOL_PLUS": {
+      "file": "weapons/pistol_plus.glb",
+      "hold": "pistol",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.04, -0.05, 0.05] },
+      "fp": { "position": [0, -0.08, 0.085], "scale": 1.15, "oneHanded": true, "rigOffset": [-0.03, 0.06, -0.2], "kickScale": 1.6, "flashScale": 1 }
+    },
+    "MAGNUM": {
+      "file": "weapons/magnum.glb",
+      "hold": "pistol",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.04, -0.05, 0.05] },
+      "fp": { "position": [0, -0.075, 0.1], "scale": 1.13, "oneHanded": true, "rigOffset": [-0.03, 0.06, -0.2], "kickScale": 3.4, "flashScale": 1 }
+    },
+    "AKIMBO_SMG": {
+      "file": "weapons/smg.glb",
+      "hold": "akimbo",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935] },
+      "fp": { "position": [0, -0.08, 0.09], "scale": 1.284, "handX": -0.42, "rigOffset": [0.02, 0, -0.04], "kickScale": 0.7, "flashScale": 0.7 }
+    },
+    "TASER": {
+      "file": "weapons/taser.glb",
+      "hold": "pistol",
+      "tp": { "position": [0.0014, 0.0866, 0.0031], "rotation": [1.5568, 0.042, 1.3935], "support": [-0.04, -0.05, 0.05] },
+      "fp": { "position": [0, -0.08, 0.085], "scale": 1.15, "oneHanded": true, "rigOffset": [-0.03, 0.06, -0.2], "kickScale": 1, "flashScale": 1 }
+    }
+  },
+  "character": {
+    "files": { "red": "characters/swat-red.glb", "blue": "characters/swat-blue.glb" },
+    "forwardYaw": 3.141593,
+    "clips": {
+      "idle": "idle",
+      "run": "run",
+      "runBack": "runBack",
+      "strafeL": "strafeL",
+      "strafeR": "strafeR",
+      "walk": "walk",
+      "death": "death",
+      "shoot": "shoot"
+    },
+    "holds": {
+      "rifle": {
+        "clip": "holdRifle",
+        "bones": {
+          "chest": [0.0339, -0.6943, 0.0974],
+          "neck": [0.007, 0.3482, -0.0358],
+          "head": [0.007, 0.3482, -0.036],
+          "clavicleL": [-0.2055, -0.1532, -0.1732],
+          "upperArmR": [-0.2624, 0.06, -0.4474],
+          "foreArmR": [-0.8832, -0.1827, 0.3829],
+          "handR": [0.3858, -0.3274, -0.0398]
+        }
+      },
+      "pistol": {
+        "clip": "holdRifle",
+        "bones": {
+          "chest": [0.0032, -0.2483, 0.0297],
+          "neck": [0.001, 0.1244, -0.0123],
+          "head": [0.001, 0.1244, -0.0124],
+          "clavicleL": [-0.1692, -0.1302, -0.142],
+          "upperArmR": [-0.2429, 0.0366, -0.2978],
+          "foreArmR": [-0.5574, -0.1234, 0.4252],
+          "handR": [0.4927, -0.2236, -0.1408]
+        }
+      },
+      "knife": { "clip": "holdRifle" },
+      "launcher": {
+        "clip": "holdRifle",
+        "bones": {
+          "chest": [0.0231, -0.5954, 0.0793],
+          "neck": [0.0051, 0.2985, -0.0304],
+          "head": [0.0052, 0.2985, -0.0305],
+          "clavicleL": [-0.2426, -0.1751, -0.2053],
+          "upperArmR": [0.428, -0.1589, -0.7025],
+          "foreArmR": [-1.1575, -0.2601, 0.3951],
+          "handR": [0.1723, -0.1859, 0.2685]
+        }
+      },
+      "akimbo": { "clip": "holdRifle", "mirror": true }
+    }
+  },
+  "arms": {
+    "files": { "red": "characters/swat-red.glb", "blue": "characters/swat-blue.glb" },
+    "scale": 1.0
+  },
+  "projectiles": {
+    "MISSILE": { "file": "projectiles/missile.glb" }
+  },
+  "map": {
+    "surfaces": {},
+    "kits": {
+      "CONTAINER_BLUE": { "file": "map/container.glb", "size": [6, 2.6, 2.4], "tint": "#30465a", "tintNode": "body" },
+      "CONTAINER_GRAY": { "file": "map/container.glb", "size": [6, 2.6, 2.4], "tint": "#82898c", "tintNode": "body" },
+      "CONTAINER_RUST": { "file": "map/container.glb", "size": [6, 2.6, 2.4], "tint": "#7b4129", "tintNode": "body" },
+      "CONTAINER_PALE": { "file": "map/container.glb", "size": [6, 2.6, 2.4], "tint": "#92a4af", "tintNode": "body" },
+      "CRATE": { "file": "map/crate.glb", "size": [1.2, 1.2, 1.2], "tint": "#c1c1c1", "tintNode": "Crate" },
+      "BARREL": { "file": "map/barrel.glb", "size": [0.9, 1.1, 0.9] }
+    },
+    "props": {
+      "LAMP": { "file": "map/street-light.glb" },
+      "TILTED_CONTAINER": { "file": "map/container.glb", "size": [6, 2.6, 2.4], "tint": "#92a4af", "tintNode": "body" }
+    }
+  },
+  "fx": {
+    "file": "fx/particles.webp",
+    "cells": {
+      "muzzle1": [0, 0, 256, 256],
+      "muzzle2": [256, 0, 256, 256],
+      "muzzle3": [512, 0, 256, 256],
+      "smoke1": [768, 0, 256, 256],
+      "smoke2": [0, 256, 256, 256],
+      "smoke3": [256, 256, 256, 256],
+      "spark": [512, 256, 256, 256],
+      "arc": [768, 256, 256, 256],
+      "fire": [0, 512, 256, 256],
+      "flame": [256, 512, 256, 256],
+      "flare": [512, 512, 256, 256],
+      "impact": [768, 512, 256, 256],
+      "scorch": [0, 768, 256, 256],
+      "dirt": [256, 768, 256, 256],
+      "tracer": [512, 768, 256, 256],
+      "ring": [768, 768, 256, 256]
+    },
+    "decals": {
+      "file": "fx/decals.webp",
+      "cells": {
+        "bloodA": [0, 0, 256, 256],
+        "bloodB": [256, 0, 256, 256],
+        "bloodC": [0, 256, 256, 256],
+        "bulletHole": [256, 256, 256, 256]
+      }
+    }
+  },
+  "budgets": {
+    "drawCalls": { "typical": 100, "max": 130, "map": 35, "effects": 4 },
+    "triangles": { "character": 5000, "arms": 4000, "gun": 3000, "scene": 250000 },
+    "programs": 30,
+    "textureMB": 32,
+    "downloadMB": 8,
+    "fileKB": { "character": 600, "gun": 120 }
+  }
+}

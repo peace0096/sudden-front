@@ -34,7 +34,7 @@ pub const MISSILE_SPEED: f32 = 60.0;
 const MISSILE_LIFE: f32 = 3.0;
 /// How far from a player's body a missile still counts as hitting them.
 const MISSILE_HIT_PAD: f32 = 0.8;
-// A shield bearer's shield, in their own frame. Its visuals are in character.ts.
+// A shield bearer's shield, in their own frame. The client's copy is in client/src/game/art/hitbox.ts.
 const SHIELD_HALF_WIDTH: f32 = 0.45;
 const SHIELD_NEAR: f32 = 0.55;
 const SHIELD_FAR: f32 = 0.65;
