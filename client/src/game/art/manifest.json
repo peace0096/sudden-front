@@ -80,7 +80,7 @@
     },
     "HAMMER": {
       "file": "weapons/hammer.glb",
-      "hold": "knife",
+      "hold": "hammer",
       "tp": { "position": [0.0223, 0.1562, -0.0234], "rotation": [1.5568, 0.042, 1.3935] },
       "fp": { "position": [0, -0.09, 0.07], "rotation": [0.5302, 0.8316, -0.316], "scale": 0.9, "oneHanded": true, "rigOffset": [-0.02, 0.11, -0.08], "kickScale": 1 }
     }
@@ -124,6 +124,7 @@
         }
       },
       "knife": { "clip": "holdRifle", "bones": { "upperArmR": [-0.0534, -0.0206, -0.3449], "foreArmR": [-0.0277, 0.0054, -0.2075], "handR": [-0.047, -0.003, -0.1681] }, "fist": true },
+      "hammer": { "clip": "holdRifle", "bones": { "upperArmR": [0.9735, 0.4347, 0.7907], "foreArmR": [0.017, -0.0597, -0.4291], "handR": [-0.1649, 0.0585, -0.316] }, "fist": true },
       "launcher": {
         "clip": "holdRifle",
         "bones": {
