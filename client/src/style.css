@@ -1829,3 +1829,258 @@ body {
     transform: translateX(-50%);
   }
 }
+
+/* ---------------------------- Big Head mode ---------------------------- */
+
+/* Above the HP panel: my level, a pip for every level lit from 0 out to it, the head's size, and
+   while I reign the King's time running out. */
+.level-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 80px;
+  width: 170px;
+  padding: 6px 10px 7px;
+  background: linear-gradient(rgba(62, 62, 56, 0.92), rgba(24, 24, 22, 0.92));
+  border: 1px solid #66665a;
+}
+
+.level-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.level-label {
+  font: 700 13px var(--num-font);
+  color: #b8b8a6;
+}
+
+.level-value {
+  min-width: 28px;
+  font: 700 24px / 1 var(--num-font);
+  color: var(--text);
+}
+
+.level-size {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.level-pips {
+  display: flex;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.level-pips .pip {
+  flex: 1;
+  height: 9px;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 0;
+}
+
+.level-pips .pip.zero {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.level-pips .pip.low.on {
+  background: #6fb8ff;
+}
+
+.level-pips .pip.zero.on {
+  background: #f4f0d8;
+}
+
+.level-pips .pip.high.on {
+  background: #ff9f2e;
+}
+
+.level-pips .pip.king {
+  flex: 1.4;
+  height: 13px;
+  margin-top: -4px;
+  color: #6a5a2c;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+}
+
+.level-pips .pip.king.on {
+  color: #2a1a00;
+  background: linear-gradient(#fff3b0, #f4c430 55%, #a8700c);
+}
+
+.king-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  margin-top: 6px;
+  color: #ffd75e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.king-track {
+  grid-column: 1 / -1;
+  height: 4px;
+  margin-top: 3px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.king-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a8700c, #f4c430, #fff3b0);
+}
+
+.level-panel.king {
+  border-color: #f4c430;
+  box-shadow: 0 0 14px rgba(244, 196, 48, 0.55);
+}
+
+.level-panel.up {
+  animation: level-up 0.6s ease-out;
+}
+
+.level-panel.down {
+  animation: level-down 0.6s ease-out;
+}
+
+@keyframes level-up {
+  0% {
+    box-shadow: 0 0 0 rgba(255, 159, 46, 0);
+  }
+  30% {
+    box-shadow: 0 0 18px rgba(255, 159, 46, 0.9);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(255, 159, 46, 0);
+  }
+}
+
+@keyframes level-down {
+  0% {
+    box-shadow: 0 0 0 rgba(111, 184, 255, 0);
+  }
+  30% {
+    box-shadow: 0 0 18px rgba(111, 184, 255, 0.9);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(111, 184, 255, 0);
+  }
+}
+
+/* A new King, or the end of my reign, across the middle; it fades by itself. */
+.big-head-notice {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  max-width: 90vw;
+  padding: 6px 22px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.25) 60%, transparent 80%);
+  font-size: 22px;
+  font-weight: 800;
+  text-align: center;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.big-head-notice.king {
+  color: #ffd75e;
+}
+
+.big-head-notice.end {
+  color: #cfd8e0;
+  font-size: 18px;
+}
+
+.big-head-notice.show {
+  animation: notice-life 2.8s ease-out both;
+}
+
+@keyframes notice-life {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.3);
+  }
+  10% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.hidden.level-panel,
+.hidden.big-head-notice,
+.hidden.king-line {
+  display: none;
+}
+
+/* The King's hammer, alone in the slot strip. */
+.slot-chip.king {
+  color: #2a1a00;
+  background: linear-gradient(#fff3b0, #f4c430 55%, #c8901a);
+}
+
+/* The kill feed's tags for Big Head mode's special kills. */
+.special {
+  font-weight: 700;
+}
+
+.special.dot-shot {
+  color: #7fe8ff;
+}
+
+.special.cute-shot {
+  color: #ff8fc8;
+}
+
+/* The banner for a special kill of mine: its own colours and emblem. */
+.kill-banner.special-kill.cute-shot {
+  --title-top: #fff0fa;
+  --title-mid: #ff6fb5;
+  --title-low: #b8236b;
+  --glow: rgba(255, 111, 181, 0.7);
+}
+
+.kill-banner.special-kill.dot-shot {
+  --title-top: #f2feff;
+  --title-mid: #6fe2ff;
+  --title-low: #1679a8;
+  --glow: rgba(111, 226, 255, 0.7);
+}
+
+.kb-special {
+  width: 84px;
+  height: 84px;
+}
+
+/* The scoreboard's level column. */
+.board.big-head .board-row {
+  grid-template-columns: minmax(0, 1fr) 40px 40px 44px;
+}
+
+.board.big-head .board-team.ffa .board-row {
+  grid-template-columns: 40px minmax(0, 1fr) 40px 40px 44px;
+}
+
+.board-row .l {
+  text-align: right;
+  font-family: var(--num-font);
+}
+
+/* Tab: the mode's rules, beside the keys. */
+.board-big-head-line {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}

@@ -32,12 +32,27 @@ enum WeaponKind {
   WEAPON_KIND_TASER = 12;
   // Slot 4: a hand grenade, thrown, that goes off a fixed time after it leaves the hand.
   WEAPON_KIND_GRENADE = 13;
+  // Big Head mode: the King's toy hammer, a melee weapon nothing else can be taken over while the
+  // reign lasts.
+  WEAPON_KIND_HAMMER = 14;
 }
 
 enum GameMode {
   GAME_MODE_UNSPECIFIED = 0;
   GAME_MODE_NORMAL = 1;
   GAME_MODE_AUGMENT = 2;
+  // Kills raise a player's level and head size, deaths lower them; level 3 crowns the King, who
+  // is invulnerable for a while and fights with the hammer alone.
+  GAME_MODE_BIG_HEAD = 3;
+}
+
+// What made a kill special in Big Head mode.
+enum SpecialKill {
+  SPECIAL_KILL_UNSPECIFIED = 0;
+  // A headshot kill of a player whose head was the smallest in the match, and smaller than normal.
+  SPECIAL_KILL_DOT_SHOT = 1;
+  // A kill with the King's hammer.
+  SPECIAL_KILL_CUTE_SHOT = 2;
 }
 
 // Who fights whom, alongside the GameMode's rules: two teams, or every player for themselves.
@@ -363,6 +378,11 @@ message GameConfig {
   // A jump's take-off speed (m/s up) and the gravity that brings a player down (m/s²).
   float jump_speed = 16;
   float gravity = 17;
+  // Big Head mode: the lowest and highest level (the highest crowns the King), and how long a
+  // reign lasts in seconds. 0 in other modes.
+  int32 min_level = 18;
+  int32 max_level = 19;
+  float king_time = 20;
 }
 
 message MatchStart {
@@ -399,6 +419,10 @@ message PlayerState {
   float y = 21;
   // Vertical speed in m/s, up positive; the client replays its own commands from it.
   float vy = 22;
+  // Big Head mode: the level, GameConfig.min_level to max_level (0 elsewhere), which sets
+  // head_scale, and the seconds of the King's reign left (0 when not the King).
+  int32 level = 23;
+  float king_left = 24;
 }
 
 message ShotEvent {
@@ -432,6 +456,8 @@ message KillEvent {
   uint32 victim_id = 2;
   bool headshot = 3;
   WeaponKind weapon = 4;
+  // Big Head mode's dot and cute shots; UNSPECIFIED for any other kill.
+  SpecialKill special = 5;
 }
 
 message ReloadEvent { uint32 player_id = 1; }
@@ -522,6 +548,8 @@ message ScoreEntry {
   uint32 kills = 4;
   uint32 deaths = 5;
   bool is_bot = 6;
+  // Big Head mode: the level at that moment; 0 in other modes.
+  int32 level = 7;
 }
 
 message MatchEnd {

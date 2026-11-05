@@ -116,6 +116,7 @@ const WEAPON_NAMES: Record<string, string> = {
   MISSILE: "미사일 런처",
   KNIFE: "나이프",
   TASER: "테이저건",
+  HAMMER: "뿅망치 (왕대두모드)",
 };
 
 const MAP_NAMES: Record<string, string> = {

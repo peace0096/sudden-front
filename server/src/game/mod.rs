@@ -1,6 +1,7 @@
 //! One match is one Bevy ECS `World` plus a chained `Schedule`.
 
 pub mod augments;
+mod big_head;
 mod bot;
 mod components;
 mod map;
@@ -118,6 +119,7 @@ impl Match {
             mode,
             max_hp: if augmented { augments::AUGMENT_MAX_HP } else { MAX_HP },
             ffa,
+            big_head: mode == pb::GameMode::BigHead,
         });
         world.insert_resource(EventLog::default());
         world.insert_resource(Missiles::default());
@@ -133,6 +135,7 @@ impl Match {
                 systems::update_weapons,
                 systems::fire_weapons,
                 systems::update_perks,
+                systems::update_kings,
                 systems::respawn_players,
                 systems::record_history,
                 systems::advance_tick,
@@ -396,11 +399,13 @@ impl Match {
     }
 
     /// Takes effect now while still under spawn protection (which firing
-    /// cancels), otherwise at the next spawn.
+    /// cancels), otherwise at the next spawn. A King keeps the hammer: the choice waits for the
+    /// weapons the reign's end hands out.
     pub fn select_weapon(&mut self, id: u32, kind: pb::WeaponKind) {
         let Some(&entity) = self.entities.get(&id) else {
             return;
         };
+        let king = self.world.get::<Perks>(entity).is_some_and(|p| p.king());
         let active = self.world.get::<Perks>(entity).map(|p| p.active.clone()).unwrap_or_default();
         // The Missile Launcher augment fills slot 1 itself.
         if !weapons::PRIMARIES.contains(&kind) || systems::forced_primary(&active).is_some() {
@@ -409,10 +414,11 @@ impl Match {
         if let Some(mut loadout) = self.world.get_mut::<Loadout>(entity) {
             loadout.0 = kind;
         }
-        let swap_now = self
-            .world
-            .get::<Vitals>(entity)
-            .is_some_and(|v| v.alive && v.protect_left > 0.0);
+        let swap_now = !king
+            && self
+                .world
+                .get::<Vitals>(entity)
+                .is_some_and(|v| v.alive && v.protect_left > 0.0);
         if swap_now {
             if let Some(mut weapon) = self.world.get_mut::<Weapon>(entity) {
                 *weapon = Weapon::equipped(kind, &active);
@@ -538,6 +544,7 @@ impl Match {
             })
             .collect();
         roster.sort_by_key(|r| r.id);
+        let big_head = self.world.resource::<Rules>().big_head;
         pb::MatchStart {
             your_id,
             config: Some(pb::GameConfig {
@@ -566,6 +573,9 @@ impl Match {
                 } as i32,
                 jump_speed: JUMP_SPEED,
                 gravity: GRAVITY,
+                min_level: if big_head { big_head::MIN_LEVEL } else { 0 },
+                max_level: if big_head { big_head::MAX_LEVEL } else { 0 },
+                king_time: if big_head { big_head::KING_TIME } else { 0.0 },
             }),
             map: Some(self.world.resource::<Arena>().map.clone()),
             roster,
@@ -602,6 +612,8 @@ impl Match {
                 head_scale: perks.head_scale,
                 active: perks.active.iter().map(|a| *a as i32).collect(),
                 stun_left: vitals.stun_left,
+                level: perks.level,
+                king_left: perks.king_ticks as f32 * TICK_DT,
             })
             .collect();
         players.sort_by_key(|p| p.id);
@@ -684,16 +696,17 @@ impl Match {
             Some(Winner::Player(id)) => (pb::Team::Unspecified, id),
             None => (pb::Team::Unspecified, 0),
         };
-        let mut query = self.world.query::<(&Player, &Stats)>();
+        let mut query = self.world.query::<(&Player, &Stats, &Perks)>();
         let mut scoreboard: Vec<pb::ScoreEntry> = query
             .iter(&self.world)
-            .map(|(player, stats)| pb::ScoreEntry {
+            .map(|(player, stats, perks)| pb::ScoreEntry {
                 id: player.id,
                 name: player.name.clone(),
                 team: player.team as i32,
                 kills: stats.kills,
                 deaths: stats.deaths,
                 is_bot: player.is_bot,
+                level: perks.level,
             })
             .collect();
         scoreboard.sort_by_key(|s| (std::cmp::Reverse(s.kills), s.deaths));

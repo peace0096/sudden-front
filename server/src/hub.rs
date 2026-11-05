@@ -13,7 +13,7 @@ pub const MAX_PLAYERS: usize = 10;
 /// Both teams, in the order the seats are indexed.
 const TEAMS: [pb::Team; 2] = [pb::Team::Red, pb::Team::Blue];
 /// The game modes and maps a room can be set to.
-const MODES: [pb::GameMode; 2] = [pb::GameMode::Normal, pb::GameMode::Augment];
+const MODES: [pb::GameMode; 3] = [pb::GameMode::Normal, pb::GameMode::Augment, pb::GameMode::BigHead];
 const MAPS: [pb::MapId; 2] = [pb::MapId::SupplyYard, pb::MapId::Warehouse];
 const RESULTS_SECONDS: f32 = 8.0;
 const MAX_NAME_CHARS: usize = 16;
@@ -429,7 +429,7 @@ impl Hub {
                     _ => pb::MapId::SupplyYard,
                 },
                 mode: match pb::GameMode::try_from(create.mode) {
-                    Ok(pb::GameMode::Augment) => pb::GameMode::Augment,
+                    Ok(mode) if MODES.contains(&mode) => mode,
                     _ => pb::GameMode::Normal,
                 },
                 match_type,
@@ -624,7 +624,7 @@ impl Hub {
         self.broadcast_room_list();
     }
 
-    /// The host picks the next match's rules in the waiting room: normal or augment mode.
+    /// The host picks the next match's rules in the waiting room: normal, augment or Big Head mode.
     fn on_set_game_mode(&mut self, id: u32, mode: i32) {
         let Some(room_id) = self.clients.get(&id).and_then(|c| c.room) else {
             return;
@@ -1818,6 +1818,30 @@ mod tests {
             assert!(h.take(id).is_empty(), "client {id} was told something");
         }
         assert_eq!((h.hub.rooms[&1].mode, h.hub.rooms[&1].map), (pb::GameMode::Augment, pb::MapId::Warehouse));
+    }
+
+    #[test]
+    fn a_big_head_room_is_made_or_set_like_the_other_modes_and_plays_big_head_matches() {
+        const BIG_HEAD: i32 = pb::GameMode::BigHead as i32;
+        let mut h = Harness::new(&[1, 2]);
+        h.send(
+            1,
+            In::CreateRoom(pb::CreateRoom {
+                fill_bots: true,
+                mode: BIG_HEAD,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(states(h.take(1)).pop().unwrap().room.unwrap().mode, BIG_HEAD);
+        assert_eq!(lists(h.take(2)).pop().unwrap().rooms.pop().unwrap().mode, BIG_HEAD);
+        // The host can leave it and come back to it in the waiting room.
+        h.send(1, set_mode(pb::GameMode::Normal as i32));
+        h.send(1, set_mode(BIG_HEAD));
+        assert_eq!(h.hub.rooms[&1].mode, pb::GameMode::BigHead);
+        h.forget();
+        h.send(1, start());
+        let config = match_start(h.take(1)).expect("the match starts").config.unwrap();
+        assert_eq!((config.mode, config.min_level, config.max_level, config.king_time), (BIG_HEAD, -5, 3, 20.0));
     }
 
     // ---------------------------------------------------------------- free-for-all rooms

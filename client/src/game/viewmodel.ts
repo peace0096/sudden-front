@@ -10,7 +10,7 @@
 // The scripted motion moves the whole rig, arms and gun together, so the hands stay on the gun:
 // the kick, the flash at the muzzle node, the reload dip with the left hand dropping away to swap
 // the magazine, the bolt or pump cycle (the left hand racking a pump), the knife slash, the
-// walking bob and the lowering on death. The flash is a muzzle cell of the effect atlas, drawn
+// hammer's bonk, the walking bob and the lowering on death. The flash is a muzzle cell of the effect atlas, drawn
 // over the gun as the game's other effects are drawn (particles.ts), its flame pointing in toward
 // the middle of the view where the barrel's line runs. A gun whose model failed to load is
 // placeholder.ts's box; without the arms' model the gun shows alone.
@@ -41,6 +41,9 @@ const FLASH_LIFE = 0.045;
 /** A throw: how long the arm takes (s), and the share of that at which the grenade leaves the hand. */
 const THROW_TIME = 0.45;
 const THROW_RELEASE = 0.5;
+/** A hammer's bonk: the shares of the swing at which it is drawn back furthest and at which it lands. */
+const BONK_RAISED = 0.3;
+const BONK_HIT = 0.5;
 
 /** The soldier's arms in one team's colour, or the neutral uniform without a team. */
 interface Arms {
@@ -339,7 +342,7 @@ export class ViewModel {
   }
 
   fire(): void {
-    if (this.kind === WeaponKind.KNIFE) {
+    if (this.kind === WeaponKind.KNIFE || this.kind === WeaponKind.HAMMER) {
       this.swing = 1;
       return;
     }
@@ -411,8 +414,26 @@ export class ViewModel {
     this.cycle = boltFraction > 0 ? Math.sin((1 - boltFraction) * Math.PI) : 0;
     const cycle = this.cycle;
 
+    const hammer = this.kind === WeaponKind.HAMMER;
     // Knife: a slash across from the right, recovering to the guard.
-    const slash = this.swing > 0 ? Math.sin((1 - this.swing) * Math.PI) : 0;
+    const slash = this.swing > 0 && !hammer ? Math.sin((1 - this.swing) * Math.PI) : 0;
+
+    // Hammer: a bonk. Drawn up and back, brought over and down onto the target ahead, held there a
+    // moment, then back to the guard.
+    let raise = 0;
+    let bonk = 0;
+    if (this.swing > 0 && hammer) {
+      const p = 1 - this.swing;
+      if (p < BONK_RAISED) {
+        raise = Math.sin((p / BONK_RAISED) * (Math.PI / 2));
+      } else if (p < BONK_HIT) {
+        const down = ((p - BONK_RAISED) / (BONK_HIT - BONK_RAISED)) * (Math.PI / 2);
+        raise = Math.cos(down);
+        bonk = Math.sin(down);
+      } else {
+        bonk = 0.5 + 0.5 * Math.cos(((p - BONK_HIT) / (1 - BONK_HIT)) * Math.PI);
+      }
+    }
 
     // Throw: drawn back and up over the shoulder, then whipped forward and down out of view.
     let windUp = 0;
@@ -430,14 +451,14 @@ export class ViewModel {
     const kick = this.kick * (fp?.kickScale ?? 1);
     const [offsetX, offsetY, offsetZ] = fp?.rigOffset ?? [0, 0, 0];
     this.rig.position.set(
-      0.2 + offsetX + bobX - slash * 0.2 + windUp * 0.04,
-      -0.19 + offsetY - bobY - dip * 0.08 - cycle * 0.03 - this.lowered * 0.5 + slash * 0.04 + windUp * 0.07 - whip * 0.22,
-      -0.42 + offsetZ + kick * 0.028 - slash * 0.1 + windUp * 0.1 - whip * 0.16,
+      0.2 + offsetX + bobX - slash * 0.2 + windUp * 0.04 + raise * 0.02 - bonk * 0.08,
+      -0.19 + offsetY - bobY - dip * 0.08 - cycle * 0.03 - this.lowered * 0.5 + slash * 0.04 + windUp * 0.07 - whip * 0.22 + raise * 0.04 - bonk * 0.03,
+      -0.42 + offsetZ + kick * 0.028 - slash * 0.1 + windUp * 0.1 - whip * 0.16 + raise * 0.04 - bonk * 0.08,
     );
     this.rig.rotation.set(
-      kick * 0.03 + dip * 0.5 + cycle * 0.12 + slash * 0.1 - windUp * 0.5 + whip * 0.9,
-      slash * 0.8,
-      dip * 0.28 + cycle * 0.2 + slash * 0.3 + windUp * 0.15,
+      kick * 0.03 + dip * 0.5 + cycle * 0.12 + slash * 0.1 - windUp * 0.5 + whip * 0.9 + raise * 0.4 - bonk * 0.75,
+      slash * 0.8 + bonk * 0.2,
+      dip * 0.28 + cycle * 0.2 + slash * 0.3 + windUp * 0.15 - raise * 0.1 + bonk * 0.35,
     );
     this.pose();
   }

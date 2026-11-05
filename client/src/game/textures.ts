@@ -203,3 +203,50 @@ export function nameTexture(name: string, color: string): THREE.CanvasTexture {
     g.fillText(name, w / 2, h / 2);
   }, false);
 }
+
+/**
+ * Big Head mode: the King's crown for a sprite over the head, gold with three points, a band and
+ * jewels, on a clear background.
+ */
+export function crownTexture(): THREE.CanvasTexture {
+  return canvasTexture(128, 96, (g, w, h) => {
+    const gold = g.createLinearGradient(0, 10, 0, h - 8);
+    gold.addColorStop(0, "#fff3b0");
+    gold.addColorStop(0.45, "#f4c430");
+    gold.addColorStop(1, "#a8700c");
+    g.lineJoin = "round";
+    g.lineWidth = 5;
+    g.strokeStyle = "#3a2504";
+    g.beginPath();
+    g.moveTo(16, h - 12);
+    g.lineTo(10, 30);
+    g.lineTo(38, 54);
+    g.lineTo(w / 2, 12);
+    g.lineTo(w - 38, 54);
+    g.lineTo(w - 10, 30);
+    g.lineTo(w - 16, h - 12);
+    g.closePath();
+    g.fillStyle = gold;
+    g.fill();
+    g.stroke();
+    g.fillStyle = "#c8901a";
+    g.fillRect(16, h - 30, w - 32, 16);
+    g.strokeRect(16, h - 30, w - 32, 16);
+    const jewels: [number, number, number, string][] = [
+      [10, 30, 7, "#ff3b4a"],
+      [w / 2, 12, 8, "#ff3b4a"],
+      [w - 10, 30, 7, "#ff3b4a"],
+      [40, h - 22, 5, "#4ad0ff"],
+      [w / 2, h - 22, 6, "#ff3b4a"],
+      [w - 40, h - 22, 5, "#4ad0ff"],
+    ];
+    for (const [x, y, r, color] of jewels) {
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fillStyle = color;
+      g.fill();
+      g.lineWidth = 2.5;
+      g.stroke();
+    }
+  }, false);
+}

@@ -46,7 +46,7 @@ Client                                   Server
 | 12 | SetKillsToWin | 방장만, 10/20/30/50 중 하나 (기본값 팀전 30, 개인전 20) |
 | 13 | SetBotSlot | 방장만, 대기실에서 `team`·`slot`(0~4) 칸에 봇을 넣거나 뺌(`bot`). 개인전 방은 `team` UNSPECIFIED에 방 전체 칸 번호 `slot`(0~9). 사람이 있는 칸은 무시 |
 | 14 | SetReady | 방장이 아닌 플레이어가 대기실에서 준비(`ready`)를 켜거나 끔. 방장 것과 경기 중의 것은 무시. 방장 외 모두가 준비해야 `StartGame`이 받아들여지고, 경기가 시작되면 모두의 준비가 풀림 |
-| 15 | SetGameMode | 방장만, 대기실에서 다음 경기의 모드 `mode`(NORMAL/AUGMENT). 방장이 아니면 "방장만 게임 모드를 바꿀 수 있습니다.", 같은 값·UNSPECIFIED·모르는 값·경기 중의 것은 아무에게도 알리지 않고 무시. 바뀌면 방 사람들에게 `RoomState`, 로비에 `RoomList` |
+| 15 | SetGameMode | 방장만, 대기실에서 다음 경기의 모드 `mode`(NORMAL/AUGMENT/BIG_HEAD). 방장이 아니면 "방장만 게임 모드를 바꿀 수 있습니다.", 같은 값·UNSPECIFIED·모르는 값·경기 중의 것은 아무에게도 알리지 않고 무시. 바뀌면 방 사람들에게 `RoomState`, 로비에 `RoomList` |
 | 16 | SetMap | 방장만, 대기실에서 다음 경기의 맵 `map`(SUPPLY_YARD/WAREHOUSE). 거부·무시 규칙은 SetGameMode와 같음("방장만 맵을 바꿀 수 있습니다.") |
 
 ### InputCmd (1/60초 한 스텝)
@@ -79,7 +79,7 @@ Client                                   Server
 | 10 | Pong | |
 
 ### GameConfig
-틱 레이트(30), 목표 킬, 플레이어 크기·눈높이, 부활 시간, 무기 스탯(수류탄 포함: `magazine`이 목숨당 개수, `fire_interval`이 던진 뒤 다음 무기까지 시간, `splash_radius`가 폭발 반경), 꺼내기 시간, 앉기 계수, 최대 HP, 모드, 시작 대기 시간, 방식(`match_type`, 15), 점프 이륙 속도(`jump_speed`, 16)·중력(`gravity`, 17).
+틱 레이트(30), 목표 킬, 플레이어 크기·눈높이, 부활 시간, 무기 스탯(수류탄 포함: `magazine`이 목숨당 개수, `fire_interval`이 던진 뒤 다음 무기까지 시간, `splash_radius`가 폭발 반경), 꺼내기 시간, 앉기 계수, 최대 HP, 모드, 시작 대기 시간, 방식(`match_type`, 15), 점프 이륙 속도(`jump_speed`, 16)·중력(`gravity`, 17). 왕대두모드에서만 최저·최고 레벨(`min_level` 18, `max_level` 19, 최고 레벨이 왕대두)과 왕대두 지속 시간(`king_time`, 20, 초)이 들어가고 다른 모드에서는 0입니다.
 
 ### MapData
 이름, `MapId`, 반폭(`half_x`, `half_z`), 충돌 박스 `boxes`(`MapBox`: 종류와 min/max), 소품 `props`(`MapProp`: 종류, 위치, 회전, 크기). `MapProp.tilt`(8)는 기울어진 컨테이너가 길이 방향으로 +X 끝을 들어 올린 각도(rad)이고, 그 충돌은 서버가 이 기울기를 따라 자른 INVISIBLE 박스 조각으로 `boxes`에 들어 있습니다.
@@ -108,7 +108,7 @@ Client                                   Server
 | 21 | grenades_left | 수신자 | 이번 생에 남은 수류탄 개수(4번 칸) |
 
 ### PlayerState
-위치(x, z)와 발 높이(`y`, 21)·수직 속도(`vy`, 22, 서 있으면 0. 클라이언트가 자기 명령을 다시 적용할 때 씀), yaw/pitch, hp, 생존, 이동 중, 장전 중, 보호 중, 부활까지 남은 시간, 킬/데스, 들고 있는 무기, 앉기, 고른 증강(`augment`), 방패 HP, 머리 크기 배율(`head_scale`), 실제 적용 증강 목록(`active`, 더블 타임이면 2개), 마비 남은 시간(`stun_left`).
+위치(x, z)와 발 높이(`y`, 21)·수직 속도(`vy`, 22, 서 있으면 0. 클라이언트가 자기 명령을 다시 적용할 때 씀), yaw/pitch, hp, 생존, 이동 중, 장전 중, 보호 중, 부활까지 남은 시간, 킬/데스, 들고 있는 무기, 앉기, 고른 증강(`augment`), 방패 HP, 머리 크기 배율(`head_scale`), 실제 적용 증강 목록(`active`, 더블 타임이면 2개), 마비 남은 시간(`stun_left`), 왕대두모드의 레벨(`level`, 23, 다른 모드는 0. `head_scale`이 레벨을 따름)과 왕대두 남은 시간(`king_left`, 24, 초, 왕대두가 아니면 0).
 
 ### GameEvent
 
@@ -116,7 +116,7 @@ Client                                   Server
 | --- | --- | --- |
 | 1 | ShotEvent | 발사 위치·도착 위치, 맞은 플레이어, 근접/산탄 펠릿/폭발형 여부 |
 | 2 | DamageEvent | 공격자, 피해자, 양, 부위, 방패에 맞았는지 |
-| 3 | KillEvent | 킬러, 피해자, 헤드샷, 무기 |
+| 3 | KillEvent | 킬러, 피해자, 헤드샷, 무기, 왕대두모드의 특수 샷(`special`, 5: `SpecialKill` DOT_SHOT·CUTE_SHOT, 그 밖에는 UNSPECIFIED) |
 | 4 | ReloadEvent | |
 | 5 | RespawnEvent | |
 | 6 | ExplosionEvent | 미사일·수류탄 폭발 위치 |
@@ -124,10 +124,11 @@ Client                                   Server
 
 ## 열거형
 
-- `WeaponKind`: RIFLE, SNIPER, MACHINE_GUN, SMG, PISTOL, KNIFE, SHOTGUN(7), MISSILE(8, 옛 RPG 자리), PISTOL_PLUS, MAGNUM(10), AKIMBO_SMG(11), TASER(12), GRENADE(13, 4번 칸)
+- `WeaponKind`: RIFLE, SNIPER, MACHINE_GUN, SMG, PISTOL, KNIFE, SHOTGUN(7), MISSILE(8, 옛 RPG 자리), PISTOL_PLUS, MAGNUM(10), AKIMBO_SMG(11), TASER(12), GRENADE(13, 4번 칸), HAMMER(14, 왕대두모드의 왕대두 전용 뿅망치)
 - `Augment`: INFINITE_AMMO … MISSILE(13, 옛 RPG 자리), MAGNUM, BIG_HEAD, VEST, AKIMBO, DOUBLE_TIME(18), TASER(19)
 - `AugmentGrade`: SILVER, GOLD, PRISM
-- `GameMode`: NORMAL, AUGMENT
+- `GameMode`: NORMAL, AUGMENT, BIG_HEAD(왕대두모드)
+- `SpecialKill`: UNSPECIFIED, DOT_SHOT(머리가 가장 작은 상대를 헤드샷으로 처치), CUTE_SHOT(뿅망치로 처치)
 - `MatchType`: TEAM_DEATHMATCH, FREE_FOR_ALL (`GameMode`와 따로 고르는 방식. UNSPECIFIED는 팀 데스매치로 봄)
 - `Team`: RED, BLUE. 개인전 선수는 UNSPECIFIED
 - `MapId`: SUPPLY_YARD, WAREHOUSE

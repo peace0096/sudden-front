@@ -1,7 +1,7 @@
 // All sound is synthesised with Web Audio; there are no sample files. Weapon sounds are layered
 // offline (crack, blast, body, mechanism, echo) into a few randomised takes per sound, once per
 // sample rate, so a shot in play is a single buffer playback.
-import { WeaponKind } from "../gen/game_pb";
+import { SpecialKill, WeaponKind } from "../gen/game_pb";
 
 interface Band {
   type: "lowpass" | "highpass" | "bandpass";
@@ -646,10 +646,11 @@ export class GameAudio {
 
   gunshot(kind: WeaponKind, distance: number, pan: number): void {
     const gain = 1 / (1 + distance / 10);
-    if (kind === WeaponKind.KNIFE) {
-      // A swing, not a shot: quieter and whooshing.
+    if (kind === WeaponKind.KNIFE || kind === WeaponKind.HAMMER) {
+      // A swing, not a shot: quieter and whooshing, the hammer's head lower and longer.
+      const hammer = kind === WeaponKind.HAMMER;
       const out = this.output(gain, pan);
-      if (out) this.noiseBurst(out, "bandpass", 1400, 0.45 * (distance < 25 ? 1 : 0.2), 0.16);
+      if (out) this.noiseBurst(out, "bandpass", hammer ? 700 : 1400, 0.45 * (distance < 25 ? 1 : 0.2), hammer ? 0.22 : 0.16);
       return;
     }
     let rate = 1;
@@ -732,6 +733,46 @@ export class GameAudio {
     if (headshot) {
       this.tone(out, "square", 2700, 2300, 0.08, 0.09);
       this.noiseBurst(out, "lowpass", 320, 0.6, 0.12);
+    }
+  }
+
+  /**
+   * Big Head mode: the toy hammer landing on someone, a squeaky rubber "ppyong" (two chirps
+   * rising over a soft thump). `distance` (m) and `pan` place it.
+   */
+  squeak(distance: number, pan: number): void {
+    const out = this.output(1 / (1 + (distance / 12) ** 2), pan);
+    if (!out) return;
+    this.tone(out, "sine", 620, 1500, 0.55, 0.11);
+    this.tone(out, "triangle", 1200, 2400, 0.22, 0.08, 0.05);
+    this.noiseBurst(out, "lowpass", 380, 0.5, 0.07);
+  }
+
+  /** A King is crowned: a fanfare up a major chord, quieter when it is someone else. */
+  crowned(mine: boolean): void {
+    const out = this.output(mine ? 0.55 : 0.3, 0, this.cues);
+    if (!out) return;
+    [523.25, 659.25, 783.99, 1046.5].forEach((pitch, i) => this.tone(out, "triangle", pitch, pitch * 1.005, 0.24, i === 3 ? 0.4 : 0.14, i * 0.09));
+    if (mine) this.tone(out, "sine", 2093, 2093, 0.08, 0.5, 0.36);
+  }
+
+  /** My reign is over: the fanfare's notes coming back down. */
+  reignOver(): void {
+    const out = this.output(0.4, 0, this.cues);
+    if (!out) return;
+    [783.99, 659.25, 523.25].forEach((pitch, i) => this.tone(out, "triangle", pitch, pitch * 0.98, 0.18, 0.16, i * 0.11));
+  }
+
+  /** A special kill of mine, after the streak's notes: a high ping for a dot shot, two squeaks for a cute shot. */
+  specialShot(special: SpecialKill): void {
+    const out = this.output(0.5, 0, this.cues);
+    if (!out) return;
+    if (special === SpecialKill.DOT_SHOT) {
+      this.tone(out, "sine", 3200, 3150, 0.2, 0.35, 0.12);
+      this.tone(out, "sine", 4800, 4700, 0.08, 0.25, 0.16);
+    } else if (special === SpecialKill.CUTE_SHOT) {
+      this.tone(out, "sine", 700, 1700, 0.3, 0.1, 0.18);
+      this.tone(out, "sine", 900, 2100, 0.3, 0.1, 0.3);
     }
   }
 

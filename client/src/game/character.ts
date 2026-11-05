@@ -17,7 +17,7 @@ import { characterArt, place, teamFile, weaponArt, type CharacterArt, type HoldA
 import { toLambert } from "./art/materials";
 import { placeholderFigure, placeholderGun } from "./art/placeholder";
 import { Rig, type Side } from "./art/rig";
-import { nameTexture } from "./textures";
+import { crownTexture, nameTexture } from "./textures";
 
 /**
  * A name tag's colour: the team's, and the enemy red without a team, since in a free-for-all match
@@ -48,6 +48,10 @@ const THROW_REACH = 0.9;
 /** The name tag clears the head top by this much, and never sits lower than NAME_MIN. */
 const NAME_CLEARANCE = 0.15;
 const NAME_MIN = 2.1;
+/** Big Head mode: the King's crown sprite, sitting on the head top this wide and tall (m), sunk in a little. */
+const CROWN_WIDTH = 0.5;
+const CROWN_HEIGHT = 0.375;
+const CROWN_SINK = 0.04;
 /** Seconds a fallen body stays before it disappears. */
 const BODY_STAYS = 2.6;
 
@@ -172,6 +176,7 @@ let shared: {
   sparkMaterial: THREE.Material;
   shield: THREE.BufferGeometry;
   shieldMaterial: THREE.Material;
+  crown: THREE.SpriteMaterial;
 } | null = null;
 
 function paint(geometry: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
@@ -203,6 +208,7 @@ function parts() {
       // RoundedBoxGeometry has no index, so neither may the strip have one to merge with it.
       shield: mergeGeometries([paint(plate.index ? plate.toNonIndexed() : plate, 0x3c4348), paint(strip.toNonIndexed(), 0x9fc4d8)])!,
       shieldMaterial: new THREE.MeshLambertMaterial({ vertexColors: true }),
+      crown: new THREE.SpriteMaterial({ map: crownTexture(), transparent: true }),
     };
   }
   return shared;
@@ -211,7 +217,7 @@ function parts() {
 /** Frees the shared character parts on the GPU; they stay usable. The match calls it on its way out. */
 export function releaseCharacterGpu(): void {
   if (!shared) return;
-  for (const item of [shared.blob, shared.spark, shared.shield, shared.shadow, shared.sparkMaterial, shared.shieldMaterial]) item.dispose();
+  for (const item of [shared.blob, shared.spark, shared.shield, shared.shadow, shared.sparkMaterial, shared.shieldMaterial, shared.crown.map!, shared.crown]) item.dispose();
 }
 
 /**
@@ -259,6 +265,10 @@ export interface CharacterMeasure {
   wrist: { right: number | null; left: number | null };
   /** Visible meshes and sprites: the draw calls the character costs. */
   parts: number;
+  /** Big Head mode: the bottom and top heights of the King's crown while it shows, else null. */
+  crown: { bottom: number; top: number } | null;
+  /** The name tag's height (its middle). */
+  name: number;
 }
 
 const _target = new THREE.Vector3();
@@ -325,6 +335,9 @@ export class Character {
   /** The aim last drawn, for measure(). */
   private pitch = 0;
   private readonly shield: THREE.Mesh;
+  /** Big Head mode: the crown over the reigning King's head. */
+  private readonly crown: THREE.Sprite;
+  private king = false;
   private xray = false;
   private readonly sparks = new THREE.Group();
   private stunned = false;
@@ -393,6 +406,11 @@ export class Character {
     this.shield.visible = false;
     this.root.add(this.shield);
 
+    this.crown = new THREE.Sprite(s.crown);
+    this.crown.scale.set(CROWN_WIDTH, CROWN_HEIGHT, 1);
+    this.crown.visible = false;
+    this.root.add(this.crown);
+
     // Arcs flickering around a paralysed soldier.
     for (let i = 0; i < 10; i++) this.sparks.add(new THREE.Mesh(s.spark, s.sparkMaterial));
     this.sparks.visible = false;
@@ -459,10 +477,12 @@ export class Character {
     for (const group of [this.holder, this.shield]) group.traverse((child) => child.layers.enable(1));
   }
 
-  setLook(headScale: number, shielded: boolean, stunned: boolean): void {
+  /** The head's size, the shield up, a paralysis, and in Big Head mode the reigning King's crown. */
+  setLook(headScale: number, shielded: boolean, stunned: boolean, king = false): void {
     this.stunned = stunned;
     this.headScale = headScale;
     this.shield.visible = shielded;
+    this.king = king;
   }
 
   setNameVisible(visible: boolean): void {
@@ -503,7 +523,12 @@ export class Character {
   update(dt: number, x: number, z: number, yaw: number, pitch: number, _moving: boolean, alive: boolean, shielded: boolean, time: number, crouching: boolean, y = 0): void {
     this.crouchAmount += (Number(crouching && alive) - this.crouchAmount) * Math.min(1, dt * 14);
     const drop = CROUCH_DROP * this.crouchAmount;
-    this.name.position.y = Math.max(NAME_MIN, HEAD_BASE + HEAD_HEIGHT * this.headScale + NAME_CLEARANCE) - drop;
+    const headTop = HEAD_BASE + HEAD_HEIGHT * this.headScale;
+    // The King's crown sits on the head, and the name over the crown.
+    const crowned = this.king && alive;
+    this.crown.visible = crowned;
+    this.crown.position.y = headTop + CROWN_HEIGHT / 2 - CROWN_SINK - drop;
+    this.name.position.y = Math.max(NAME_MIN, headTop + (crowned ? CROWN_HEIGHT - CROWN_SINK : 0) + NAME_CLEARANCE) - drop;
     this.shield.scale.y = 1 - (CROUCH_DROP / SHIELD_TOP) * this.crouchAmount;
     this.track(dt, x, z);
     // `y` lifts the feet off the floor: a box top, or in the air.
@@ -799,6 +824,8 @@ export class Character {
       supportFacing,
       wrist,
       parts: count,
+      crown: this.crown.visible ? { bottom: this.crown.getWorldPosition(new THREE.Vector3()).y - CROWN_HEIGHT / 2, top: this.crown.getWorldPosition(new THREE.Vector3()).y + CROWN_HEIGHT / 2 } : null,
+      name: this.name.getWorldPosition(new THREE.Vector3()).y,
     };
   }
 

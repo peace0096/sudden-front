@@ -315,6 +315,32 @@ const GRENADE: Stats = Stats {
     stun: 0.0,
 };
 
+/// Big Head mode: the King's toy hammer, the reign's only weapon. A hit anywhere fells anyone, and
+/// its move speed, a little above the knife's, is the King's.
+const HAMMER: Stats = Stats {
+    name: "TOY HAMMER",
+    magazine: 0,
+    reserve: 0,
+    fire_interval: 0.5,
+    reload_time: 0.0,
+    move_speed: 6.6 * SPEED_SCALE,
+    damage_head: 200,
+    damage_body: 200,
+    damage_legs: 200,
+    spread_still: 0.0,
+    spread_moving: 0.0,
+    bloom_per_shot: 0.0,
+    bloom_max: 0.0,
+    has_scope: false,
+    scoped_spread_still: 0.0,
+    scoped_spread_moving: 0.0,
+    melee_range: 2.5,
+    pellets: 0,
+    shell_reload: false,
+    splash_radius: 0.0,
+    stun: 0.0,
+};
+
 /// Time between rounds of the upgraded pistol's burst, and between bursts.
 pub const BURST_GAP: f32 = 0.07;
 pub const BURST_RECOVERY: f32 = 0.2;
@@ -355,6 +381,7 @@ pub fn stats(kind: WeaponKind) -> &'static Stats {
         WeaponKind::Magnum => &MAGNUM,
         WeaponKind::AkimboSmg => &AKIMBO_SMG,
         WeaponKind::Grenade => &GRENADE,
+        WeaponKind::Hammer => &HAMMER,
         WeaponKind::Knife => &KNIFE,
         WeaponKind::Sniper => &SNIPER,
         WeaponKind::MachineGun => &MACHINE_GUN,
@@ -371,7 +398,7 @@ pub const PRIMARIES: [WeaponKind; 4] = [
     WeaponKind::Smg,
 ];
 
-pub const ALL: [WeaponKind; 13] = [
+pub const ALL: [WeaponKind; 14] = [
     WeaponKind::Rifle,
     WeaponKind::Sniper,
     WeaponKind::MachineGun,
@@ -385,6 +412,7 @@ pub const ALL: [WeaponKind; 13] = [
     WeaponKind::Magnum,
     WeaponKind::AkimboSmg,
     WeaponKind::Grenade,
+    WeaponKind::Hammer,
 ];
 
 /// What slot 2 holds for a player with these augments.

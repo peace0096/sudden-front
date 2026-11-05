@@ -20,6 +20,7 @@ const MAP_NAMES: Record<number, string> = {
 const MODE_NAMES: Record<number, string> = {
   [GameMode.NORMAL]: "일반모드",
   [GameMode.AUGMENT]: "증강모드",
+  [GameMode.BIG_HEAD]: "왕대두모드",
 };
 
 const MATCH_NAMES: Record<number, string> = {
@@ -43,7 +44,7 @@ const TEAM_NAMES: Record<number, string> = {
 
 const KILL_TARGETS = [10, 20, 30, 50];
 const MAPS = [MapId.SUPPLY_YARD, MapId.WAREHOUSE];
-const MODES = [GameMode.NORMAL, GameMode.AUGMENT];
+const MODES = [GameMode.NORMAL, GameMode.AUGMENT, GameMode.BIG_HEAD];
 
 /** A labelled select for one of the host's room options; `onPick` gets the chosen value. */
 function optionSelect(label: string, className: string, options: [number, string][], value: number, onPick: (value: number) => void): HTMLElement {

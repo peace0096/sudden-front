@@ -77,6 +77,12 @@
       "hold": "knife",
       "tp": { "position": [0.0223, 0.1562, -0.0234], "rotation": [1.5568, 0.042, 1.3935] },
       "fp": { "position": [0, -0.09, 0.07], "rotation": [1.4205, 0.6406, -2.9844], "scale": 0.95, "oneHanded": true, "rigOffset": [-0.1, 0.21, -0.08], "kickScale": 1 }
+    },
+    "HAMMER": {
+      "file": "weapons/hammer.glb",
+      "hold": "knife",
+      "tp": { "position": [0.0223, 0.1562, -0.0234], "rotation": [1.5568, 0.042, 1.3935] },
+      "fp": { "position": [0, -0.09, 0.07], "rotation": [0.5302, 0.8316, -0.316], "scale": 0.9, "oneHanded": true, "rigOffset": [-0.02, 0.11, -0.08], "kickScale": 1 }
     }
   },
   "character": {

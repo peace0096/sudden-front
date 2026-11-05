@@ -73,7 +73,7 @@ client/
 
 ```
 bot_think → consume_inputs → update_weapons → fire_weapons → update_perks
-          → respawn_players → record_history → advance_tick
+          → update_kings → respawn_players → record_history → advance_tick
 ```
 
 | 시스템 | 역할 |
@@ -83,6 +83,7 @@ bot_think → consume_inputs → update_weapons → fire_weapons → update_perk
 | update_weapons | 장전, 꺼내기(0.35초), 볼트/펌프 사이클, 블룸 감소 |
 | fire_weapons | 사격 판정: 히트스캔/근접/산탄/테이저, lag compensation, 미사일 발사와 비행·폭발(`fly_missiles`), 수류탄 투척(`throw_grenade`)과 비행·튕김·폭발(`fly_grenades`, `roll_grenade`가 `physics::sweep_ball`로 충돌), 대미지·킬 이벤트 |
 | update_perks | 증강의 지속 효과: 때로는 휴식이(앉아 있을 때 회복) |
+| update_kings | 왕대두모드: 왕대두 남은 틱을 줄이고, 끝나면 0레벨로 되돌리고 무기를 새로 지급. 레벨 증감·즉위·무적·특수 샷은 `fire_weapons`가 판정 |
 | respawn_players | 사망 3초 후 재투입, 3초 보호, 증강에 맞는 무기 지급 |
 | record_history | lag compensation용 위치 기록 (최대 15틱 되감기) |
 | advance_tick | 틱 번호 증가, 경기 시계 |
@@ -128,6 +129,7 @@ bot_think → consume_inputs → update_weapons → fire_weapons → update_perk
     - `?art` 벤치는 손가락 마디로 잰 손바닥 방향도 검사합니다. 주먹 위치는 IK가 맞춘 값을 다시 재는 것이라, 손 방향이 틀려도 통과하기 때문입니다.
 - `?debug&hitbox`로 열면 원격 플레이어마다 서버 히트박스(앉기·머리 크기·방패 포함)를 선으로 그립니다.
 - `?debug&collision`으로 열면 모든 MapBox 모서리를 한 `LineSegments`로 그립니다(보이는 상자는 노랑, INVISIBLE은 자홍). 보이는 모델과 충돌 박스가 맞는지 확인할 때 씁니다.
+- 왕대두모드: 클라이언트는 `PlayerState.king_left`가 0에서 양수로 바뀌는 것으로 즉위를 알아채 알림을 띄우고(따로 이벤트가 없음), 내 왕대두 중에는 서버처럼 무기 칸 전환을 막아 예측합니다(`game.ts`의 `stepInput`). 왕대두가 맞은 `ShotEvent`와 뿅망치 적중은 피 대신 먼지 이펙트를 씁니다. 금관은 코드로 그린 스프라이트(`textures.ts`의 `crownTexture`)입니다.
 - 처치 배너(`hud.ts`의 `showKillBanner`)는 내 `KillEvent`마다 `game.ts`가 센 연속 처치 수와 헤드샷 여부로 그립니다. 탄환·해골은 코드로 그린 인라인 SVG이고, 등장·소멸은 CSS 애니메이션(`kb-life`, `kb-slam`, `kb-shake`)이며, 애니메이션이 끝나면 `animationend`로 숨깁니다.
 - 이펙트는 파티클 알파·가산 배치, 예광탄 리본, 데칼 풀의 네 번으로 그립니다(예산은 manifest `budgets.drawCalls.effects`). 파티클이 가득 차면 수명이 가장 많이 지난 것을 바꿔 씁니다.
 - 정적 맵은 그리기 호출 16회(보급창고)·12회(웨어하우스)입니다(예산 35). `InstancedMesh`는 인스턴스 하나라도 보이면 전부 그리므로, 정적 맵의 삼각형은 약 3만 개로 늘었습니다.

@@ -1,4 +1,4 @@
-import { Augment, Team, WeaponKind, type MapBox, type ScoreEntry, type WeaponStats } from "../gen/game_pb";
+import { Augment, SpecialKill, Team, WeaponKind, type MapBox, type ScoreEntry, type WeaponStats } from "../gen/game_pb";
 import { AUGMENTS, GRADE_CLASSES, GRADE_NAMES } from "../augments";
 import { sensitivityControl } from "../settings";
 import { sidearmNote, weaponCards, weaponTypeName } from "../weapons";
@@ -23,6 +23,33 @@ const GUN_ICONS: Record<number, string> = {
   [WeaponKind.GRENADE]: gunIcon(
     "M26 11.5a6 6 0 1 0 12 0a6 6 0 1 0-12 0zM30 3h4v3.2h-4zM34 3h3.5l2.5 6h-2l-2-3.6H34zM24.6 4.2a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0-5.2 0zM25.8 4.2a1.4 1.4 0 1 1 2.8 0a1.4 1.4 0 1 1-2.8 0z",
   ),
+  // The handle along the bottom, and the head standing across its end: two caps either side of the bellows.
+  [WeaponKind.HAMMER]: gunIcon("M8 8h30v3H8zM38 1.5h7v15h-7zM46.5 3.5h2v11h-2zM50 3.5h2v11h-2zM53.5 1.5h7v15h-7z"),
+};
+
+/**
+ * Big Head mode's special kills on the banner: the King's toy hammer for a cute shot, and a scope's
+ * reticle round a dot of a head for a dot shot.
+ */
+const HAMMER_SVG = `<svg class="kb-special" viewBox="0 0 80 80" aria-hidden="true"><g transform="rotate(-35 40 40)">
+<rect x="36" y="30" width="8" height="44" rx="3" fill="#f5c84a" stroke="#1d1306" stroke-width="2.4"/>
+<rect x="36" y="62" width="8" height="12" rx="3" fill="#3d6fd8" stroke="#1d1306" stroke-width="2.4"/>
+<rect x="12" y="10" width="20" height="26" rx="6" fill="#ff4a5c" stroke="#1d1306" stroke-width="2.6"/>
+<rect x="48" y="10" width="20" height="26" rx="6" fill="#ff4a5c" stroke="#1d1306" stroke-width="2.6"/>
+<rect x="31" y="13" width="18" height="20" fill="#ffd84a" stroke="#1d1306" stroke-width="2.2"/>
+<path d="M35 13v20M40 13v20M45 13v20" stroke="#c99a1c" stroke-width="1.6"/>
+<rect x="15" y="13" width="5" height="18" rx="2.5" fill="#ffffff" opacity="0.45"/>
+</g></svg>`;
+const DOT_SVG = `<svg class="kb-special" viewBox="0 0 80 80" aria-hidden="true">
+<circle cx="40" cy="40" r="30" fill="none" stroke="#bff6ff" stroke-width="3"/>
+<circle cx="40" cy="40" r="19" fill="none" stroke="#bff6ff" stroke-width="1.5" opacity="0.6"/>
+<path d="M40 4v18M40 58v18M4 40h18M58 40h18" stroke="#bff6ff" stroke-width="3" stroke-linecap="round"/>
+<circle cx="40" cy="40" r="5" fill="#ff3b2f" stroke="#1a0b05" stroke-width="1.5"/>
+</svg>`;
+/** Each special kill's name, banner style and emblem. */
+const SPECIAL_KILLS: Record<number, { title: string; className: string; emblem: string }> = {
+  [SpecialKill.DOT_SHOT]: { title: "DOT SHOT", className: "dot-shot", emblem: DOT_SVG },
+  [SpecialKill.CUTE_SHOT]: { title: "CUTE SHOT", className: "cute-shot", emblem: HAMMER_SVG },
 };
 
 /**
@@ -98,6 +125,15 @@ export interface KillLine {
   victimIsMe: boolean;
   headshot: boolean;
   weapon: WeaponKind;
+  /** Big Head mode's dot or cute shot, which the feed tags instead of the headshot. */
+  special?: SpecialKill;
+}
+
+/** Big Head mode's rules from the game's config: the levels there are and how long a reign lasts. */
+export interface BigHeadRules {
+  minLevel: number;
+  maxLevel: number;
+  kingTime: number;
 }
 
 export class Hud {
@@ -143,6 +179,17 @@ export class Hud {
   private readonly offerBody: HTMLDivElement;
   private readonly countdown: HTMLDivElement;
   private readonly killBanner: HTMLDivElement;
+  /** Big Head mode: my level, its gauge and head size, and the King's time left; the notices in the middle. */
+  private bigHead: BigHeadRules | null = null;
+  private readonly levelPanel: HTMLDivElement;
+  private readonly levelValue: HTMLDivElement;
+  private readonly levelSize: HTMLDivElement;
+  private readonly levelPips: HTMLDivElement;
+  private readonly kingLine: HTMLDivElement;
+  private readonly kingTime: HTMLDivElement;
+  private readonly kingFill: HTMLDivElement;
+  private shownLevel: number | null = null;
+  private readonly notice: HTMLDivElement;
   private hurtTimer = 0;
   private markerTimer = 0;
 
@@ -180,6 +227,23 @@ export class Hud {
     div(this.shieldPanel, "", "방패");
     this.shieldValue = div(this.shieldPanel, "");
     this.badge = div(this.root, "augment-badge hidden");
+
+    // Above the HP panel in a Big Head match: the level, a gauge of every level with mine lit,
+    // the head's size, and while I reign the King's time running out.
+    this.levelPanel = div(this.root, "level-panel hidden");
+    const levelHead = div(this.levelPanel, "level-head");
+    div(levelHead, "level-label", "LV");
+    this.levelValue = div(levelHead, "level-value", "0");
+    this.levelSize = div(levelHead, "level-size");
+    this.levelPips = div(this.levelPanel, "level-pips");
+    this.kingLine = div(this.levelPanel, "king-line hidden");
+    div(this.kingLine, "king-label", "무적의 왕대두");
+    this.kingTime = div(this.kingLine, "king-time");
+    this.kingFill = div(div(this.kingLine, "king-track"), "king-fill");
+    this.notice = div(this.root, "big-head-notice hidden");
+    this.notice.addEventListener("animationend", (event) => {
+      if (event.target === this.notice) this.notice.classList.add("hidden");
+    });
 
     const ammoPanel = div(this.root, "ammo-panel");
     this.slotBar = div(ammoPanel, "slot-bar");
@@ -251,9 +315,16 @@ export class Hud {
     this.weaponName.textContent = name;
   }
 
-  /** The 1/2/3/4 strip above the ammo counter; the grenade's chip counts them, dimmed with none left. */
+  /**
+   * The 1/2/3/4 strip above the ammo counter; the grenade's chip counts them, dimmed with none left.
+   * The King's hammer stands alone there: nothing else can be taken while the reign lasts.
+   */
   setSlots(primary: WeaponKind, sidearm: WeaponKind, active: WeaponKind, grenades: number): void {
     this.slotBar.replaceChildren();
+    if (active === WeaponKind.HAMMER) {
+      div(this.slotBar, "slot-chip on king", `♛ ${weaponTypeName(WeaponKind.HAMMER)} · 무기 교체 불가`);
+      return;
+    }
     [primary, sidearm, WeaponKind.KNIFE, WeaponKind.GRENADE].forEach((kind, index) => {
       const spent = kind === WeaponKind.GRENADE && grenades === 0;
       const chip = div(this.slotBar, kind === active ? "slot-chip on" : spent ? "slot-chip spent" : "slot-chip");
@@ -315,6 +386,65 @@ export class Hud {
   /** Whether this is an augment match, whose Tab board lists the augments in hand. */
   setAugmentMode(on: boolean): void {
     this.augmentMode = on;
+  }
+
+  /**
+   * A Big Head match, or null for any other: the level panel shows, with a pip for every level,
+   * the scoreboard gets a level column and Tab the mode's rules.
+   */
+  setBigHead(rules: BigHeadRules | null): void {
+    this.bigHead = rules;
+    this.levelPanel.classList.toggle("hidden", !rules);
+    this.board.classList.toggle("big-head", !!rules);
+    this.levelPips.replaceChildren();
+    this.shownLevel = null;
+    if (!rules) return;
+    for (let level = rules.minLevel; level <= rules.maxLevel; level++) {
+      const kind = level === rules.maxLevel ? "king" : level < 0 ? "low" : level === 0 ? "zero" : "high";
+      const pip = div(this.levelPips, `pip ${kind}`, level === rules.maxLevel ? "♛" : "");
+      pip.dataset.level = String(level);
+      pip.title = level === rules.maxLevel ? `${level}레벨: 무적의 왕대두` : `${level}레벨`;
+    }
+    this.setLevel(0, 1, 0);
+  }
+
+  /**
+   * My level and head size in a Big Head match, and while I am the King the seconds of the reign
+   * left. The gauge lights from 0 out to the level; a change flashes the panel up or down.
+   */
+  setLevel(level: number, headScale: number, kingLeft: number): void {
+    const rules = this.bigHead;
+    if (!rules) return;
+    if (this.shownLevel !== null && level !== this.shownLevel) {
+      const way = level > this.shownLevel ? "up" : "down";
+      this.levelPanel.classList.remove("up", "down");
+      void this.levelPanel.offsetWidth;
+      this.levelPanel.classList.add(way);
+    }
+    this.shownLevel = level;
+    this.levelValue.textContent = String(level);
+    this.levelSize.textContent = `머리 ×${headScale.toFixed(2)}`;
+    for (const pip of this.levelPips.children as HTMLCollectionOf<HTMLElement>) {
+      const at = Number(pip.dataset.level);
+      const lit = level === 0 ? at === 0 : level < 0 ? at >= level && at < 0 : at > 0 && at <= level;
+      pip.classList.toggle("on", lit);
+    }
+    const king = kingLeft > 0;
+    this.levelPanel.classList.toggle("king", king);
+    this.kingLine.classList.toggle("hidden", !king);
+    if (king) {
+      this.kingTime.textContent = `${Math.ceil(kingLeft)}초`;
+      this.kingFill.style.width = `${Math.min(100, (100 * kingLeft) / rules.kingTime)}%`;
+    }
+  }
+
+  /** A notice across the middle of the screen that fades by itself: a new King, a reign's end. */
+  announce(text: string, tone: "king" | "end"): void {
+    this.notice.textContent = text;
+    this.notice.className = `big-head-notice ${tone}`;
+    // Read the layout so the animation starts over even when a notice was already up.
+    void this.notice.offsetWidth;
+    this.notice.classList.add("show");
   }
 
   setAugmentBadge(augment: Augment, active: Augment[]): void {
@@ -447,7 +577,9 @@ export class Hud {
     const nameClass = (team: Team, me: boolean) =>
       this.ffa ? (me ? "name ffa me" : "name ffa") : team === Team.RED ? "name red" : "name blue";
     const row = div(this.feed, "kill-row");
-    if (line.headshot) div(row, "headshot", "[HEAD SHOT]");
+    const special = line.special ? SPECIAL_KILLS[line.special] : undefined;
+    if (special) div(row, `special ${special.className}`, `[${special.title}]`);
+    else if (line.headshot) div(row, "headshot", "[HEAD SHOT]");
     div(row, nameClass(line.killerTeam, line.killerIsMe), line.killer);
     const icon = div(row, "gun-icon");
     icon.innerHTML = GUN_ICONS[line.weapon] ?? GUN_ICONS[WeaponKind.RIFLE];
@@ -460,16 +592,20 @@ export class Hud {
    * The banner for a kill of mine at the top of the screen: KILL, or HEADSHOT for a first kill to
    * the head; DOUBLE KILL, TRIPLE KILL... for the second, third... in a row, with a cartridge for
    * each and a HEADSHOT tag when that one was to the head; under it the name of who fell (none
-   * when the roster no longer has them). A new kill restarts it.
+   * when the roster no longer has them). A new kill restarts it. Big Head mode's dot and cute
+   * shots take the title with their own emblem, the run's name (from DOUBLE KILL) going under it.
    */
-  showKillBanner(streak: number, headshot: boolean, victim: { name: string; team: Team } | null): void {
+  showKillBanner(streak: number, headshot: boolean, victim: { name: string; team: Team } | null, special = SpecialKill.UNSPECIFIED): void {
     const run = Math.max(1, streak);
     const banner = this.killBanner;
-    const lead = run === 1 && headshot;
+    const shot = SPECIAL_KILLS[special];
+    const lead = run === 1 && headshot && !shot;
     banner.replaceChildren();
-    banner.className = `kill-banner tier-${Math.min(run, 5)}${lead ? " headshot-kill" : ""}`;
+    banner.className = `kill-banner tier-${Math.min(run, 5)}${lead ? " headshot-kill" : ""}${shot ? ` special-kill ${shot.className}` : ""}`;
     const emblem = div(banner, "kb-emblem");
-    if (lead) {
+    if (shot) {
+      emblem.innerHTML = shot.emblem;
+    } else if (lead) {
       emblem.innerHTML = SKULL_SVG;
     } else {
       const shown = Math.min(run, BANNER_BULLETS);
@@ -478,8 +614,14 @@ export class Hud {
       emblem.style.setProperty("--bullet-height", `${run <= 2 ? 84 : run === 3 ? 76 : run <= 5 ? 64 : 52}px`);
     }
     [...emblem.children].forEach((icon, index) => (icon as SVGElement).style.setProperty("--i", String(index)));
-    div(banner, "kb-title", lead ? "HEADSHOT" : (STREAK_NAMES[run - 1] ?? `${run} KILL STREAK`));
-    if (headshot && !lead) div(banner, "kb-sub", "HEADSHOT");
+    const streakName = STREAK_NAMES[run - 1] ?? `${run} KILL STREAK`;
+    if (shot) {
+      div(banner, "kb-title", shot.title);
+      if (run > 1) div(banner, "kb-sub", streakName);
+    } else {
+      div(banner, "kb-title", lead ? "HEADSHOT" : streakName);
+      if (headshot && !lead) div(banner, "kb-sub", "HEADSHOT");
+    }
     if (victim) {
       // Who fell this time, coloured as the kill feed colours them: by team, or one colour in a free-for-all.
       const plate = div(banner, "kb-victim");
@@ -524,6 +666,7 @@ export class Hud {
       const head = div(column, "board-row head");
       div(head, "r", "순위");
       div(head, "n", "닉네임");
+      if (this.bigHead) div(head, "l", "레벨");
       div(head, "k", "킬");
       div(head, "d", "데스");
       const rows = [...entries].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
@@ -534,6 +677,7 @@ export class Hud {
         const row = div(column, entry.id === myId ? "board-row me" : "board-row");
         div(row, "r", String(rank));
         div(row, "n", entry.name);
+        if (this.bigHead) div(row, "l", String(entry.level));
         div(row, "k", String(entry.kills));
         div(row, "d", String(entry.deaths));
       });
@@ -553,6 +697,7 @@ export class Hud {
       div(column, "board-team-name", label);
       const head = div(column, "board-row head");
       div(head, "n", "닉네임");
+      if (this.bigHead) div(head, "l", "레벨");
       div(head, "k", "킬");
       div(head, "d", "데스");
       const rows = entries
@@ -561,6 +706,7 @@ export class Hud {
       for (const entry of rows) {
         const row = div(column, entry.id === myId ? "board-row me" : "board-row");
         div(row, "n", entry.name);
+        if (this.bigHead) div(row, "l", String(entry.level));
         div(row, "k", String(entry.kills));
         div(row, "d", String(entry.deaths));
       }
@@ -577,6 +723,7 @@ export class Hud {
       div(list, "key", key);
       div(list, "action", action);
     }
+    if (this.bigHead) this.renderBigHeadRules(help, this.bigHead);
     if (!this.augmentMode) return;
     const augments = div(help, "board-augments");
     div(augments, "board-help-title", "보유 증강");
@@ -594,6 +741,21 @@ export class Hud {
       div(head, "board-augment-name", info.name);
       div(head, "board-augment-grade", GRADE_NAMES[info.grade]);
       div(card, "board-augment-desc", info.description);
+    }
+  }
+
+  /** Tab in a Big Head match: how levels, heads, the King and the special kills work. */
+  private renderBigHeadRules(help: HTMLElement, rules: BigHeadRules): void {
+    const box = div(help, "board-big-head");
+    div(box, "board-help-title", "왕대두모드");
+    for (const line of [
+      `킬 +1레벨, 데스 −1레벨 (${rules.minLevel} ~ ${rules.maxLevel}레벨). 레벨이 오를수록 머리(헤드샷 판정)가 커지고, 내려갈수록 작아집니다.`,
+      "마이너스 레벨에서 킬을 하면 바로 1레벨이 됩니다.",
+      `${rules.maxLevel}레벨: 무적의 왕대두 — ${rules.kingTime}초 동안 무적, 이동속도 상승, 뿅망치만 사용(한 방). 끝나면 0레벨로 돌아갑니다.`,
+      "도트 샷: 머리가 가장 작은 상대(보통보다 작은 머리)를 헤드샷으로 처치",
+      "큐트 샷: 뿅망치로 처치",
+    ]) {
+      div(box, "board-big-head-line", line);
     }
   }
 

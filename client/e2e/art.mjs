@@ -5,12 +5,13 @@
 // fill their boxes and the effect atlases hold their cells. Its bench poses the game's real
 // Character and holds it to the server's hitboxes: the neck (head bone) on the head box's base
 // standing and crouched and over the hitbox column at the steepest aim, the head top at each head
-// size, the soles on the floor, every gun pointing along the aim from in front of the character
-// (the knife's blade forward and up instead, from a wrist within 20° of straight, and the grenade
-// in the fist with its fuze up) with the left
-// fist closed on it where the weapon says and its palm turned to hold it, and at most 4 draw calls
-// a character. Its first-person bench drives the game's real ViewModel through every weapon's
-// idle, kick, reload, bolt or pump cycle, knife swing and grenade throw: the right fist on the grip and, on a
+// size (Big Head mode's King's included), the soles on the floor, every gun pointing along the aim
+// from in front of the character (the knife's blade forward and up instead, from a wrist within 20°
+// of straight, the grenade in the fist with its fuze up and the hammer's head above the fist) with
+// the left fist closed on it where the weapon says and its palm turned to hold it, and at most 4
+// draw calls a character; the King's crown on the head, under the name, for one more draw call
+// that no one else pays. Its first-person bench drives the game's real ViewModel through every weapon's
+// idle, kick, reload, bolt or pump cycle, knife and hammer swing and grenade throw: the right fist on the grip and, on a
 // two-handed gun, the left fist on its support point (palm up into it) or second grip, each within
 // 1.5 cm; the knife hand's wrist within 20° of straight; every muzzle on screen in idle, and the
 // hands that hold the weapon there (the grip hand of a one-handed weapon, both akimbo hands, a long
@@ -53,6 +54,9 @@ const BONES = ["head", "neck", "hips", "handL", "handR"];
 const CLIPS = ["idle", "run", "death"];
 const NECK = 1.5;
 const CROUCHED_NECK = 1.0;
+// The King's head size in Big Head mode (server big_head.rs HEAD_SCALES at level 3), which the
+// bench's "king" state wears.
+const KING_HEAD_SCALE = 2.6;
 const MAX_PITCH = 1.45;
 const HAND_TOLERANCE = 0.015;
 // Degrees the knife hand's wrist may bend from straight in either view (client/src/game/art/preview.ts
@@ -198,7 +202,7 @@ const states = Object.entries(bench);
 const still = states.filter(([, s]) => s.alive && !s.moving);
 const deg = (radians) => ((radians * 180) / Math.PI).toFixed(1);
 const at = (id) => bench[id] ?? { neck: [NaN, NaN, NaN], neckOffset: NaN, headTop: NaN, feet: [NaN, NaN] };
-check(`the bench measured every state (${states.length})`, states.length >= 20 + KINDS.length, states.map(([id]) => id).join(", "));
+check(`the bench measured every state (${states.length})`, states.length >= 21 + KINDS.length, states.map(([id]) => id).join(", "));
 check(`standing neck at ${NECK} ± 0.03 m`, Math.abs(at("stand").neck[1] - NECK) <= 0.03, `${at("stand").neck[1]?.toFixed(3)} m`);
 check(`crouched neck at ${CROUCHED_NECK} ± 0.04 m`, Math.abs(at("crouch").neck[1] - CROUCHED_NECK) <= 0.04, `${at("crouch").neck[1]?.toFixed(3)} m`);
 const steep = ["aimUp", "aimDown", "crouchAimUp", "crouchAimDown"].map((id) => [id, at(id)]);
@@ -207,9 +211,9 @@ check(
   steep.every(([, s]) => s.neckOffset <= 0.15 && Math.abs(Math.abs(s.pitch) - MAX_PITCH) < 1e-6),
   steep.map(([id, s]) => `${id} ${s.neckOffset?.toFixed(3)}`).join(", "),
 );
-const heads = [0.5, 1, 2].map((scale) => [scale, at(`head${scale}`)]);
+const heads = [...[0.5, 1, 2].map((scale) => [scale, at(`head${scale}`)]), [KING_HEAD_SCALE, at("king")]];
 check(
-  "the head top is at 1.5 + 0.26·s (± 0.05·s) for s = 0.5, 1 and 2",
+  `the head top is at 1.5 + 0.26·s (± 0.05·s) for s = 0.5, 1, 2 and the King's ${KING_HEAD_SCALE}`,
   heads.every(([scale, s]) => Math.abs(s.headTop - (1.5 + 0.26 * scale)) <= 0.05 * scale),
   heads.map(([scale, s]) => `${scale}: ${s.headTop?.toFixed(3)} (box ${(1.5 + 0.26 * scale).toFixed(3)})`).join(", "),
 );
@@ -221,9 +225,9 @@ check(
   holds.every(([, s]) => s && s.muzzleAhead >= 0.3),
   holds.map(([kind, s]) => `${kind} ${s?.muzzleAhead.toFixed(2)}`).join(", "),
 );
-// The knife and the grenade are held in the fist along the grip's line, not along the aim; the arm
-// held low points the knife's blade ahead.
-const FIST_HELD = ["KNIFE", "GRENADE"];
+// The knife, the grenade and the hammer are held in the fist along the grip's line, not along the
+// aim; the arm held low points the knife's blade ahead.
+const FIST_HELD = ["KNIFE", "GRENADE", "HAMMER"];
 const guns = states.filter(([, s]) => s.alive && !FIST_HELD.includes(s.weapon));
 const askew = guns.filter(([, s]) => s.gunToAim > (5 * Math.PI) / 180);
 check("the gun points along the aim (within 5°) in every live state, aiming up, down and moving", guns.length > 0 && askew.length === 0, askew.map(([id, s]) => `${id} ${deg(s.gunToAim)}°`).join(", ") || `max ${deg(Math.max(...guns.map(([, s]) => s.gunToAim)))}°`);
@@ -240,6 +244,12 @@ check(
   "the grenade sits in the fist with its fuze up",
   !!grenade.muzzle && !!grenade.grip && grenade.muzzle[1] > grenade.grip[1],
   grenade.muzzle && grenade.grip ? `fuze ${((grenade.muzzle[1] - grenade.grip[1]) * 100).toFixed(1)} cm above the middle of the fist` : "not measured",
+);
+const hammer = at("hold:HAMMER");
+check(
+  "the hammer's head sits above the fist",
+  !!hammer.muzzle && !!hammer.grip && hammer.muzzle[1] > hammer.grip[1],
+  hammer.muzzle && hammer.grip ? `head ${((hammer.muzzle[1] - hammer.grip[1]) * 100).toFixed(1)} cm above the middle of the fist` : "not measured",
 );
 const knifeWrist = knife.wrist?.right;
 check(
@@ -264,18 +274,32 @@ check(
   supported.length > 0 && palmAway.length === 0,
   palmAway.map(([id, s]) => `${id} ${s.supportFacing?.toFixed(2)}`).join(", ") || `min ${Math.min(...supported.map(([, s]) => s.supportFacing)).toFixed(2)} over ${supported.length} states`,
 );
-const plain = states.filter(([, s]) => s.alive && !s.shielded && !s.stunned);
+const plain = states.filter(([, s]) => s.alive && !s.shielded && !s.stunned && !s.king);
 const costly = plain.filter(([, s]) => s.calls > (s.weapon === "AKIMBO_SMG" ? 5 : 4));
 check("at most 4 draw calls a character (body, gun, blob, name; 5 with two guns)", plain.length > 0 && costly.length === 0, costly.map(([id, s]) => `${id} ${s.calls}`).join(", ") || `max ${Math.max(...plain.map(([, s]) => s.calls))}`);
 check("the shield adds one draw call, only while it is up", at("shield").calls === at("hold:PISTOL").calls + 1, `${at("shield").calls} with, ${at("hold:PISTOL").calls} without`);
+// Big Head mode's King: the crown is one more draw call over the hammer's hold, sits on the head (its
+// bottom from 15 cm into the head to 5 cm over it) under the name, and no one else wears it.
+const king = at("king");
+check("the King's crown adds one draw call", king.calls === at("hold:HAMMER").calls + 1, `${king.calls} with, ${at("hold:HAMMER").calls} without`);
+const crowned = states.filter(([id, s]) => id !== "king" && s.crown);
+check(
+  "the King's crown sits on the head, under the name, and no one else wears one",
+  !!king.crown && king.crown.bottom >= king.headTop - 0.15 && king.crown.bottom <= king.headTop + 0.05 && king.name > king.crown.top && crowned.length === 0,
+  [
+    king.crown ? `crown ${king.crown.bottom.toFixed(3)}–${king.crown.top.toFixed(3)} m on a head top of ${king.headTop?.toFixed(3)} m, name at ${king.name?.toFixed(3)} m` : "no crown on the King",
+    ...crowned.map(([id]) => `${id} wears one`),
+  ].join(", "),
+);
 console.log(`INFO  taser sparks: ${at("stunned").calls} draw calls while stunned (${at("stand").calls} without)`);
 
 // The first-person bench (preview.ts): the real ViewModel, in each weapon's moments.
 const fp = Object.entries(report.firstPerson ?? {});
 const cm = (metres) => (metres === null || metres === undefined ? "none" : `${(metres * 100).toFixed(3)} cm`);
-// Idle red and blue for every weapon, kick and reload for every gun, the knife's swing, the grenade's
-// throw, two cycles, the shield and the knife in the free-for-all's neutral sleeves.
-const fpExpected = KINDS.length * 2 + (KINDS.length - 2) * 2 + 1 + 1 + 2 + 1 + 1;
+// Idle red and blue for every weapon, kick and reload for every gun, the knife's and the hammer's
+// swings, the grenade's throw, two cycles, the shield and the knife in the free-for-all's neutral
+// sleeves.
+const fpExpected = KINDS.length * 2 + (KINDS.length - 3) * 2 + 2 + 1 + 2 + 1 + 1;
 const fpIdle = (kind) => fp.some(([, s]) => s.weapon === kind && s.pose === "idle");
 check(`the first-person bench measured every weapon's moments (${fp.length})`, fp.length >= fpExpected && KINDS.every(fpIdle), `${fp.length} of ${fpExpected}; ${KINDS.filter((kind) => !fpIdle(kind)).join(", ") || "every weapon idle"}`);
 const fpLoose = fp.filter(([, s]) => s.right === null || s.right > HAND_TOLERANCE || (s.twoHanded && (s.left === null || s.left > HAND_TOLERANCE)));

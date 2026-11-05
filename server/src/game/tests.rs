@@ -2602,3 +2602,327 @@ fn the_leaning_container_collides_where_it_is_drawn_not_as_one_tall_box() {
     // Over its high east end the same shot at 2.5 m hits it.
     assert!(super::physics::ray_world(&map.boxes, [-6.0, 2.5, 12.0], [0.0, 0.0, 1.0], 4.5).is_some());
 }
+
+// ---------------------------------------------------------------- Big Head mode
+
+fn big_head_duel() -> Match {
+    duel_with_bots([0, 0], pb::GameMode::BigHead)
+}
+
+fn perks_of(game: &Match, id: u32) -> &Perks {
+    game.world.get::<Perks>(game.entities[&id]).unwrap()
+}
+
+fn set_level(game: &mut Match, id: u32, level: i32) {
+    let entity = game.entities[&id];
+    game.world.get_mut::<Perks>(entity).unwrap().set_level(level);
+}
+
+/// Crowns `id` as a kill at the top level would.
+fn make_king(game: &mut Match, id: u32) {
+    let entity = game.entities[&id];
+    let max_hp = game.world.resource::<Rules>().max_hp;
+    let mut query = game.world.query::<(&mut Perks, &mut Vitals, &mut Weapon)>();
+    let (mut perks, mut vitals, mut weapon) = query.get_mut(&mut game.world, entity).unwrap();
+    perks.set_level(big_head::MAX_LEVEL);
+    big_head::crown(&mut perks, &mut vitals, &mut weapon, max_hp);
+}
+
+/// The kills of the last tick.
+fn kills_now(game: &mut Match) -> Vec<pb::KillEvent> {
+    game.shared_snapshot()
+        .events
+        .into_iter()
+        .filter_map(|event| match event.event {
+            Some(pb::game_event::Event::Kill(kill)) => Some(kill),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The shooter, lined up as `line_up` does, shoots the victim in the head; the tick's kills.
+fn headshot(game: &mut Match) -> Vec<pb::KillEvent> {
+    let shot = line_up(game, 0.03);
+    game.push_inputs(SHOOTER, vec![shot]);
+    game.tick();
+    kills_now(game)
+}
+
+#[test]
+fn big_head_levels_run_from_minus_five_to_three_with_a_head_for_each() {
+    use big_head::{after_death, after_kill, head_scale, MAX_LEVEL, MIN_LEVEL};
+    assert_eq!((MIN_LEVEL, MAX_LEVEL), (-5, 3));
+    // Up one a kill, and from below 0 straight to 1; down one a death, to the bottom.
+    assert_eq!([-5, -1, 0, 1, 2, 3].map(after_kill), [1, 1, 1, 2, 3, 3]);
+    assert_eq!([3, 1, 0, -4, -5].map(after_death), [2, 0, -1, -5, -5]);
+    // Every level up has a bigger head: a dot at the bottom, the normal head at 0, the King's at
+    // the top, which the character model's bounds still hold.
+    let heads: Vec<f32> = (MIN_LEVEL..=MAX_LEVEL).map(head_scale).collect();
+    assert!(heads.windows(2).all(|pair| pair[1] > pair[0]), "{heads:?}");
+    assert_eq!(head_scale(0), 1.0);
+    assert!(head_scale(MIN_LEVEL) <= 0.5, "{heads:?}");
+    assert!(head_scale(MAX_LEVEL) >= 2.0 && head_scale(MAX_LEVEL) <= augments::BIG_HEAD_MAX, "{heads:?}");
+}
+
+#[test]
+fn a_big_head_kill_raises_the_killer_and_lowers_the_victim_heads_and_all() {
+    let mut game = big_head_duel();
+    let kills = headshot(&mut game);
+    assert_eq!(kills.len(), 1);
+    // A normal head is nobody's dot.
+    assert_eq!(kills[0].special, pb::SpecialKill::Unspecified as i32);
+    let snapshot = game.shared_snapshot();
+    let state = |id: u32| snapshot.players.iter().find(|p| p.id == id).unwrap();
+    assert_eq!((state(SHOOTER).level, state(SHOOTER).head_scale), (1, big_head::head_scale(1)));
+    assert_eq!((state(VICTIM).level, state(VICTIM).head_scale), (-1, big_head::head_scale(-1)));
+    assert!(big_head::head_scale(1) > 1.0 && big_head::head_scale(-1) < 1.0);
+    assert_eq!(state(SHOOTER).king_left, 0.0);
+}
+
+#[test]
+fn a_kill_below_level_zero_goes_straight_to_level_one() {
+    let mut game = big_head_duel();
+    set_level(&mut game, SHOOTER, -4);
+    assert_eq!(headshot(&mut game).len(), 1);
+    assert_eq!(perks_of(&game, SHOOTER).level, 1);
+}
+
+#[test]
+fn other_modes_keep_levels_heads_and_kills_plain() {
+    let mut game = duel();
+    let kills = headshot(&mut game);
+    assert_eq!(kills[0].special, pb::SpecialKill::Unspecified as i32);
+    for id in [SHOOTER, VICTIM] {
+        assert_eq!((perks_of(&game, id).level, perks_of(&game, id).head_scale), (0, 1.0));
+    }
+    let config = game.start_message(SHOOTER).config.unwrap();
+    assert_eq!((config.min_level, config.max_level, config.king_time), (0, 0, 0.0));
+
+    let config = big_head_duel().start_message(SHOOTER).config.unwrap();
+    assert_eq!(
+        (config.mode, config.min_level, config.max_level, config.king_time, config.max_hp),
+        (pb::GameMode::BigHead as i32, -5, 3, 20.0, MAX_HP)
+    );
+}
+
+#[test]
+fn the_third_level_crowns_a_king_who_holds_only_the_hammer() {
+    let mut game = big_head_duel();
+    set_level(&mut game, SHOOTER, 2);
+    game.world.get_mut::<Vitals>(game.entities[&SHOOTER]).unwrap().hp = 40;
+    assert_eq!(headshot(&mut game).len(), 1);
+    let king = perks_of(&game, SHOOTER);
+    assert_eq!((king.level, king.head_scale), (big_head::MAX_LEVEL, big_head::head_scale(big_head::MAX_LEVEL)));
+    // The tick that crowned them is the reign's first.
+    assert_eq!(king.king_ticks, big_head::KING_TICKS - 1);
+    assert_eq!(hp(&game, SHOOTER), MAX_HP);
+    assert_eq!(held(&game, SHOOTER), Kind::Hammer);
+    let snapshot = game.shared_snapshot();
+    let me = snapshot.players.iter().find(|p| p.id == SHOOTER).unwrap();
+    assert!((me.king_left - (big_head::KING_TIME - TICK_DT)).abs() < 1e-3, "{}", me.king_left);
+    assert_eq!(me.weapon, Kind::Hammer as i32);
+
+    // Nothing else comes out while the reign lasts: no slot, no grenade, and a primary chosen in
+    // the B menu waits for its end even under spawn protection.
+    for slot in 1..=4 {
+        game.push_inputs(SHOOTER, vec![pb::InputCmd { slot, ..cmd(10 + slot, tick_now(&game)) }]);
+        game.tick();
+        assert_eq!(held(&game, SHOOTER), Kind::Hammer, "slot {slot}");
+    }
+    assert_eq!(grenades_left(&mut game, SHOOTER), 0);
+    game.world.get_mut::<Vitals>(game.entities[&SHOOTER]).unwrap().protect_left = 1.0;
+    game.select_weapon(SHOOTER, Kind::Sniper);
+    assert_eq!(held(&game, SHOOTER), Kind::Hammer);
+}
+
+#[test]
+fn the_king_takes_no_harm_from_shots_or_blasts() {
+    let mut game = big_head_duel();
+    let shot = line_up(&mut game, 0.03);
+    make_king(&mut game, VICTIM);
+    // A second of fire at the head: every shot stops at the King and does nothing.
+    let mut stopped = 0;
+    for seq in 1..=30 {
+        game.push_inputs(SHOOTER, vec![pb::InputCmd { seq, render_tick: tick_now(&game), ..shot }]);
+        game.tick();
+        for event in game.shared_snapshot().events {
+            match event.event {
+                Some(pb::game_event::Event::Shot(s)) => {
+                    assert_eq!(s.hit_player_id, VICTIM, "a shot went past the King");
+                    stopped += 1;
+                }
+                Some(pb::game_event::Event::Damage(d)) => panic!("the King was hurt: {d:?}"),
+                _ => {}
+            }
+        }
+    }
+    assert!(stopped >= 5, "{stopped} shots");
+    assert_eq!(hp(&game, VICTIM), MAX_HP);
+    // Nor does a grenade at their feet.
+    drop_grenade(&mut game, SHOOTER, -42.3, 0.0);
+    assert!(kills_in_two_ticks(&mut game).is_empty());
+    assert_eq!(hp(&game, VICTIM), MAX_HP);
+    assert!(game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap().alive);
+}
+
+#[test]
+fn the_kings_hammer_fells_anyone_with_one_blow_a_cute_shot() {
+    let mut game = big_head_duel();
+    let yaw = -std::f32::consts::FRAC_PI_2;
+    place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+    place(&mut game, VICTIM, -44.5, 0.0, 0.0);
+    make_king(&mut game, SHOOTER);
+    // The hammer is drawn like any weapon.
+    for _ in 0..12 {
+        game.tick();
+    }
+    game.push_inputs(SHOOTER, vec![pb::InputCmd { fire: true, yaw, pitch: -0.1, ..cmd(1, tick_now(&game)) }]);
+    game.tick();
+    let kills = kills_now(&mut game);
+    assert_eq!(kills.len(), 1, "the blow missed");
+    assert_eq!((kills[0].weapon, kills[0].special), (Kind::Hammer as i32, pb::SpecialKill::CuteShot as i32));
+    // A King's kill scores like any other and leaves the level at the top.
+    assert_eq!(game.shared_snapshot().red_score, 1);
+    assert_eq!(perks_of(&game, SHOOTER).level, big_head::MAX_LEVEL);
+    assert_eq!(perks_of(&game, VICTIM).level, -1);
+}
+
+#[test]
+fn the_king_runs_a_little_faster_than_anyone_else() {
+    let speed = |kind: Kind| weapons::stats(kind).move_speed;
+    let fastest = [Kind::Rifle, Kind::Sniper, Kind::MachineGun, Kind::Smg, Kind::Pistol, Kind::Knife, Kind::Grenade]
+        .map(speed)
+        .into_iter()
+        .fold(0.0, f32::max);
+    assert!(speed(Kind::Hammer) > fastest && speed(Kind::Hammer) < fastest * 1.15, "{} against {fastest}", speed(Kind::Hammer));
+
+    // And the King moves at it: half a second of running, two commands a tick.
+    let mut game = big_head_duel();
+    let yaw = -std::f32::consts::FRAC_PI_2;
+    place(&mut game, SHOOTER, -40.0, 0.0, yaw);
+    make_king(&mut game, SHOOTER);
+    for seq in 0..15 {
+        let run = |n: u32| pb::InputCmd { forward: true, yaw, ..cmd(n, tick_now(&game)) };
+        game.push_inputs(SHOOTER, vec![run(2 * seq + 1), run(2 * seq + 2)]);
+        game.tick();
+    }
+    let ran = game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap().x + 40.0;
+    assert!((ran - speed(Kind::Hammer) * 0.5).abs() < 0.01, "ran {ran} m");
+}
+
+#[test]
+fn a_headshot_kill_on_the_smallest_head_is_a_dot_shot() {
+    // The victim's head is the smallest, and smaller than normal.
+    let mut game = big_head_duel();
+    set_level(&mut game, VICTIM, -2);
+    let kills = headshot(&mut game);
+    assert_eq!(kills[0].special, pb::SpecialKill::DotShot as i32);
+    assert_eq!(perks_of(&game, VICTIM).level, -3);
+
+    // Tied at the bottom still counts.
+    let mut game = big_head_duel();
+    set_level(&mut game, SHOOTER, -2);
+    set_level(&mut game, VICTIM, -2);
+    assert_eq!(headshot(&mut game)[0].special, pb::SpecialKill::DotShot as i32);
+
+    // Someone with a smaller head takes it away.
+    let mut game = big_head_duel();
+    set_level(&mut game, SHOOTER, -3);
+    set_level(&mut game, VICTIM, -2);
+    assert_eq!(headshot(&mut game)[0].special, pb::SpecialKill::Unspecified as i32);
+
+    // So does a kill that isn't to the head.
+    let mut game = big_head_duel();
+    set_level(&mut game, VICTIM, -2);
+    game.world.get_mut::<Vitals>(game.entities[&VICTIM]).unwrap().hp = 10;
+    let shot = line_up(&mut game, -0.1);
+    game.push_inputs(SHOOTER, vec![shot]);
+    game.tick();
+    let kills = kills_now(&mut game);
+    assert!(!kills[0].headshot);
+    assert_eq!(kills[0].special, pb::SpecialKill::Unspecified as i32);
+}
+
+#[test]
+fn a_reign_lasts_twenty_seconds_and_ends_at_level_zero_with_fresh_weapons() {
+    assert_eq!(big_head::KING_TICKS, 20 * TICK_RATE);
+    let mut game = big_head_duel();
+    make_king(&mut game, SHOOTER);
+    for _ in 0..big_head::KING_TICKS - 1 {
+        game.tick();
+    }
+    assert!(perks_of(&game, SHOOTER).king(), "the reign ended early");
+    assert_eq!(held(&game, SHOOTER), Kind::Hammer);
+    game.tick();
+    let perks = perks_of(&game, SHOOTER);
+    assert!(!perks.king());
+    assert_eq!((perks.level, perks.head_scale), (big_head::KING_END_LEVEL, 1.0));
+    // Their own primary in hand, loaded, and a grenade again.
+    assert_eq!(held(&game, SHOOTER), RIFLE);
+    assert_eq!(weapon(&game, SHOOTER), (30, 120, false));
+    assert_eq!(grenades_left(&mut game, SHOOTER), 1);
+}
+
+#[test]
+fn a_player_who_reaches_the_top_level_while_down_is_crowned_on_coming_back() {
+    let mut game = big_head_duel();
+    place(&mut game, SHOOTER, -46.0, 0.0, 0.0);
+    place(&mut game, VICTIM, -42.0, 0.0, 0.0);
+    set_level(&mut game, SHOOTER, 2);
+    {
+        let mut vitals = game.world.get_mut::<Vitals>(game.entities[&SHOOTER]).unwrap();
+        (vitals.hp, vitals.alive, vitals.respawn_left) = (0, false, 1.0);
+    }
+    game.world.get_mut::<Vitals>(game.entities[&VICTIM]).unwrap().hp = 20;
+    drop_grenade(&mut game, SHOOTER, -42.3, 0.0);
+    assert_eq!(kills_in_two_ticks(&mut game).len(), 1);
+    assert_eq!(perks_of(&game, SHOOTER).level, big_head::MAX_LEVEL);
+    assert!(!perks_of(&game, SHOOTER).king(), "crowned while down");
+    for _ in 0..TICK_RATE {
+        game.tick();
+    }
+    assert!(game.world.get::<Vitals>(game.entities[&SHOOTER]).unwrap().alive);
+    assert!(perks_of(&game, SHOOTER).king());
+    assert_eq!(held(&game, SHOOTER), Kind::Hammer);
+}
+
+#[test]
+fn bot_big_head_matches_finish_and_their_kings_score_with_the_hammer() {
+    for match_type in [pb::MatchType::TeamDeathmatch, pb::MatchType::FreeForAll] {
+        let mut game = Match::with_rules(&[], YARD, pb::GameMode::BigHead, match_type, [5, 5], 11);
+        let mut kings = std::collections::HashSet::new();
+        let (mut crowned, mut cute, mut dot) = (0, 0, 0);
+        // 30 simulated minutes is far beyond any plausible match length.
+        for _ in 0..(30 * 60 * TICK_RATE) {
+            game.tick();
+            let snapshot = game.shared_snapshot();
+            for player in &snapshot.players {
+                assert!((big_head::MIN_LEVEL..=big_head::MAX_LEVEL).contains(&player.level), "level {}", player.level);
+                assert_eq!(player.head_scale, big_head::head_scale(player.level));
+                if player.king_left > 0.0 {
+                    assert_eq!((player.level, player.weapon), (big_head::MAX_LEVEL, Kind::Hammer as i32));
+                    if kings.insert(player.id) {
+                        crowned += 1;
+                    }
+                } else {
+                    kings.remove(&player.id);
+                }
+            }
+            for event in &snapshot.events {
+                if let Some(pb::game_event::Event::Kill(kill)) = &event.event {
+                    cute += (kill.special == pb::SpecialKill::CuteShot as i32) as u32;
+                    dot += (kill.special == pb::SpecialKill::DotShot as i32) as u32;
+                }
+            }
+            if game.winner().is_some() {
+                break;
+            }
+        }
+        assert!(game.winner().is_some(), "{match_type:?}: the bots never finished");
+        assert!(crowned > 0 && cute > 0, "{match_type:?}: {crowned} kings, {cute} cute shots");
+        println!(
+            "{match_type:?} Big Head match took {:.1}s: {crowned} kings, {cute} cute shots, {dot} dot shots",
+            game.shared_snapshot().tick as f32 / TICK_RATE as f32
+        );
+    }
+}

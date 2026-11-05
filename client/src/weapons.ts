@@ -31,6 +31,7 @@ const DESCRIPTIONS: Record<number, Description> = {
   [WeaponKind.TASER]: { type: "테이저건", damage: "없음(마비)", speed: "약간 높음", accuracy: "높음", fireRate: "보통" },
   [WeaponKind.KNIFE]: { type: "나이프", damage: "높음", speed: "높음", accuracy: "근접 전용", fireRate: "-" },
   [WeaponKind.GRENADE]: { type: "수류탄", damage: "폭발형", speed: "약간 높음", accuracy: "투척", fireRate: "목숨당 1개" },
+  [WeaponKind.HAMMER]: { type: "뿅망치", damage: "한 방", speed: "매우 빠름", accuracy: "근접 전용", fireRate: "-" },
 };
 
 /** The pistol, knife and grenade everyone carries, shown under the primary picker. */

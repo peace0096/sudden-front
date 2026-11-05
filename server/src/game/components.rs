@@ -124,8 +124,11 @@ impl Weapon {
 
     /// Takes a slot (1 primary, 2 pistol, 3 knife, 4 grenade) in hand. Ammo stays with each
     /// weapon, a reload in progress is abandoned, and the new weapon must be drawn. The grenade
-    /// only comes out while one is left.
+    /// only comes out while one is left, and nothing does while the King's hammer is in hand.
     pub fn switch_to(&mut self, slot: u32) {
+        if self.kind == pb::WeaponKind::Hammer {
+            return;
+        }
         let (index, kind) = match slot {
             1 => (0, self.primary),
             2 => (1, self.sidearm),
@@ -148,6 +151,23 @@ impl Weapon {
         self.bloom = 0.0;
         self.bloom_hold = 0.0;
         self.burst_left = 0;
+        self.cooldown = self.cooldown.max(super::DRAW_TIME);
+    }
+
+    /// Big Head mode: the King's hammer in hand, drawn like any weapon, and nothing else for the
+    /// reign. switch_to refuses while it is held and the grenade is gone; the reign's end issues
+    /// a fresh set (systems::update_kings), so nothing else is kept.
+    pub fn take_hammer(&mut self) {
+        self.kind = pb::WeaponKind::Hammer;
+        self.magazine = 0;
+        self.reserve = 0;
+        self.holstered[GRENADE_SLOT] = (0, 0);
+        self.reload_left = 0.0;
+        self.aim_time = 0.0;
+        self.bloom = 0.0;
+        self.bloom_hold = 0.0;
+        self.burst_left = 0;
+        self.burst_fire = None;
         self.cooldown = self.cooldown.max(super::DRAW_TIME);
     }
 
@@ -189,11 +209,27 @@ pub struct Perks {
     pub idle: f32,
     /// Fractional HP from Rest, carried between ticks.
     pub regen: f32,
+    /// Big Head mode: the level, big_head::MIN_LEVEL to MAX_LEVEL, which sets `head_scale`; 0 in
+    /// other modes. Survives respawns.
+    pub level: i32,
+    /// Big Head mode: ticks of the King's reign left; 0 when not the King.
+    pub king_ticks: u32,
 }
 
 impl Perks {
     pub fn has(&self, augment: pb::Augment) -> bool {
         self.active.contains(&augment)
+    }
+
+    /// Big Head mode: the reigning King, who takes no harm.
+    pub fn king(&self) -> bool {
+        self.king_ticks > 0
+    }
+
+    /// Big Head mode: moves to `level`, the head growing or shrinking to its size.
+    pub fn set_level(&mut self, level: i32) {
+        self.level = level;
+        self.head_scale = super::big_head::head_scale(level);
     }
 }
 
@@ -290,6 +326,8 @@ pub struct Rules {
     pub max_hp: i32,
     /// Free-for-all: every player's team is `Unspecified` and everyone fights everyone.
     pub ffa: bool,
+    /// Big Head mode: kills and deaths move levels and head sizes, and the top level crowns the King.
+    pub big_head: bool,
 }
 
 impl Rules {

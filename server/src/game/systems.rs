@@ -751,6 +751,11 @@ pub fn fire_weapons(
         if !vitals.alive {
             continue;
         }
+        // Big Head mode: the King takes no harm. The hit stops at them (it was their body the shot
+        // reached) and comes to nothing: no damage, no paralysis, nobody added to their attackers.
+        if perks.king() {
+            continue;
+        }
         perks.idle = 0.0;
         if !perks.damaged_by.contains(&hit.attacker) {
             perks.damaged_by.push(hit.attacker);
@@ -789,6 +794,7 @@ pub fn fire_weapons(
         stats.deaths += 1;
         perks.shield_hp = 0;
         let victim_primary = victim_weapon.primary;
+        let victim_level = perks.level;
         let contributors = std::mem::take(&mut perks.damaged_by);
         let holders = contributors
             .iter()
@@ -798,17 +804,35 @@ pub fn fire_weapons(
             let grown = victim.8.head_scale + augments::BIG_HEAD_STEP * holders as f32;
             victim.8.head_scale = grown.min(augments::BIG_HEAD_MAX);
         }
+        // Big Head mode: a kill with the hammer is a cute shot, and one to the head of a player
+        // whose head was smaller than normal and the smallest in the match (levels tied at the
+        // bottom count) a dot shot. Then the victim's level drops, and their head shrinks with it.
+        let special = if !rules.big_head {
+            pb::SpecialKill::Unspecified
+        } else if hit.weapon == pb::WeaponKind::Hammer {
+            pb::SpecialKill::CuteShot
+        } else if hit.zone == pb::HitZone::Head && victim_level < 0 && players.iter().all(|p| p.8.level >= victim_level) {
+            pb::SpecialKill::DotShot
+        } else {
+            pb::SpecialKill::Unspecified
+        };
+        if rules.big_head {
+            if let Ok(mut victim) = players.get_mut(hit.victim) {
+                victim.8.set_level(big_head::after_death(victim_level));
+            }
+        }
         log.push(Event::Kill(pb::KillEvent {
             killer_id: hit.attacker_id,
             victim_id,
             headshot: hit.zone == pb::HitZone::Head,
             weapon: hit.weapon as i32,
+            special: special as i32,
         }));
         if !rules.ffa {
             state.score_kill(hit.attacker_team);
         }
         // A free-for-all kill by a player who has left (with a missile in flight) counts for nobody.
-        let Ok((_, _, _, _, mut weapon, mut vitals, mut stats, _, perks, mut loadout)) =
+        let Ok((_, _, _, _, mut weapon, mut vitals, mut stats, _, mut perks, mut loadout)) =
             players.get_mut(hit.attacker)
         else {
             continue;
@@ -816,6 +840,16 @@ pub fn fire_weapons(
         stats.kills += 1;
         if rules.ffa && stats.kills >= state.kills_to_win && state.winner.is_none() {
             state.winner = Some(Winner::Player(hit.attacker_id));
+        }
+        // Big Head mode: a kill raises the level, from below 0 straight to big_head::COMEBACK_LEVEL.
+        // Reaching the top crowns a living player at once, and one who is down (a grenade that went
+        // off after they fell) as they come back. The King's own kills leave the level at the top.
+        if rules.big_head && !perks.king() {
+            let level = big_head::after_kill(perks.level);
+            perks.set_level(level);
+            if level == big_head::MAX_LEVEL && vitals.alive {
+                big_head::crown(&mut perks, &mut vitals, &mut weapon, rules.max_hp);
+            }
         }
         if !vitals.alive {
             continue;
@@ -851,6 +885,26 @@ pub fn update_perks(rules: Res<Rules>, mut players: Query<(&Pose, &mut Vitals, &
         let whole = perks.regen as i32;
         perks.regen -= whole as f32;
         vitals.hp = (vitals.hp + whole).min(cap);
+    }
+}
+
+/// Big Head mode: runs each King's reign down a tick. When it is over the player is back at
+/// big_head::KING_END_LEVEL, the hammer gone, with a fresh set of their own weapons (full
+/// ammunition, the primary in hand, as at a respawn).
+pub fn update_kings(rules: Res<Rules>, mut players: Query<(&Player, &mut Perks, &mut Weapon, &Loadout)>) {
+    if !rules.big_head {
+        return;
+    }
+    for (player, mut perks, mut weapon, loadout) in &mut players {
+        if !perks.king() {
+            continue;
+        }
+        perks.king_ticks -= 1;
+        if perks.king() {
+            continue;
+        }
+        perks.set_level(big_head::KING_END_LEVEL);
+        *weapon = issue_weapons(loadout.0, &perks.active, player.is_bot);
     }
 }
 
@@ -982,6 +1036,10 @@ pub fn respawn_players(
         perks.idle = 0.0;
         perks.regen = 0.0;
         perks.shield_hp = if perks.has(pb::Augment::Shield) { augments::SHIELD_HP } else { 0 };
+        // Big Head mode: a player who reached the top level while down is crowned as they come back.
+        if rules.big_head && perks.level >= big_head::MAX_LEVEL && !perks.king() {
+            big_head::crown(&mut perks, &mut vitals, &mut weapon, rules.max_hp);
+        }
         // Don't let a rewound shot hit where the player died.
         history.samples.clear();
         log.push(Event::Respawn(pb::RespawnEvent {

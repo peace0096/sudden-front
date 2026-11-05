@@ -128,6 +128,18 @@
         }
       ]
     },
+    "weapons/hammer.glb": {
+      "hash": "a15da35de8a3ec3d",
+      "sha256": "a15da35de8a3ec3dc8a94a471f54ccfa222f0d960581e47c39b93448e6df4b5b",
+      "bytes": 14804,
+      "triangles": 864,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
     "weapons/knife.glb": {
       "hash": "0e2f6ca7991ac86b",
       "sha256": "0e2f6ca7991ac86b59a1ee348e578d6f83812cf83b8d8a76410736dce1257f6a",

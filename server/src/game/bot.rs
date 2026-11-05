@@ -67,6 +67,9 @@ struct Seen {
     aim_y: f32,
     /// Feet height, where a grenade is aimed.
     feet: f32,
+    /// Big Head mode: the reigning King, whom nothing hurts, so a bot leaves them be unless it is
+    /// a King itself.
+    king: bool,
 }
 
 #[allow(clippy::type_complexity)]
@@ -75,13 +78,13 @@ pub fn bot_think(
     rules: Res<Rules>,
     state: Res<MatchState>,
     mut rng: ResMut<GameRng>,
-    others: Query<(Entity, &Player, &Pose, &Vitals)>,
+    others: Query<(Entity, &Player, &Pose, &Vitals, &Perks)>,
     mut bots: Query<(Entity, &mut BotBrain, &mut Inputs, &mut Weapon, &Pose, &Player, &Vitals)>,
 ) {
     let living: Vec<Seen> = others
         .iter()
-        .filter(|(_, _, _, vitals)| vitals.alive && vitals.protect_left <= 0.0)
-        .map(|(entity, player, pose, _)| Seen {
+        .filter(|(_, _, _, vitals, _)| vitals.alive && vitals.protect_left <= 0.0)
+        .map(|(entity, player, pose, _, perks)| Seen {
             entity,
             team: player.team,
             x: pose.x,
@@ -89,6 +92,7 @@ pub fn bot_think(
             // A player in the air or on a box top carries their chest up with them.
             aim_y: pose.y + if pose.crouching { AIM_CHEST_Y_CROUCHED } else { AIM_CHEST_Y },
             feet: pose.y,
+            king: perks.king(),
         })
         .collect();
 
@@ -113,10 +117,15 @@ pub fn bot_think(
         if weapon.reserve == 0 {
             weapon.reserve = stats.reserve;
         }
+        // Big Head mode: a King has the hammer, which reaches only so far: it runs at its enemy.
+        let melee = stats.melee_range > 0.0;
+        // Nobody can hurt a King, so a bot only goes for one while it is a King itself.
+        let king = weapon.kind == pb::WeaponKind::Hammer;
+        let prey = |o: &&Seen| rules.hostile(player.team, o.team) && o.entity != entity && (king || !o.king);
 
         let eye = [pose.x, pose.y + EYE_HEIGHT, pose.z];
         let mut best: Option<(&Seen, f32)> = None;
-        for other in living.iter().filter(|o| rules.hostile(player.team, o.team) && o.entity != entity) {
+        for other in living.iter().filter(prey) {
             let (dx, dz) = (other.x - pose.x, other.z - pose.z);
             let dist = (dx * dx + dz * dz).sqrt();
             if dist > SIGHT_RANGE {
@@ -164,16 +173,21 @@ pub fn bot_think(
             cmd.yaw = turn_towards(pose.yaw, want_yaw, TURN_RATE * TICK_DT);
             cmd.pitch = want_pitch.clamp(-MAX_PITCH, MAX_PITCH);
 
-            // Side-step while shooting.
-            brain.strafe_timer -= TICK_DT;
-            if brain.strafe_timer <= 0.0 {
-                brain.strafe_timer = rng.range(0.5, 1.4);
-                brain.strafe_left = rng.next_f32() < 0.5;
-            }
-            cmd.left = brain.strafe_left;
-            cmd.right = !brain.strafe_left;
-            if dist > 28.0 {
-                cmd.forward = true;
+            if melee {
+                // Straight in, until close enough to swing.
+                cmd.forward = dist > stats.melee_range * 0.5;
+            } else {
+                // Side-step while shooting.
+                brain.strafe_timer -= TICK_DT;
+                if brain.strafe_timer <= 0.0 {
+                    brain.strafe_timer = rng.range(0.5, 1.4);
+                    brain.strafe_left = rng.next_f32() < 0.5;
+                }
+                cmd.left = brain.strafe_left;
+                cmd.right = !brain.strafe_left;
+                if dist > 28.0 {
+                    cmd.forward = true;
+                }
             }
 
             cmd.aim = stats.has_scope;
@@ -202,6 +216,8 @@ pub fn bot_think(
                 }
             } else if brain.burst_pause > 0.0 {
                 brain.burst_pause -= TICK_DT;
+            } else if melee {
+                cmd.fire = on_target && dist <= stats.melee_range;
             } else if on_target && weapon.magazine > 0 {
                 if brain.burst_left == 0 {
                     // A bolt-action fires single aimed shots.
@@ -228,15 +244,13 @@ pub fn bot_think(
                 cmd.reload = true;
             }
 
-            // Patrol: head for a lane or towards a random enemy.
+            // Patrol: head for a lane or towards a random enemy. A King hunts: always an enemy, and
+            // a fresh route every few seconds, as its prey moves.
             brain.repath_in -= TICK_DT;
             let finished = brain.path_index >= brain.path.len();
             if finished || brain.repath_in <= 0.0 {
-                let enemies: Vec<&Seen> = living
-                    .iter()
-                    .filter(|o| rules.hostile(player.team, o.team) && o.entity != entity)
-                    .collect();
-                let goal = if !enemies.is_empty() && rng.next_f32() < 0.45 {
+                let enemies: Vec<&Seen> = living.iter().filter(|o| prey(o) && !o.king).collect();
+                let goal = if !enemies.is_empty() && (king || rng.next_f32() < 0.45) {
                     let enemy = enemies[rng.index(enemies.len())];
                     (enemy.x, enemy.z)
                 } else {
@@ -244,7 +258,7 @@ pub fn bot_think(
                 };
                 brain.path = arena.nav.path((pose.x, pose.z), goal);
                 brain.path_index = 0;
-                brain.repath_in = rng.range(5.0, 10.0);
+                brain.repath_in = if king { rng.range(1.5, 3.0) } else { rng.range(5.0, 10.0) };
             }
 
             while let Some(&(wx, wz)) = brain.path.get(brain.path_index) {

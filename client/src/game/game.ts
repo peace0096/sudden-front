@@ -5,6 +5,7 @@ import {
   HitZone,
   MapId,
   MatchType,
+  SpecialKill,
   Team,
   type GameConfig,
   type Grenade,
@@ -23,6 +24,7 @@ import { WEAPON_ORDER } from "../weapons";
 import type { Connection } from "../net";
 import { mouseSensitivity } from "../settings";
 import { loadedArt, releaseGpu } from "./art/loader";
+import { CROUCH_DROP, HEAD_BASE, HEAD_HEIGHT } from "./art/hitbox";
 import { projectileArt } from "./art/manifest";
 import { toLambert } from "./art/materials";
 import { hitboxFrame, releaseWireGpu, type HitboxFrame } from "./art/view";
@@ -177,6 +179,10 @@ export class Game {
   private readonly config: GameConfig;
   /** A free-for-all match: no teams, and every other player is an enemy. Set from the config in the constructor. */
   private readonly ffa: boolean;
+  /** A Big Head match: levels and head sizes, and the King. Set from the config in the constructor. */
+  private readonly bigHead: boolean;
+  /** Big Head mode: seconds of my reign left, 0 when I am not the King. */
+  private myKingLeft = 0;
   private readonly boxes: MapBox[];
   /** The arena being played, which the host chose in the waiting room. */
   private readonly mapId: MapId;
@@ -319,6 +325,7 @@ export class Game {
   ) {
     this.config = start.config!;
     this.ffa = this.config.matchType === MatchType.FREE_FOR_ALL;
+    this.bigHead = this.config.mode === GameMode.BIG_HEAD;
     this.viewEye = this.config.eyeHeight;
     this.boxes = start.map!.boxes;
     this.mapId = start.map!.id;
@@ -349,6 +356,7 @@ export class Game {
     );
     this.hud.setFfa(this.ffa);
     this.hud.setAugmentMode(this.config.mode === GameMode.AUGMENT);
+    this.hud.setBigHead(this.bigHead ? { minLevel: this.config.minLevel, maxLevel: this.config.maxLevel, kingTime: this.config.kingTime } : null);
     this.hud.setKillTarget(this.config.killsToWin);
     this.hud.renderBoard([], 0, 0, this.myId);
 
@@ -484,12 +492,14 @@ export class Game {
   }
 
   private renderWeaponMenu(): void {
-    const immediate = this.alive && this.protectedNow;
+    // The King keeps the hammer: the server hands the choice out when the reign ends.
+    const king = this.weaponKind === WeaponKind.HAMMER;
+    const immediate = this.alive && this.protectedNow && !king;
     this.hud.showWeaponMenu(
       this.config.weapons,
       this.selectedWeapon,
       (kind) => this.pickWeapon(kind),
-      immediate ? "재투입 보호 중이므로 즉시 교체됩니다." : "다음 재투입 때 적용됩니다.",
+      king ? "왕대두가 끝나면 적용됩니다." : immediate ? "재투입 보호 중이므로 즉시 교체됩니다." : "다음 재투입 때 적용됩니다.",
     );
   }
 
@@ -591,6 +601,8 @@ export class Game {
   private wheel(event: WheelEvent): void {
     if (!this.locked || this.menuOpen || this.offerOpen) return;
     event.preventDefault();
+    // The King's hammer can't be put away.
+    if (this.weaponKind === WeaponKind.HAMMER) return;
     // A notched wheel sends a big step a click, a trackpad many small ones: they add up here.
     this.wheelAccum += event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * WHEEL_STEP : event.deltaY;
     const now = performance.now();
@@ -698,9 +710,10 @@ export class Game {
       }
       const remote = this.remotes.get(player.id);
       if (!remote) continue;
+      if (this.bigHead && this.hasFirstSnapshot && player.kingLeft > 0 && !((remote.state?.kingLeft ?? 0) > 0)) this.onCrowned(player.id);
       remote.state = player;
       remote.character.setWeapon(player.weapon);
-      remote.character.setLook(player.headScale, player.shieldHp > 0 && player.weapon === WeaponKind.PISTOL, player.stunLeft > 0);
+      remote.character.setLook(player.headScale, player.shieldHp > 0 && player.weapon === WeaponKind.PISTOL, player.stunLeft > 0, player.kingLeft > 0);
       remote.samples.push({ tick: snapshot.tick, x: player.x, y: player.y, vy: player.vy, z: player.z, yaw: player.yaw, pitch: player.pitch, crouching: player.crouching });
       if (remote.samples.length > 40) remote.samples.shift();
     }
@@ -739,7 +752,7 @@ export class Game {
           this.onDamage(event.value.attackerId, event.value.victimId, event.value.zone);
           break;
         case "kill":
-          this.onKill(event.value.killerId, event.value.victimId, event.value.headshot, event.value.weapon);
+          this.onKill(event.value.killerId, event.value.victimId, event.value.headshot, event.value.weapon, event.value.special);
           break;
         case "explosion": {
           const center = new THREE.Vector3(event.value.x, event.value.y, event.value.z);
@@ -787,6 +800,17 @@ export class Game {
     }
     this.hud.setHealth(me.hp, this.has(Augment.VEST) ? VEST_MAX_HP : this.config.maxHp);
     this.hud.setShield(me.shieldHp);
+    if (this.bigHead) {
+      const crowned = me.kingLeft > 0 && this.myKingLeft <= 0;
+      const reignOver = me.kingLeft <= 0 && this.myKingLeft > 0;
+      this.myKingLeft = me.kingLeft;
+      this.hud.setLevel(me.level, me.headScale, me.kingLeft);
+      if (crowned && this.hasFirstSnapshot) this.onCrowned(this.myId);
+      if (reignOver) {
+        this.hud.announce(`왕대두 종료 · ${me.level}레벨로 돌아갑니다`, "end");
+        this.audio.reignOver();
+      }
+    }
     this.viewModel.setShield(me.alive && me.shieldHp > 0 && this.weaponKind === WeaponKind.PISTOL);
 
     if (me.alive) {
@@ -861,10 +885,18 @@ export class Game {
     // where it crosses the ground, and kicks up dust there.
     const grounded = !shot.explosive && !shot.hitWorld && !shot.hitPlayerId && end.y < 0 && from.y > 0;
     if (grounded) end.lerpVectors(from, end, from.y / (from.y - end.y));
+    // Big Head mode: nothing bleeds from the King, who takes no harm, or from the toy hammer's
+    // blow, which squeaks wherever it lands on someone.
+    const hammer = shot.melee && this.weaponOf(shot.shooterId) === WeaponKind.HAMMER;
     if (shot.explosive) {
       // A launch: the missile itself comes with the snapshots.
     } else if (shot.hitWorld || grounded) this.effects.impact(end, from, shot.melee);
+    else if (shot.hitPlayerId && (hammer || this.isKing(shot.hitPlayerId))) this.effects.impact(end, from, true);
     else if (shot.hitPlayerId) this.effects.bloodPuff(end, from);
+    if (hammer && shot.hitPlayerId) {
+      const { distance, pan } = this.relative(end.x, end.z);
+      this.audio.squeak(distance, pan);
+    }
 
     // A shotgun's other pellets share the first one's flash and sound.
     if (shot.pellet) {
@@ -931,7 +963,7 @@ export class Game {
     }
   }
 
-  private onKill(killerId: number, victimId: number, headshot: boolean, weapon: WeaponKind): void {
+  private onKill(killerId: number, victimId: number, headshot: boolean, weapon: WeaponKind, special = SpecialKill.UNSPECIFIED): void {
     const killer = this.roster.get(killerId);
     const victim = this.roster.get(victimId);
     if (killer && victim) {
@@ -944,6 +976,7 @@ export class Game {
         victimIsMe: victimId === this.myId,
         headshot,
         weapon,
+        special,
       });
     }
     if (killerId === this.myId) {
@@ -952,8 +985,9 @@ export class Game {
       const now = performance.now() / 1000;
       this.killStreak = now - this.lastKillAt <= KILL_STREAK_WINDOW ? this.killStreak + 1 : 1;
       this.lastKillAt = now;
-      this.hud.showKillBanner(this.killStreak, headshot, victim ?? null);
+      this.hud.showKillBanner(this.killStreak, headshot, victim ?? null, special);
       this.audio.killStreak(this.killStreak, headshot);
+      if (special !== SpecialKill.UNSPECIFIED) this.audio.specialShot(special);
     }
     if (victimId === this.myId) {
       this.killerName = killer?.name ?? null;
@@ -962,6 +996,24 @@ export class Game {
       this.killStreak = 0;
       this.lastKillAt = -Infinity;
     }
+  }
+
+  /** Big Head mode: whether this player is the reigning King, whom nothing harms. */
+  private isKing(id: number): boolean {
+    return (id === this.myId ? this.myKingLeft : (this.remotes.get(id)?.state?.kingLeft ?? 0)) > 0;
+  }
+
+  /** The weapon in this player's hands, as far as this client knows. */
+  private weaponOf(id: number): WeaponKind | undefined {
+    return id === this.myId ? this.weaponKind : this.remotes.get(id)?.state?.weapon;
+  }
+
+  /** Big Head mode: someone was crowned, maybe me. Everyone hears it. */
+  private onCrowned(id: number): void {
+    const mine = id === this.myId;
+    const name = this.roster.get(id)?.name ?? "";
+    this.hud.announce(mine ? "무적의 왕대두! 뿅망치로만 공격합니다" : `${name} 님이 무적의 왕대두가 되었습니다`, "king");
+    this.audio.crowned(mine);
   }
 
   onMatchEnd(end: MatchEnd): void {
@@ -1008,6 +1060,7 @@ export class Game {
           kills: player.kills,
           deaths: player.deaths,
           isBot: entry.isBot,
+          level: player.level,
         } as ScoreEntry,
       ];
     });
@@ -1032,6 +1085,8 @@ export class Game {
     let slot = this.alive && !this.frozen && !this.stunned ? this.slotQueued : 0;
     this.slotQueued = 0;
     if (slot === 4 && this.grenadesLeft === 0) slot = 0;
+    // The King's hammer stays in hand: the server refuses every slot while it is held.
+    if (this.weaponKind === WeaponKind.HAMMER) slot = 0;
     if (slot) {
       const kind = this.slotKind(slot);
       if (kind !== this.weaponKind) {
@@ -1389,11 +1444,13 @@ export class Game {
     for (const [id, remote] of this.remotes) {
       if (this.isAlly(remote.entry) || !remote.state?.alive) continue;
       const pad = 0.42;
+      // Up to the head's top, which a big head (Big Head mode, the Big Head augment) raises.
+      const top = Math.max(1.85, HEAD_BASE + HEAD_HEIGHT * remote.state.headScale + 0.05) - (remote.state.crouching ? CROUCH_DROP : 0);
       const t = rayBox(
         eye,
         dir,
         [remote.shownX - pad, remote.shownY, remote.shownZ - pad],
-        [remote.shownX + pad, remote.shownY + (remote.state.crouching ? 1.35 : 1.85), remote.shownZ + pad],
+        [remote.shownX + pad, remote.shownY + top, remote.shownZ + pad],
       );
       if (t !== null && t < bestT) {
         bestT = t;

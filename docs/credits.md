@@ -130,6 +130,15 @@ CC0 팩은 표기 의무가 없지만, 저작자에게 감사하는 뜻으로 �
   - 몸통 가운데를 원점에, 축을 주먹이 쥐는 손잡이 축(앞으로 28.9°, 오른쪽으로 4.9°)에 맞춤, 신관 끝에 muzzle 노드 추가
   - 재질 색을 팔레트 텍스처 하나로 모아 primitive 하나로 합침, meshopt 압축
 
+### `weapons/hammer.glb`
+
+- 팩: Sudden Front procedural models (Sudden Front, CC0-1.0)
+- 원본: `tools/art/recipes/weapons/hammer.mjs`
+- 바꾼 점:
+  - 스크립트로 만든 모델: 길이 22 cm·지름 10 cm 머리(빨간 양끝 마개, 가운데 노란 주름 여섯 겹), 파란 손잡이(빨간 이음 고리, 남색 손잡이 감개와 끝 손잡이), 끝에서 머리 가운데까지 30 cm
+  - 손잡이의 쥐는 곳을 원점에, 손잡이를 주먹이 쥐는 손잡이 축(앞으로 28.9°, 오른쪽으로 4.9°)에 맞추고 머리는 손잡이와 직각으로 앞뒤로 놓음(앞 마개가 때리는 면), 머리 가운데에 muzzle 노드 추가
+  - 재질 색을 팔레트 텍스처 하나로 모아 primitive 하나로 합침, meshopt 압축
+
 ### `weapons/knife.glb`
 
 - 팩: Toon Shooter Game Kit (Quaternius, CC0-1.0)

@@ -6,8 +6,8 @@ Sudden Front는 웹 브라우저에서 하는 1인칭 FPS(서든어택 스타일
 - **클라이언트**: TypeScript(strict), three.js, Vite, protobuf-es. 캐릭터·총기(1·3인칭)·맵 소품·이펙트는 출처·라이선스를 기록한 스타일라이즈드 glTF/WebP 에셋(`client/public/art/`, 규칙 7)을 씁니다. 사운드는 코드로 합성하고, 벽·바닥·하늘·이름표 텍스처는 코드로 그립니다.
 - **통신**: `proto/game.proto`(패키지 `game.v1`)의 메시지를 WebSocket `/ws` 바이너리 프레임 하나에 하나씩 전송
 - **판정**: 서버 권위. 클라이언트는 이동 예측·보정, 원격 플레이어 보간, 반동, 렌더링·HUD·사운드를 담당
-- **모드**: 일반모드(HP 100), 증강모드(HP 150, 시작 시 증강 카드 1장 선택)
-- **대전 방식**: 팀 데스매치(5대5), 개인전(팀 없이 최대 10명). 모드와 따로 고르며 네 조합 모두 됩니다. 모드와 맵은 대기실에서 방장이 바꿀 수 있습니다(대전 방식은 방을 만들 때만)
+- **모드**: 일반모드(HP 100), 증강모드(HP 150, 시작 시 증강 카드 1장 선택), 왕대두모드(HP 100, 킬·데스로 레벨 −5~3과 머리 크기가 바뀌고 3레벨은 20초 무적의 왕대두)
+- **대전 방식**: 팀 데스매치(5대5), 개인전(팀 없이 최대 10명). 모드와 따로 고르며 여섯 조합 모두 됩니다. 모드와 맵은 대기실에서 방장이 바꿀 수 있습니다(대전 방식은 방을 만들 때만)
 
 ## 빌드·실행·검증
 
@@ -25,7 +25,7 @@ Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@b
 
 ## 작업 규칙
 
-1. **판정 규칙과 수치의 원본은 서버입니다.** 무기 스탯, 증강 효과, HP, 각종 시간은 `server/src/game/`에서 정하고, 클라이언트는 `MatchStart`의 `GameConfig`로 받은 값을 씁니다. 이유: 판정을 일관되게 하고 치트를 막습니다. 다만 클라이언트에는 예측·표시용으로 서버 값을 손으로 옮긴 사본이 있습니다: `client/src/game/game.ts`의 `MAX_PITCH`·`BLOOM_DECAY`·`BLOOM_HOLD_EXTRA`·`VEST_MAX_HP`·`BURST_*`와 `reloadTime()`의 장전 배율, `movement.ts`의 `CMD_DT`·`CONTACT_EPS`·`FOOTING`, `client/src/game/art/hitbox.ts`의 히트박스·`CROUCH_DROP`·방패 크기·`HEAD_SCALE_MAX`(= `augments.rs`의 `BIG_HEAD_MAX`, 캐릭터 경계용), `lobby.ts`의 `TEAM_SIZE`·`KILL_TARGETS`, `augments.ts`의 증강 등급과 설명 속 수치, `world.ts`의 `TILTED_HEIGHT`(= `map.rs`의 `CONTAINER_H`, 기울어진 컨테이너의 충돌 조각 높이), `weapons.ts`·`hud.ts`의 수류탄 설명 속 수치(개수·3초·반경 5 m). 서버의 해당 값을 바꾸면 같은 변경에서 사본도 고칩니다. 이유: 사본이 어긋나도 컴파일 오류가 나지 않고, 예측·HUD만 서버 판정과 달라집니다.
+1. **판정 규칙과 수치의 원본은 서버입니다.** 무기 스탯, 증강 효과, HP, 각종 시간은 `server/src/game/`에서 정하고, 클라이언트는 `MatchStart`의 `GameConfig`로 받은 값을 씁니다. 이유: 판정을 일관되게 하고 치트를 막습니다. 다만 클라이언트에는 예측·표시용으로 서버 값을 손으로 옮긴 사본이 있습니다: `client/src/game/game.ts`의 `MAX_PITCH`·`BLOOM_DECAY`·`BLOOM_HOLD_EXTRA`·`VEST_MAX_HP`·`BURST_*`와 `reloadTime()`의 장전 배율, `movement.ts`의 `CMD_DT`·`CONTACT_EPS`·`FOOTING`, `client/src/game/art/hitbox.ts`의 히트박스·`CROUCH_DROP`·방패 크기·`HEAD_SCALE_MAX`(= `augments.rs`의 `BIG_HEAD_MAX`, 캐릭터 경계용), `lobby.ts`의 `TEAM_SIZE`·`KILL_TARGETS`, `augments.ts`의 증강 등급과 설명 속 수치, `world.ts`의 `TILTED_HEIGHT`(= `map.rs`의 `CONTAINER_H`, 기울어진 컨테이너의 충돌 조각 높이), `weapons.ts`·`hud.ts`의 수류탄 설명 속 수치(개수·3초·반경 5 m), `hud.ts`의 왕대두모드 Tab 규칙 문구 속 1레벨(`big_head.rs`의 `COMEBACK_LEVEL`)·0레벨(`KING_END_LEVEL`). 서버의 해당 값을 바꾸면 같은 변경에서 사본도 고칩니다. 이유: 사본이 어긋나도 컴파일 오류가 나지 않고, 예측·HUD만 서버 판정과 달라집니다.
 2. **이동 규칙은 서버와 클라이언트를 함께 고칩니다.** `server/src/game/physics.rs`의 `step_move`·`step_vertical`(점프·중력·박스 윗면 착지), `systems.rs` `consume_inputs`의 이동 부분, `client/src/game/movement.ts`는 규칙과 상수(`CONTACT_EPS`·`FOOTING` 등, 점프 속도·중력은 `GameConfig`로 받음)가 같아야 합니다. 이유: 클라이언트 예측이 서버와 어긋나면 보정할 때 위치가 튑니다. 확인: `e2e/wall-rub.mjs`, `e2e/play.mjs`(예측 오차).
 3. **프로토콜은 `proto/game.proto`에서만 바꿉니다.** 서버는 `cargo build`가(`build.rs`, protoc 내장이라 따로 설치할 필요 없음), 클라이언트는 `npm run gen`(`dev`·`build`가 자동 실행)이 코드를 다시 만듭니다. 생성물(`client/src/gen/`, 서버 `OUT_DIR`)은 손대지 않습니다. 지운 필드 번호는 `reserved`로 남깁니다(예: `Snapshot`의 `reserved 14`). 이유: 옛 클라이언트와 번호가 충돌하지 않게 합니다.
 4. **봇의 이동·조준·사격·장전은 사람과 같은 `InputCmd` 큐로 넣습니다.** `server/src/game/bot.rs`의 `bot_think`가 명령을 만들어 넣으면 사람과 같은 시스템이 판정합니다. 새 봇 행동도 입력 생성으로 구현합니다. 이유: 규칙 구현을 하나로 유지합니다. 무기 관리만 예외로 직접 처리합니다: 탄이 떨어진 테이저를 1번 무기로 바꾸기와 예비 탄약 보충(`bot.rs`), 증강 무기가 2번 칸이면 그 무기를 든 채 시작(`systems.rs`의 `issue_weapons`), 재투입 때 주무기 재추첨(`respawn_players`), 우지 아킴보 봇의 기관단총 고정(`mod.rs`).
@@ -53,6 +53,7 @@ Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@b
    - 개인전: `ffa.mjs`는 `ffa`·`isAlly()`·`config.matchType`·`roster`·`remotes`(와 그 `character.made.file`)·`viewModel.arms.file`·`myTeam`·`matchOver`·`hasFirstSnapshot`·`connection`을 쓰고, 인스턴스의 `onMatchEnd`를 감싸 받은 `MatchEnd`를 기록합니다.
    - 수류탄: `grenade.mjs`는 `weaponKind`·`grenadesLeft`·`grenades`(날아가는 수류탄 맵)·`pos`·`yaw`·`pitch`·`lastSnapshot`(`grenades`·`grenadesLeft`)을 쓰고, `effects.explosion`과 인스턴스의 `onSnapshot`을 감싸 폭발과 마지막 수류탄 위치를 기록합니다. 무기 칸 표시(`.slot-bar`, `.slot-chip.spent`)와 탄약 칸(`.ammo-count .mag`·`.reserve`)도 읽습니다.
    - 처치 배너: `kill-banner.mjs`는 `onKill`·`lastKillAt`·`roster`·`myId`를 쓰고, `.kill-banner`(와 `hidden`·`headshot-kill` 클래스)·`.kb-title`·`.kb-sub`·`.kb-bullet`·`.kb-skull`·`.kb-victim-name`(팀 색 클래스)·`.kb-victim-label`을 읽습니다.
+   - 왕대두모드: `big-head.mjs`는 `config.mode`·`minLevel`·`maxLevel`·`kingTime`, `lastSnapshot`의 `players`(`level`·`headScale`·`kingLeft`·`weapon`), `roster`·`myId`·`remotes`(와 그 `entry`·`state`·`shownX`·`shownZ`, `character.headScale`·`crown`), `pos`·`yaw`·`pitch`를 쓰고, `onKill`을 인자 5개(마지막이 `SpecialKill`)로 부르며 인스턴스의 `onSnapshot`을 감싸 서버의 특수 샷을 기록합니다. 화면에서는 `.level-panel`·`.level-value`·`.level-pips .pip`(`on`, `data-level`), 처치 배너의 `.kb-special`과 `dot-shot`·`cute-shot` 클래스, 킬 피드의 `.special`·`.headshot`, `.slot-chip.king`, `.big-head-notice`를 읽고, 방 만들기 폼의 `.mode-select`에서 "왕대두모드"를 고릅니다.
    - 대기실 설정: `kill-target.mjs`는 방장의 `.room-mode-select`·`.room-map-select`·`.kill-target-select`를 고르고, 경기 시작 뒤 `config.mode`·`mapId`를 읽습니다. 방 만들기 폼의 `.mode-select`·`.map-select`와는 다른 이름이어야 합니다(다른 e2e가 방 만들기 전에 그쪽을 고름).
    - `?art` 페이지의 벤치 결과(`window.__artReport`, `Character.measure()`)는 `client/e2e/art.mjs`가 읽습니다.
    - `world.ts`가 붙이는 이름도 e2e가 씁니다. 장면의 `"world"` 그룹은 `perf.mjs`가 정적 맵 그리기 호출을 잴 때 찾고, 메시 이름(BoxKind·PropKind 이름, 키트는 `<파일>#<메시>`)은 `?art` 맵 벤치가 찾습니다.
@@ -80,6 +81,7 @@ server/src/
     bot.rs                 봇 AI. 상단에 반응·조준 상수
     weapons.rs             무기 스탯, 공용 계수, 모드별 대미지, 증강별 무기 지급
     augments.rs            증강 등급 풀·확률, 카드 배분, 더블 타임, 선택·대기 시간, 증강 수치
+    big_head.rs            왕대두모드: 레벨 범위·레벨별 머리 배율·왕대두 시간 상수, 레벨 증감, 즉위(crown)
     map.rs                 맵 데이터(점대칭 생성), 팀 스폰과 개인전 스폰(ffa_spawns), 컨테이너 계단(WAREHOUSE_CLIMBS), 기울어진 컨테이너 충돌 조각(lean_slices)
     components.rs          ECS 컴포넌트·리소스(Perks 등)
     tests.rs               게임 규칙 단위 테스트
@@ -105,7 +107,7 @@ client/e2e/*.mjs           Playwright 브라우저 테스트
 
 - **스레드**: tokio가 WebSocket 연결을 받고, `game-hub` 스레드 하나가 모든 방을 소유해 30Hz로 진행합니다. 방 사이 공유 상태가 없어 락을 쓰지 않습니다. 클라이언트별 송신 큐(512)가 차면 그 연결을 끊습니다.
 - **방 상태**: 대기실 → 진행 → 결과(8초) → 대기실. 최대 10명, 팀당 5명(개인전은 같은 10칸을 번호 0~9로 씀).
-- **틱 순서**(`Match`의 chained `Schedule`): `bot_think → consume_inputs → update_weapons → fire_weapons → update_perks → respawn_players → record_history → advance_tick`. 증강모드의 선택(15초)·대기(5초) 동안은 스케줄 대신 `freeze_tick`만 돌고, 그 틱 수(`frozen_ticks`)는 경기 시계에서 뺍니다.
+- **틱 순서**(`Match`의 chained `Schedule`): `bot_think → consume_inputs → update_weapons → fire_weapons → update_perks → update_kings → respawn_players → record_history → advance_tick`. 증강모드의 선택(15초)·대기(5초) 동안은 스케줄 대신 `freeze_tick`만 돌고, 그 틱 수(`frozen_ticks`)는 경기 시계에서 뺍니다.
 - **입력**: 클라이언트는 60Hz 고정 스텝으로 `InputCmd`(seq, 이동키, yaw/pitch, 사격, 장전, 스코프, 무기 칸, 앉기, `render_tick`)를 만들어 `InputBatch`로 보냅니다. 서버는 틱마다 명령 2개분의 예산을 더해(최대 8) 그만큼만 적용하며, 더 빠른 입력은 스피드핵으로 봅니다.
 - **예측·보정**: 클라이언트는 입력을 즉시 자기 위치에 적용하고, 스냅샷의 `last_input_seq` 이후 명령을 다시 적용(replay)해 서버 위치에 맞춥니다.
 - **Lag compensation**: 클라이언트는 원격 플레이어를 보간해 그리며 그 서버 틱을 `render_tick`으로 보냅니다. 서버는 사격 시 표적을 그 틱 위치(`History`, 최대 15틱 = 0.5초)로 되돌려 판정합니다. 미사일은 실제 투사체라 대상이 아닙니다.
@@ -128,7 +130,8 @@ client/e2e/*.mjs           Playwright 브라우저 테스트
 - 무기 칸: 1 주무기(소총 M416·저격소총 AWP·기관총 M249·기관단총 UZI 중 게임 중 B키로 선택, 다음 경기에도 유지), 2 권총, 3 나이프, 4 수류탄(목숨당 1개, 던지면 3초 뒤 폭발하고 그 전 칸으로 복귀, 남은 개수는 `Weapon.holstered[3]`). 바꾸면 0.35초 꺼내는 시간이 있고 진행 중인 장전은 취소되며, 탄약은 무기별로 유지됩니다.
 - 무기 표의 이동속도·탄퍼짐에는 공용 계수 `SPEED_SCALE`(0.9)과 `SPREAD_SCALE`(0.75, 샷건 제외)이 곱해집니다. 무기별 상대 밸런스를 유지한 채 전체 체감을 바꿀 때 이 계수를 조정합니다.
 - 증강모드: 카드 3장 중 1장을 15초 안에 고르고(카드마다 1회 교체, 이미 나온 증강은 다시 안 나옴, 안 고르면 무작위, 봇도 무작위) 5초 대기 후 전투합니다. 등급 확률은 실버 40% / 골드 35% / 프리즘 25%이고 증강은 19종이며, 고른 증강은 부활해도 유지됩니다. 증강 전용 무기는 샷건, 권총+, 매그넘, 테이저, 미사일 런처, 우지 아킴보입니다.
-- 세부 수치와 증강 효과: [docs/gameplay.md](docs/gameplay.md), [docs/augment-mode.md](docs/augment-mode.md)
+- 왕대두모드: 처치 +1레벨·사망 −1레벨(−5~3, 마이너스에서 처치하면 바로 1레벨), 레벨별 머리 배율을 모델과 머리 히트박스에 적용합니다(`Perks.level`·`head_scale`). 3레벨이 되면 20초 동안 무적(맞힘 판정은 하되 피해 없음)·HP 회복·뿅망치(`WeaponKind.HAMMER`, 한 방, 이동속도 5.94)만 사용하는 왕대두가 되고(`Perks.king_ticks`, 뿅망치를 든 동안 `Weapon::switch_to`가 거부), 끝나면 0레벨과 새 무기로 돌아갑니다(`update_kings`). 머리가 가장 작은(마이너스, 경기 안 최저 레벨) 상대를 헤드샷으로 처치하면 도트 샷, 뿅망치로 처치하면 큐트 샷(`KillEvent.special`)입니다.
+- 세부 수치와 증강 효과: [docs/gameplay.md](docs/gameplay.md), [docs/augment-mode.md](docs/augment-mode.md), [docs/big-head-mode.md](docs/big-head-mode.md)
 
 ## 알려진 이슈
 

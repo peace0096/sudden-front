@@ -3,9 +3,9 @@
 // it: the soldiers in the server's hitboxes with a clip picker, every weapon at its length with its
 // grip and muzzle marked, the map pieces in the boxes the server collides with (containers in
 // their four colours) and the effect atlases cell by cell. A bench then puts real Characters (the
-// game's remote soldier) through standing, crouching, aiming, head sizes, death and every weapon,
-// and measures them against the hitboxes; a second bench puts the game's first-person view model
-// through every weapon's idle, kick, reload, bolt or pump cycle, knife swing and grenade throw, and measures its
+// game's remote soldier) through standing, crouching, aiming, head sizes, death, every weapon and
+// Big Head mode's crowned King, and measures them against the hitboxes; a second bench puts the game's first-person view model
+// through every weapon's idle, kick, reload, bolt or pump cycle, knife and hammer swing and grenade throw, and measures its
 // hands on the gun, its muzzles on screen and its draw calls; a map bench builds a small map that
 // holds every BoxKind and PropKind with the game's buildWorld and measures each kit copy against
 // the box it fills, and the map's draw calls; and an effects bench (effects-bench.ts) runs the
@@ -61,6 +61,8 @@ interface BenchState {
   alive?: boolean;
   shielded?: boolean;
   stunned?: boolean;
+  /** Big Head mode's reigning King, crowned. */
+  king?: boolean;
   /** Ground speed in m/s and heading in radians from the facing, right positive. */
   moving?: { speed: number; heading: number };
 }
@@ -74,6 +76,7 @@ export interface BenchResult extends CharacterMeasure {
   alive: boolean;
   shielded: boolean;
   stunned: boolean;
+  king: boolean;
   moving: boolean;
   /** Draw calls of the character alone. */
   calls: number;
@@ -215,6 +218,8 @@ function benchStates(): BenchState[] {
     { id: "dead", label: "사망", alive: false },
     { id: "shield", label: "방패병 (권총 + 방패)", weapon: WeaponKind.PISTOL, shielded: true },
     { id: "stunned", label: "마비 (테이저)", stunned: true },
+    // The server's King head scale (big_head.rs HEAD_SCALES at level 3).
+    { id: "king", label: "무적의 왕대두 (뿅망치 + 왕관)", weapon: WeaponKind.HAMMER, headScale: 2.6, king: true },
     { id: "blue", label: "BLUE 팀", team: Team.BLUE },
     { id: "neutral", label: "개인전 (중립 군복)", team: Team.UNSPECIFIED },
     { id: "run", label: "달리기", moving: { speed: RUN_SPEED, heading: 0 } },
@@ -251,7 +256,7 @@ function benchCard(viewer: Viewer, state: BenchState, report: ArtReport): HTMLEl
   root.append(el("h3", "", state.label), canvas);
   const character = new Character(state.label, state.team ?? Team.RED);
   if (state.weapon) character.setWeapon(state.weapon);
-  character.setLook(state.headScale ?? 1, !!state.shielded, !!state.stunned);
+  character.setLook(state.headScale ?? 1, !!state.shielded, !!state.stunned, !!state.king);
   character.setNameVisible(true);
   const clock = { x: 0, z: 0, time: 0 };
   // Long enough for a crouch to settle and a death to finish, short of the body disappearing.
@@ -273,12 +278,16 @@ function benchCard(viewer: Viewer, state: BenchState, report: ArtReport): HTMLEl
   scene.add(ground(3, 6), frame.group, character.root);
   const width = 200;
   const height = 300;
-  const side = new THREE.OrthographicCamera((-1.15 * width) / height, (1.15 * width) / height, 1.15, -1.15, 0.1, 20);
-  side.position.set(6, 1, 0);
-  side.lookAt(0, 1, 0);
+  // The King's crown and the name over it stand higher than any other state's head: both views
+  // frame that much more, upward.
+  const lift = state.king ? 0.35 : 0;
+  const half = 1.15 + lift;
+  const side = new THREE.OrthographicCamera((-half * width) / height, (half * width) / height, half, -half, 0.1, 20);
+  side.position.set(6, 1 + lift, 0);
+  side.lookAt(0, 1 + lift, 0);
   const threeQuarter = new THREE.PerspectiveCamera(30, width / height, 0.1, 30);
-  threeQuarter.position.set(-2.4, 1.7, -3.6);
-  threeQuarter.lookAt(0, 0.95, 0);
+  threeQuarter.position.set(-2.4 * (1 + lift), 1.7 + lift, -3.6 * (1 + lift));
+  threeQuarter.lookAt(0, 0.95 + lift, 0);
   const views = [
     { camera: threeQuarter, x: 0, width },
     { camera: side, x: width, width },
@@ -314,6 +323,12 @@ function benchCard(viewer: Viewer, state: BenchState, report: ArtReport): HTMLEl
   fact(facts, "발바닥 (왼 · 오른)", `${measured.feet.map((y) => y.toFixed(3)).join(" · ")} m`, state.alive === false || state.moving ? undefined : measured.feet.every((y) => y >= -0.03 && y <= 0.05) ? "ok" : "over");
   fact(facts, "총구", `앞으로 ${measured.muzzleAhead.toFixed(2)} m · 조준과 ${THREE.MathUtils.radToDeg(measured.gunToAim).toFixed(1)}°${measured.support === null ? "" : ` · 왼손 ${(measured.support * 100).toFixed(1)} cm, 손바닥 ${measured.supportFacing?.toFixed(2)}`}`);
   wristFact(facts, measured.wrist, state.weapon);
+  if (state.king) {
+    // On the head (its bottom from 15 cm into it to 5 cm over it), and under the name.
+    const crown = measured.crown;
+    const seated = !!crown && crown.bottom >= measured.headTop - 0.15 && crown.bottom <= measured.headTop + 0.05 && measured.name > crown.top;
+    fact(facts, "왕관 · 이름표", crown ? `${crown.bottom.toFixed(3)}~${crown.top.toFixed(3)} m · ${measured.name.toFixed(3)} m` : "없음", seated ? "ok" : "over");
+  }
   fact(facts, "draw call", `${calls}`);
   root.append(facts);
   report.bench[state.id] = {
@@ -326,6 +341,7 @@ function benchCard(viewer: Viewer, state: BenchState, report: ArtReport): HTMLEl
     alive: state.alive !== false,
     shielded: !!state.shielded,
     stunned: !!state.stunned,
+    king: !!state.king,
     moving: !!state.moving,
     calls,
   };
@@ -358,7 +374,7 @@ export interface FirstPersonResult extends ViewModelMeasure {
   calls: number;
 }
 
-const POSE_LABELS: Record<FirstPersonPose, string> = { idle: "대기", kick: "발사 반동", reload: "장전 중간", cycle: "노리쇠·펌프 중간", swing: "베기", throw: "던지기" };
+const POSE_LABELS: Record<FirstPersonPose, string> = { idle: "대기", kick: "발사 반동", reload: "장전 중간", cycle: "노리쇠·펌프 중간", swing: "휘두르기", throw: "던지기" };
 /** Guns whose shots are followed by a bolt or pump cycle: the server's hasScope and shellReload ones. */
 const CYCLING = [WeaponKind.SNIPER, WeaponKind.SHOTGUN];
 const FP_DT = 1 / 30;
@@ -382,7 +398,7 @@ function firstPersonStates(kinds: WeaponKind[]): FirstPersonState[] {
   };
   for (const kind of kinds) {
     add(kind, "idle");
-    if (kind === WeaponKind.KNIFE) {
+    if (kind === WeaponKind.KNIFE || kind === WeaponKind.HAMMER) {
       add(kind, "swing");
     } else if (kind === WeaponKind.GRENADE) {
       add(kind, "throw");
@@ -423,7 +439,7 @@ function holdPose(viewModel: ViewModel, pose: FirstPersonPose): void {
   } else if (pose === "cycle") {
     viewModel.update(FP_DT, false, 0, 0.5, true);
   } else if (pose === "swing") {
-    // The slash at its widest, halfway through the swing.
+    // Halfway through the swing: the knife's slash at its widest, the hammer's bonk landing.
     viewModel.fire();
     viewModel.update(0.5 / 3.4, false, 0, 0, true);
   } else if (pose === "throw") {
