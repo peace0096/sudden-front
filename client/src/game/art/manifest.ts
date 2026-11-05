@@ -6,7 +6,7 @@
 // JSON imports type strings as string and arrays as number[], so the types below use those and
 // list the expected values in comments; tsc then checks the manifest's shape as it is.
 import type { EulerOrder, Object3D } from "three";
-import { WeaponKind } from "../../gen/game_pb";
+import { Team, WeaponKind } from "../../gen/game_pb";
 import generatedJson from "./generated.json";
 import manifestJson from "./manifest.json";
 
@@ -28,18 +28,22 @@ export interface WeaponArt {
   /** How the gun is held, which picks the arms' pose: "rifle", "pistol", "knife", "launcher" or "akimbo". */
   hold: string;
   /**
-   * Third person, relative to the right hand's socket. `support` is where the left wrist takes
-   * hold, in the gun's own frame (grip at the origin, barrel along −Z); without it the left arm
-   * keeps its hold's pose.
+   * Third person, the gun in the right hand: `position` is the middle of the fist (where the
+   * middle, ring and little fingers close in the holdRifle pose) and `rotation` the gun's turn
+   * there, both in the handR bone's frame, so the grip (the gun's origin) goes through the fist.
+   * tools/art/build-art.mjs holds them to the rig. `support` is the point the left fist closes
+   * round, in the gun's own frame (grip at the origin, barrel along −Z): the hand under the
+   * handguard, palm up, or with `supportGrip` beside the right fist on the grip, holding it as
+   * the right hand does, mirrored. Without `support` the left arm keeps its hold's pose.
    */
-  tp: Placement & { support?: Vec3 };
+  tp: Placement & { support?: Vec3; supportGrip?: boolean };
   /**
    * First person, relative to the view model's rig: the grip's place there. The right hand holds
-   * the grip as `tp` places it in the palm.
+   * the grip as `tp` places it in the fist.
    */
   fp: Placement & {
     /**
-     * Where the left wrist holds the gun, in the gun's own frame like tp.support, which it
+     * Where the left fist closes round the gun, in the gun's own frame like tp.support, which it
      * replaces in first person: the view shows the left hand further forward, under the handguard.
      */
     support?: Vec3;
@@ -61,9 +65,24 @@ export interface WeaponArt {
   };
 }
 
+/**
+ * One soldier's file for each look: a team's colour, and the neutral uniform every player wears in
+ * a free-for-all match, where nobody has a team.
+ */
+export interface SoldierFiles {
+  red: string;
+  blue: string;
+  neutral: string;
+}
+
+/** The file a player of `team` wears: the team's colour, or the neutral uniform without a team. */
+export function teamFile(files: SoldierFiles, team: Team): string {
+  return team === Team.RED ? files.red : team === Team.BLUE ? files.blue : files.neutral;
+}
+
 export interface CharacterArt {
-  /** One rigged soldier, painted once per team. Metres, feet at y = 0, head bone at the hitbox's neck. */
-  files: { red: string; blue: string };
+  /** One rigged soldier, painted once per look. Metres, feet at y = 0, head bone at the hitbox's neck. */
+  files: SoldierFiles;
   /** Radians about +Y that turn the model to face −Z, the way players face; π for a model made facing +Z. */
   forwardYaw: number;
   /**
@@ -89,12 +108,15 @@ export interface CharacterArt {
 /**
  * A hold's upper-body pose: the clip the chest and arms play, rotations added to named bones
  * after it (XYZ radians in the bone's own frame), and for two guns the left arm mirroring the
- * right. The left hand then goes to the gun's tp.support, if it has one.
+ * right. The left fist then closes round the gun's tp.support, if it has one. `fist` bends the
+ * right index finger like the middle one, in both views, for a weapon held in the whole fist
+ * rather than with a finger along the trigger.
  */
 export interface HoldArt {
   clip?: string;
   bones?: Record<string, Vec3>;
   mirror?: boolean;
+  fist?: boolean;
 }
 
 /**
@@ -102,7 +124,7 @@ export interface HoldArt {
  * skinned to the clavicles and the bones below them), so no head, torso or legs come into view.
  */
 export interface ArmsArt {
-  files: { red: string; blue: string };
+  files: SoldierFiles;
   /** Their size in the view model's rig, next to guns that fp.scale enlarges; 1 is the character's own. */
   scale: number;
 }

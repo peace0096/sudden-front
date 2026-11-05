@@ -12,6 +12,7 @@ let shared: {
   gun: THREE.BufferGeometry;
   red: THREE.Material;
   blue: THREE.Material;
+  neutral: THREE.Material;
   steel: THREE.Material;
 } | null = null;
 
@@ -32,6 +33,8 @@ function parts() {
       gun,
       red: new THREE.MeshLambertMaterial({ color: 0xb4483a }),
       blue: new THREE.MeshLambertMaterial({ color: 0x3f6fa8 }),
+      // The free-for-all's uniform (tools/art/recipes/characters/swat-neutral.mjs).
+      neutral: new THREE.MeshLambertMaterial({ color: 0x6f757b }),
       steel: new THREE.MeshLambertMaterial({ color: 0x2a2c2e }),
     };
   }
@@ -39,12 +42,13 @@ function parts() {
 }
 
 /**
- * A soldier in the team's colour, feet at the origin, facing -Z. Its parts are named like the
- * rig's bones they stand for: "body", and "head", which pivots at the neck (HEAD_BASE).
+ * A soldier in the team's colour (grey without a team), feet at the origin, facing -Z. Its parts
+ * are named like the rig's bones they stand for: "body", and "head", which pivots at the neck
+ * (HEAD_BASE).
  */
 export function placeholderFigure(team: Team): THREE.Group {
   const s = parts();
-  const material = team === Team.RED ? s.red : s.blue;
+  const material = team === Team.RED ? s.red : team === Team.BLUE ? s.blue : s.neutral;
   const figure = new THREE.Group();
   const body = new THREE.Mesh(s.body, material);
   body.name = "body";
@@ -71,5 +75,5 @@ export function placeholderGun(): THREE.Group {
 export function disposePlaceholders(): void {
   if (!shared) return;
   for (const geometry of [shared.body, shared.head, shared.gun]) geometry.dispose();
-  for (const material of [shared.red, shared.blue, shared.steel]) material.dispose();
+  for (const material of [shared.red, shared.blue, shared.neutral, shared.steel]) material.dispose();
 }

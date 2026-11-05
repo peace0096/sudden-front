@@ -1,5 +1,5 @@
-// The host chooses the kill target and which empty seats hold bots; a guest sees
-// both and can't change them.
+// The host chooses the kill target, the game mode, the map and which empty seats hold bots; a guest
+// sees them all and can't change them, and the match is played as the host set it.
 // Usage: node e2e/kill-target.mjs [url] [screenshot-dir]
 import { chromium } from "playwright-core";
 import { mkdirSync } from "node:fs";
@@ -63,11 +63,29 @@ check(
   }),
 );
 
+// The mode and the map the room was made with can change in the waiting room too.
+check(
+  "the host's mode and map selectors start at the room's",
+  (await host.inputValue(".room-mode-select")) === "1" && (await host.inputValue(".room-map-select")) === "1",
+);
+await host.selectOption(".room-mode-select", { label: "증강모드" });
+await host.selectOption(".room-map-select", { label: "웨어하우스" });
+await guest.waitForFunction(() => {
+  const list = document.querySelector(".room-list")?.textContent ?? "";
+  return list.includes("증강모드") && list.includes("웨어하우스");
+});
+check("the room list shows the new mode and map", true);
+check("the host's own header shows them", (await header(host)).includes("증강모드 · 웨어하우스"), await header(host));
+
 await guest.click(".room-row .btn");
 // The lobby has a .panel-head too, so wait for the room itself.
 await guest.waitForSelector(".room .teams");
 check("a guest sees the target", (await guest.textContent(".panel-head")).includes("10킬 선취 승리"));
-check("a guest has no selector", (await guest.$(".kill-target-select")) === null);
+check("a guest sees the mode and map", (await guest.textContent(".panel-head")).includes("증강모드 · 웨어하우스"));
+check(
+  "a guest has no selector",
+  (await guest.$(".kill-target-select")) === null && (await guest.$(".room-mode-select")) === null && (await guest.$(".room-map-select")) === null,
+);
 
 await host.selectOption(".kill-target-select", "20");
 await guest.waitForFunction(() => document.querySelector(".panel-head").textContent.includes("20킬 선취 승리"));
@@ -101,13 +119,18 @@ check("one bot is left", (await botCount(guest)) === 1 && (await seatIs(guest, "
 await host.waitForFunction(() => document.querySelectorAll(".slot.bot").length === 1);
 await host.screenshot({ path: join(shots, "kill-target-room.png") });
 
+// The guest readies; the host's start waits for it.
+await guest.click(".actions .ready-btn");
 await host.click(".actions .primary");
 await host.waitForFunction(() => window.__game?.config);
+// GameMode.AUGMENT and MapId.WAREHOUSE are both 2.
 const started = await host.evaluate(() => ({
   config: window.__game.config.killsToWin,
   bar: document.querySelector(".score.target").textContent,
+  mode: window.__game.config.mode,
+  map: window.__game.mapId,
 }));
-check("the match uses it", started.config === 20 && started.bar === "020", JSON.stringify(started));
+check("the match uses them", started.config === 20 && started.bar === "020" && started.mode === 2 && started.map === 2, JSON.stringify(started));
 const roster = await host.evaluate(() => {
   const g = window.__game;
   const entries = [...g.roster.values()];

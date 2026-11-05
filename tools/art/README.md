@@ -79,10 +79,10 @@ node build-art.mjs [--check]
 `recipes/` 아래 레시피(출력 파일 하나당 하나)를 모두 실행해 `client/public/art/`에 GLB·WebP를 쓰고, 파일마다 해시·크기·삼각형·이미지 크기를 `generated.json`에, 팩·원본 경로·바꾼 점을 `LICENSES.json`에, 같은 내용을 한국어로 `docs/credits.md`에 씁니다. 레시피가 쓰는 폴더 안에서 더는 만들지 않는 파일은 지웁니다.
 
 - `art-src/`만 읽고 같은 입력이면 같은 바이트를 씁니다. `--check`는 아무것도 쓰지 않고 다시 빌드해, 디스크의 파일·기록과 하나라도 다르면 실패합니다.
-- 끝에 `manifest.json`을 검사합니다: 매니페스트가 가리키는 파일과 빌드한 파일이 서로 같아야 하고, `fx` 칸이 아틀라스와, 캐릭터의 `forwardYaw`·클립과 무기의 `tp`(holdRifle 자세에서 오른손 손바닥에 놓인 손잡이)가 리그와 맞아야 합니다. 다르면 넣어야 할 값을 출력하고 실패합니다.
+- 끝에 `manifest.json`을 검사합니다: 매니페스트가 가리키는 파일과 빌드한 파일이 서로 같아야 하고, `fx` 칸이 아틀라스와, 캐릭터의 `forwardYaw`·클립과 무기의 `tp`(holdRifle 자세에서 오른 주먹 구멍, 곧 가운데·약지·새끼손가락이 감싸는 원의 중심에 놓인 손잡이)가 리그와 맞아야 합니다. 손잡이 축(`gripAxis`, 수직에서 앞으로 28.9°·오른쪽 4.9°)도 `rig:` 줄에 출력합니다. 다르면 넣어야 할 값을 출력하고 실패합니다.
 - 원본을 쓰기 전에 `sources.json`에 고정한 SHA-256(파일 팩은 파일마다, 압축 팩은 압축 파일)을 다시 확인하고, 다르면 "run fetch.mjs"와 함께 실패합니다. `LICENSES.json`에는 잰 해시를 적습니다. `generated.json`에는 파일마다 전체 `sha256`과 `?v=`용 앞 16자 `hash`를 적고, `check-art.mjs`가 이 값으로 런타임 파일의 내용을 잠급니다.
 - 레시피는 `{ output, pack, sources, build(ctx) }`를 내보냅니다. `ctx.file(경로)`는 `art-src/<pack>/content/` 안의 파일 경로를 주며, 허용된 라이선스가 아니거나 팩 밖을 가리키면 거부합니다. kitbash로 붙이는 부품도 하나하나 라이선스를 확인합니다. `pack: "procedural"`은 이 저장소 스크립트가 처음부터 만드는 모델(미사일 탄)입니다.
-- `lib/`: `character.mjs`(리그 정규화·뼈와 클립 이름·감량·팀 색), `weapon.mjs`(총구 −Z·손잡이 원점·`muzzle` 노드·길이), `kit.mjs`(서버 상자 크기에 맞춤·인스턴스 색칠용 노드 분리), `kitbash.mjs`(다른 모델과 스크립트 상자를 붙임), `normalize.mjs`(정적 베이크·스킨 리그 베이크·감량), `atlas.mjs`(흰색 + 알파 아틀라스), `credits.mjs`, `shapes.mjs`(스크립트 도형), `scene.mjs`(팔레트·join·meshopt 저장), `sources.mjs`(라이선스·고정 해시 확인), `paths.mjs`(id·이름·경로 검증), `math.mjs`.
+- `lib/`: `character.mjs`(리그 정규화·뼈와 클립 이름·감량·팀 색), `weapon.mjs`(총구 −Z·손잡이 원점·`muzzle` 노드·길이. 나이프처럼 손잡이 축으로 쥐는 무기는 `turn`으로 손잡이를 주먹 축에 맞추고 `tipAxis`로 칼끝을 찾음), `kit.mjs`(서버 상자 크기에 맞춤·인스턴스 색칠용 노드 분리), `kitbash.mjs`(다른 모델과 스크립트 상자를 붙임), `normalize.mjs`(정적 베이크·스킨 리그 베이크·감량), `atlas.mjs`(흰색 + 알파 아틀라스), `credits.mjs`, `shapes.mjs`(스크립트 도형), `scene.mjs`(팔레트·join·meshopt 저장), `sources.mjs`(라이선스·고정 해시 확인), `paths.mjs`(id·이름·경로 검증), `math.mjs`.
 
 ### gallery-shots.mjs — 사진첩
 

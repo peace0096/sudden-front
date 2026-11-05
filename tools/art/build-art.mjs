@@ -131,8 +131,15 @@ function checkManifest(manifest, built) {
     for (const [kind, weapon] of Object.entries(manifest.weapons)) {
       const { position, rotation } = rig.gripInHand;
       if (!near(weapon.tp.position, position) || !near(weapon.tp.rotation, rotation)) {
-        problems.push(`weapons.${kind}.tp should be ${JSON.stringify({ position, rotation })} (the grip in the right palm during holdRifle)`);
+        problems.push(`weapons.${kind}.tp should be ${JSON.stringify({ position, rotation })} (the grip in the middle of the right fist during holdRifle)`);
       }
+    }
+    // A weapon held by a handle along its length (the knife) lies along the fist's grip line.
+    for (const [output, item] of built) {
+      const axis = item.info?.tipAxis;
+      if (!axis) continue;
+      const cos = axis.reduce((sum, value, i) => sum + value * rig.gripAxis[i], 0) / (Math.hypot(...axis) * Math.hypot(...rig.gripAxis));
+      if (cos < Math.cos((1 * Math.PI) / 180)) problems.push(`${output} points its tip along ${JSON.stringify(axis)}, but the fist's grip line is ${JSON.stringify(rig.gripAxis)}: turn its recipe to that line`);
     }
   }
   return problems;

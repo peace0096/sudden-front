@@ -10,6 +10,8 @@ export const CROUCH_DROP = 0.5;
 export const HEAD_BASE = 1.5;
 export const HEAD_HEIGHT = 0.26;
 export const HEAD_HALF_WIDTH = 0.125;
+/** The largest head the Big Head augment grows (server augments.rs BIG_HEAD_MAX): the character's bounds hold it. */
+export const HEAD_SCALE_MAX = 3;
 
 export const BODY_BOTTOM = 0.85;
 export const BODY_TOP = 1.5;

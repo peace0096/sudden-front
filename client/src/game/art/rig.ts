@@ -3,8 +3,9 @@
 // so any rig with those names fits, and they hold the model to the server's hitboxes (hitbox.ts):
 // - steady: the chest kept facing where the character faces, however a stride turns the hips;
 // - hold: rotations added to named bones (manifest character.holds), the left arm mirroring the
-//   right for two guns, and the left wrist brought to the gun's support point by two-bone IK, its
-//   fingers closed like the right hand's on the grip;
+//   right for two guns, and the left fist closed round the gun's support point: the hand turned
+//   to hold it and its wrist brought where that puts the fist by two-bone IK, its fingers closed
+//   like the right hand's on the grip;
 // - aim: the pitch spread over the chest (40%, up to ±0.5), the neck and head (the rest, up to
 //   ±0.6) and the arms (whatever remains, so the gun points along the aim), each a rotation about
 //   the character's right axis turned into the bone's parent frame;
@@ -14,10 +15,16 @@
 // - head size: the head bone scaled about its joint, which sits on the head box's base.
 // The first-person arms (viewmodel.ts) use the arm tools alone: a shoulder moved to a point, a
 // wrist brought to a point by the same two-bone IK, and a hand turned to hold a gun.
+// A hand holds a gun by its fist: the middle of the ring its middle, ring and little fingers close
+// (the weapon's tp.position, measured by tools/art/lib/character.mjs), never by its wrist, so the
+// wrist always goes where the turned hand puts that fist on the gun.
 // Nothing here allocates per frame: each function has its own scratch objects, and the bone lists
 // the loops walk are made once (a hold's, the first time it is added).
 import * as THREE from "three";
 
+// The rig also needs each hand's index and middle finger joints 2 to 4 (closeIndex) and the left
+// hand's index, middle and little finger knuckles (joint 2, for supportTurn); the constructor looks
+// them up by name and throws without them, as it does for these.
 const BONES = [
   "root", "body", "spine", "chest", "neck", "head",
   "clavicleL", "clavicleR", "upperArmL", "upperArmR", "foreArmL", "foreArmR", "handL", "handR",
@@ -50,6 +57,16 @@ const LEG_REACH = 0.995;
 /** Where the left elbow points while the hand holds a gun, from the shoulder: down, out and back. */
 const ELBOW_POLE = { down: 0.5, out: 0.3, back: 0.1 };
 const UP = new THREE.Vector3(0, 1, 0);
+/**
+ * The left hand under a handguard, in the gun's frame (grip at the origin, barrel along −Z): the
+ * palm faces up into it, its length running across to the gun's right, a little up and forward,
+ * where the fingers close round it, the index finger forward; the forearm comes from below on the
+ * left.
+ */
+const SUPPORT_FINGERS = new THREE.Vector3(0.9, 0.15, -0.2).normalize();
+const SUPPORT_INDEX = new THREE.Vector3(0, 0, -1);
+/** The finger joints that bend, knuckle out: the index finger takes the middle finger's bends for a fist. */
+const BENDS = ["2", "3", "4"] as const;
 
 export interface AimPose {
   /** Radians, up positive, as the server sends it. */
@@ -167,10 +184,27 @@ const posing = {
 };
 
 const holding = { local: new THREE.Quaternion(), frame: new THREE.Quaternion(), twist: new THREE.Quaternion(), axis: new THREE.Vector3() };
+const fisting = { wrist: new THREE.Vector3(), size: new THREE.Vector3(), bend: new THREE.Quaternion() };
 
 function isBelow(bone: THREE.Object3D, ancestor: THREE.Object3D): boolean {
   for (let node = bone.parent; node; node = node.parent) if (node === ancestor) return true;
   return false;
+}
+
+/** An orthonormal basis whose first axis is `along` and whose second lies toward `across`. */
+function basis3(along: THREE.Vector3, across: THREE.Vector3, basis: THREE.Matrix4): THREE.Matrix4 {
+  along.normalize();
+  across.addScaledVector(along, -across.dot(along)).normalize();
+  return basis.makeBasis(along, across, new THREE.Vector3().crossVectors(along, across));
+}
+
+/** One bending joint of the index finger, the middle finger's joint beside it, and both their loaded turns. */
+interface Bend {
+  index: THREE.Object3D;
+  middle: THREE.Object3D;
+  indexRest: THREE.Quaternion;
+  /** The middle joint's loaded turn, inverted. */
+  middleRestInverse: THREE.Quaternion;
 }
 
 export class Rig {
@@ -197,6 +231,16 @@ export class Rig {
   /** The chest's parent's orientation in the armature's frame as loaded: where steady() keeps it. */
   private readonly steadyFrame: THREE.Quaternion;
   private readonly model: THREE.Object3D;
+  /**
+   * The left hand's turn relative to a gun whose handguard it holds from below (SUPPORT_*): its
+   * world turn is the gun's times this. Made from the hand's own bones, so any rig with these
+   * fingers fits.
+   */
+  readonly supportTurn: THREE.Quaternion;
+  /** Each side's index finger joints with the middle finger's beside them, for a full fist. */
+  private readonly bends: Record<Side, Bend[]>;
+  /** Each hand's loaded turn in its forearm's frame, inverted: the straight wrist wristBend() measures from. */
+  private readonly straightWrist: Record<Side, THREE.Quaternion>;
 
   constructor(model: THREE.Object3D) {
     this.model = model;
@@ -217,6 +261,8 @@ export class Rig {
     };
     this.oneClavicle = [b.clavicleR];
     this.bothClavicles = [b.clavicleL, b.clavicleR];
+    // As loaded, before any clip: the rest pose, whose wrists are straight.
+    this.straightWrist = { L: b.handL.quaternion.clone().invert(), R: b.handR.quaternion.clone().invert() };
     model.traverse((object) => {
       if (object instanceof THREE.Bone) {
         this.clipPose.push({ bone: object, position: object.position.clone(), quaternion: object.quaternion.clone(), scale: object.scale.clone() });
@@ -229,7 +275,27 @@ export class Rig {
       this.mirrored.push([right, left]);
       if (isBelow(right, b.handR)) this.fingers.push([right, left]);
     });
+    const finger = (name: string): THREE.Object3D => {
+      const bone = model.getObjectByName(name);
+      if (!bone) throw new Error(`the rig has no ${name} bone`);
+      return bone;
+    };
+    const bendsOf = (side: Side): Bend[] =>
+      BENDS.map((joint) => {
+        const index = finger(`index${side}${joint}`);
+        const middle = finger(`middle${side}${joint}`);
+        return { index, middle, indexRest: index.quaternion.clone(), middleRestInverse: middle.quaternion.clone().invert() };
+      });
+    this.bends = { L: bendsOf("L"), R: bendsOf("R") };
     model.updateMatrixWorld(true);
+    // The hand's own frame from its knuckles as loaded (along the palm from the wrist to the middle
+    // knuckle, then across it toward the index knuckle; the fingers' first bones all start at the
+    // wrist, so only the knuckles span the palm), and the turn that lines it up with SUPPORT_*:
+    // wanted · own⁻¹, both orthonormal.
+    const knuckle = (name: string) => b.handL.worldToLocal(finger(`${name}L2`).getWorldPosition(new THREE.Vector3()));
+    const own = basis3(knuckle("middle"), knuckle("index").sub(knuckle("pinky")), new THREE.Matrix4()).transpose();
+    const wanted = basis3(SUPPORT_FINGERS.clone(), SUPPORT_INDEX.clone(), new THREE.Matrix4());
+    this.supportTurn = new THREE.Quaternion().setFromRotationMatrix(wanted.multiply(own)).normalize();
     this.steadyFrame = b.root.parent!.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(b.chest.parent!.getWorldQuaternion(new THREE.Quaternion()));
     const end = (shin: THREE.Object3D, foot: THREE.Object3D) => shin.worldToLocal(foot.getWorldPosition(new THREE.Vector3()));
     this.shinEnd = { L: end(b.shinL, b.footL), R: end(b.shinR, b.footR) };
@@ -300,6 +366,20 @@ export class Rig {
   /** The left fingers close like the right ones on the grip, for a hand that holds the gun too. */
   mirrorFingers(weight = 1): void {
     Rig.mirror(this.fingers, weight);
+  }
+
+  /**
+   * The index finger on `side` bends as the middle finger beside it does, from where each was
+   * loaded, by `weight`: a full fist round a knife's handle instead of a finger along a trigger.
+   */
+  closeIndex(side: Side, weight = 1): void {
+    const bends = this.bends[side];
+    for (let i = 0; i < bends.length; i++) {
+      const { index, middle, indexRest, middleRestInverse } = bends[i];
+      // The middle joint's bend from its loaded turn, put on the index joint's loaded turn.
+      const bent = fisting.bend.copy(indexRest).multiply(posing.turn.copy(middleRestInverse).multiply(middle.quaternion));
+      index.quaternion.slerp(bent, weight);
+    }
   }
 
   // A rig's left bones are the mirror images of its right ones, so a local rotation (x, y, z, w)
@@ -373,14 +453,30 @@ export class Rig {
     solveTwoBone(b.thighR, b.shinR, this.shinEnd.R, b.footR.getWorldPosition(posing.foot), b.kneePoleR.getWorldPosition(posing.pole), LEG_REACH);
   }
 
-  /** Brings the left wrist to a world point, the elbow down and out. */
-  reach(target: THREE.Vector3, facing: THREE.Object3D): void {
+  /**
+   * Closes the left fist round a world point, the hand turned to the world rotation `turn` and the
+   * elbow down and out; `fist` is the fist's middle in the left hand's frame. `facing` is the object
+   * whose +X is the character's right and −Z its facing.
+   */
+  support(hole: THREE.Vector3, turn: THREE.Quaternion, fist: THREE.Vector3, facing: THREE.Object3D): void {
     facing.updateWorldMatrix(true, false);
     const right = posing.right.setFromMatrixColumn(facing.matrixWorld, 0).normalize();
     const back = posing.back.setFromMatrixColumn(facing.matrixWorld, 2).normalize();
     const pole = this.bones.upperArmL.getWorldPosition(posing.pole);
     pole.addScaledVector(UP, -ELBOW_POLE.down).addScaledVector(right, -ELBOW_POLE.out).addScaledVector(back, ELBOW_POLE.back);
-    this.reachWrist("L", target, pole);
+    this.closeFist("L", hole, turn, fist, pole);
+  }
+
+  /**
+   * Closes one fist round a world point: the hand takes the world rotation `turn`, and its wrist is
+   * brought by two-bone IK (the elbow bending toward the world point `pole`) to where that turned
+   * hand has `fist`, the fist's middle in the hand's frame, on the point.
+   */
+  closeFist(side: Side, hole: THREE.Vector3, turn: THREE.Quaternion, fist: THREE.Vector3, pole: THREE.Vector3): void {
+    const hand = this.arms[side].hand;
+    const reach = fisting.wrist.copy(fist).multiplyScalar(hand.getWorldScale(fisting.size).x).applyQuaternion(turn);
+    this.reachWrist(side, reach.subVectors(hole, reach), pole);
+    this.orientHand(side, turn);
   }
 
   /** Brings one wrist to a world point by two-bone IK, the elbow bending toward the world point `pole`. */
@@ -417,6 +513,33 @@ export class Rig {
     else twist.normalize();
     forearm.quaternion.multiply(twist);
     hand.quaternion.copy(twist.invert().multiply(local));
+  }
+
+  /**
+   * The way the palm on `side` faces, in the world: square to it from its knuckles (along the palm
+   * from the wrist to the middle knuckle, across it from the little knuckle to the index one). For
+   * the benches that check a hand is turned to hold its gun; it allocates.
+   */
+  palmFacing(side: Side): THREE.Vector3 {
+    const knuckle = (name: string) => this.model.getObjectByName(`${name}${side}2`)!.getWorldPosition(new THREE.Vector3());
+    const along = knuckle("middle").sub(this.arms[side].hand.getWorldPosition(new THREE.Vector3()));
+    const facing = along.cross(knuckle("index").sub(knuckle("pinky"))).normalize();
+    // The left hand is the right one's mirror image, so the same product points out of the left
+    // palm and out of the back of the right hand.
+    return side === "L" ? facing : facing.negate();
+  }
+
+  /**
+   * How far the wrist on `side` bends from straight, in radians: the angle between the forearm's
+   * length (its joint to the wrist) and the line through the hand that lay along it as loaded. The
+   * hand's roll about the forearm is no bend and doesn't count. For the benches that check a hand
+   * holds its weapon naturally; it allocates.
+   */
+  wristBend(side: Side): number {
+    const hand = this.arms[side].hand;
+    const forearm = hand.position.clone().normalize();
+    const carried = forearm.clone().applyQuaternion(this.straightWrist[side]).applyQuaternion(hand.quaternion);
+    return forearm.angleTo(carried);
   }
 
   /** The head grows or shrinks about its joint, the base of the server's head box. */

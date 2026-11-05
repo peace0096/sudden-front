@@ -223,6 +223,73 @@ body {
   accent-color: var(--accent);
 }
 
+/* The create form and the personal settings share the narrow right-hand column. */
+.side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings h2 {
+  margin-bottom: 12px;
+}
+
+/* Mouse sensitivity: label, slider, number box and reset in one row, in the lobby and on the pause screen. */
+.sensitivity {
+  display: flex;
+  align-items: center;
+  gap: 8px 10px;
+  text-align: left;
+}
+
+.sensitivity-label {
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sensitivity input[type="range"] {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sensitivity input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.sensitivity .field {
+  flex: none;
+  width: 64px;
+  padding: 6px 4px 6px 8px;
+  font: 700 14px var(--num-font);
+  /* The HUD turns text selection off, which Safari takes to mean no typing in a field either. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.sensitivity .btn {
+  flex: none;
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* The lobby column is too narrow for one row, so the label gets a line of its own. */
+.settings .sensitivity {
+  flex-wrap: wrap;
+}
+
+.settings .sensitivity-label {
+  flex-basis: 100%;
+}
+
 .teams {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -241,6 +308,20 @@ body {
 
 .team.blue h3 {
   color: var(--blue);
+}
+
+/* A free-for-all room: one block over both team columns. Its ten seats run 1-5 down the left and
+   6-10 down the right, as tall as a team room's, so the actions below stay in view. */
+.team.ffa {
+  grid-column: 1 / -1;
+}
+
+.team.ffa .seats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(5, auto);
+  grid-auto-flow: column;
+  column-gap: 12px;
 }
 
 .slot {
@@ -299,6 +380,27 @@ body {
   font-weight: 700;
 }
 
+/* A player who pressed ready, in the waiting room. */
+.ready-tag {
+  flex: none;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: #3f9b52;
+  color: #f2fff4;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* The ready toggle: green while ready, so the press to take it back reads as such. */
+.btn.ready-btn.on {
+  background: linear-gradient(#4ea862, #33803f);
+  border-color: #7fd08f;
+}
+
+.btn.ready-btn.on:hover:not(:disabled) {
+  background: linear-gradient(#58b76c, #3a8d47);
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -328,6 +430,12 @@ body {
   .columns,
   .teams {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .team.ffa .seats {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-auto-flow: row;
   }
 
   .room-row {
@@ -403,6 +511,36 @@ body {
   color: #d0e6ff;
 }
 
+/* Free-for-all: my kills, and the most any other player has. No team colour tells the two sides
+   apart, so each says whose count it is. */
+.score.me {
+  background: linear-gradient(90deg, rgba(231, 164, 44, 0.75), transparent);
+  color: #ffe3a6;
+}
+
+.score.rival {
+  background: linear-gradient(270deg, rgba(190, 48, 32, 0.8), transparent);
+  color: #ffd0c8;
+}
+
+.score.me::before,
+.score.rival::after {
+  font-size: 11px;
+  letter-spacing: 1px;
+  vertical-align: middle;
+  opacity: 0.8;
+}
+
+.score.me::before {
+  content: "ME";
+  margin-right: 6px;
+}
+
+.score.rival::after {
+  content: "RIVAL";
+  margin-left: 6px;
+}
+
 .score.target {
   color: #f0d990;
   font-size: 19px;
@@ -443,6 +581,16 @@ body {
 
 .name.blue {
   color: #9fcbff;
+}
+
+/* Free-for-all names have no team: one colour, and mine stands out. */
+.name.ffa {
+  color: var(--text);
+}
+
+.name.me {
+  color: #ffd97a;
+  font-weight: 700;
 }
 
 .gun-icon {
@@ -805,6 +953,99 @@ body {
   border-top: 1px solid #4a4c44;
 }
 
+/* Tab: the keys and, in an augment match, the augments in hand, under the score lists. */
+.board-help {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px 24px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #4a4c44;
+}
+
+.board-help-title {
+  margin-bottom: 8px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.board-key-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+
+.board-key-list .key {
+  color: var(--text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.board-key-list .action {
+  color: var(--muted);
+}
+
+.board-augment {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--grade);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.board-augment.silver {
+  --grade: #c3cbd2;
+}
+
+.board-augment.gold {
+  --grade: #e7a42c;
+}
+
+.board-augment.prism {
+  --grade: #c58bff;
+}
+
+.board-augment-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.board-augment-name {
+  font-weight: 700;
+}
+
+.board-augment-grade {
+  color: var(--grade);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.board-augment-desc,
+.board-augment-none {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+/* Free-for-all: one ranked list over both columns, the rank in front. */
+.board-team.ffa {
+  grid-column: 1 / -1;
+}
+
+.board-team.ffa .board-row {
+  grid-template-columns: 40px minmax(0, 1fr) 40px 44px;
+}
+
+.board-row .r {
+  font-family: var(--num-font);
+}
+
 .pause {
   position: absolute;
   inset: 0;
@@ -828,6 +1069,22 @@ body {
 .pause-keys {
   color: #d3d2c0;
   font-size: 14px;
+}
+
+/* Pinned to the bottom edge. An absolute box takes no part in the centred title/keys/leave column,
+   so it neither shifts that stack nor covers the middle of the screen, where a click resumes. */
+.pause-settings {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 32px;
+  width: min(520px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 10px 14px;
+  background: rgba(24, 26, 24, 0.9);
+  border: 1px solid #72746a;
+  pointer-events: auto;
+  cursor: default;
 }
 
 /* ----------------------------- Weapons ----------------------------- */
@@ -932,10 +1189,12 @@ body {
   font-size: 12px;
 }
 
+/* The first layer is drawn on top: a red dot where the crosshair lines cross, over the lines and the dark edge. */
 .scope {
   position: absolute;
   inset: 0;
   background:
+    radial-gradient(circle at center, #ff2a1f 0 3px, transparent 3.6px),
     linear-gradient(#000, #000) center / 100% 1px no-repeat,
     linear-gradient(#000, #000) center / 1px 100% no-repeat,
     radial-gradient(circle at center, transparent 0 41vh, #000 41.4vh);
@@ -999,6 +1258,12 @@ body {
   color: #1a1407;
   background: var(--accent);
   font-weight: 700;
+}
+
+/* Slot 4 with no grenade left to throw. */
+.slot-chip.spent {
+  color: #6c6c60;
+  text-decoration: line-through;
 }
 
 .augment-offer {
@@ -1165,14 +1430,22 @@ body {
   display: none;
 }
 
-.kill-target {
+/* The host's settings for the next match, above the room's buttons. */
+.room-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 22px;
+  margin-top: 12px;
+}
+
+.room-option {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-right: 8px;
 }
 
-.kill-target-select {
+.room-option .field {
   width: auto;
   padding: 7px 10px;
 }
@@ -1283,4 +1556,276 @@ body {
   padding-left: 18px;
   color: var(--red);
   overflow-wrap: anywhere;
+}
+
+/* ---------------------------- Kill banner ---------------------------- */
+
+/* Top centre, under the score bar: what my last kill was, with its emblems, popping in and fading. */
+.kill-banner {
+  position: absolute;
+  top: 11%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 64px 10px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.28) 45%, transparent 72%);
+  white-space: nowrap;
+  --title-top: #fff8df;
+  --title-mid: #f5c451;
+  --title-low: #b9741c;
+  --glow: rgba(255, 176, 48, 0.5);
+}
+
+.kill-banner.show {
+  animation: kb-life 2.4s ease-out both;
+}
+
+.kill-banner.tier-2 {
+  --title-mid: #ffc23d;
+  --glow: rgba(255, 184, 40, 0.6);
+}
+
+.kill-banner.tier-3 {
+  --title-top: #fff1c9;
+  --title-mid: #ff9f2e;
+  --title-low: #b4500f;
+  --glow: rgba(255, 140, 30, 0.62);
+}
+
+.kill-banner.tier-4 {
+  --title-top: #ffe6c2;
+  --title-mid: #ff7a2a;
+  --title-low: #a8320d;
+  --glow: rgba(255, 106, 30, 0.68);
+}
+
+.kill-banner.tier-5 {
+  --title-top: #ffe0d0;
+  --title-mid: #ff4b36;
+  --title-low: #8d1408;
+  --glow: rgba(255, 60, 40, 0.75);
+}
+
+.kill-banner.headshot-kill {
+  --title-top: #ffe2dc;
+  --title-mid: #ff4433;
+  --title-low: #8a0f07;
+  --glow: rgba(255, 40, 30, 0.7);
+}
+
+.kb-emblem {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 86px;
+  filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.65)) drop-shadow(0 0 10px var(--glow));
+}
+
+.kb-emblem svg {
+  animation: kb-slam 0.34s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+  animation-delay: calc(var(--i, 0) * 75ms);
+}
+
+.kb-bullet {
+  width: calc(var(--bullet-height, 64px) / 3);
+  height: var(--bullet-height, 64px);
+}
+
+.kb-skull {
+  width: 84px;
+  height: 84px;
+}
+
+/* Beside cartridges, a skull marks the kill that was a headshot. */
+.kb-bullet ~ .kb-skull {
+  width: 52px;
+  height: 52px;
+  margin-left: 4px;
+}
+
+.headshot-kill .kb-skull {
+  animation-name: kb-slam, kb-shake;
+  animation-duration: 0.34s, 0.4s;
+  animation-delay: 0s, 0.34s;
+}
+
+.kb-title {
+  position: relative;
+  padding: 0 6px;
+  font: italic 900 46px var(--num-font);
+  letter-spacing: 3px;
+  line-height: 1;
+  color: transparent;
+  background: linear-gradient(var(--title-top), var(--title-mid) 55%, var(--title-low));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-stroke: 1.5px rgba(26, 12, 2, 0.9);
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.75)) drop-shadow(0 0 16px var(--glow));
+}
+
+/* A stamped bar on each side of the title. */
+.kb-title::before,
+.kb-title::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 46px;
+  height: 5px;
+  margin-top: -2px;
+  background: linear-gradient(90deg, transparent, var(--title-mid));
+  transform: skewX(-24deg);
+}
+
+.kb-title::before {
+  right: 100%;
+  margin-right: 10px;
+}
+
+.kb-title::after {
+  left: 100%;
+  margin-left: 10px;
+  background: linear-gradient(270deg, transparent, var(--title-mid));
+}
+
+.kb-sub {
+  padding: 1px 12px;
+  color: #fff1ec;
+  background: linear-gradient(#e2372a, #8f150c);
+  border: 1px solid #ff8b7c;
+  font: italic 800 15px var(--num-font);
+  letter-spacing: 3px;
+  box-shadow: 0 0 12px rgba(255, 50, 30, 0.6);
+}
+
+/* Who fell: their name in the kill feed's colours, on a dark plate edged in the banner's colour. */
+.kb-victim {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 420px;
+  margin-top: 2px;
+  padding: 3px 14px;
+  background: rgba(0, 0, 0, 0.55);
+  border-left: 3px solid var(--title-mid);
+  border-right: 3px solid var(--title-mid);
+  font-family: var(--ui-font);
+  text-shadow: 0 1px 2px #000;
+  animation: kb-name 0.3s ease-out 0.12s both;
+}
+
+.kb-victim-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.kb-victim-name.red {
+  color: #ff9d90;
+}
+
+.kb-victim-name.blue {
+  color: #9fcbff;
+}
+
+.kb-victim-name.ffa {
+  color: var(--text);
+}
+
+.kb-victim-label {
+  flex: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+@keyframes kb-name {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes kb-life {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.7);
+  }
+  8% {
+    opacity: 1;
+    transform: translateX(-50%) scale(0.94);
+  }
+  14% {
+    transform: translateX(-50%) scale(1.03);
+  }
+  19%,
+  80% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px) scale(1);
+  }
+}
+
+@keyframes kb-slam {
+  from {
+    opacity: 0;
+    transform: translateY(-26px) scale(1.7) rotate(-14deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes kb-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  25% {
+    transform: translateX(-3px) rotate(-4deg);
+  }
+  50% {
+    transform: translateX(3px) rotate(4deg);
+  }
+  75% {
+    transform: translateX(-2px) rotate(-2deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kill-banner.show {
+    animation-name: kb-fade;
+  }
+
+  .kb-emblem svg,
+  .headshot-kill .kb-skull,
+  .kb-victim {
+    animation: none;
+  }
+}
+
+@keyframes kb-fade {
+  0%,
+  80% {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%);
+  }
 }

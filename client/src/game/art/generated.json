@@ -12,6 +12,18 @@
         }
       ]
     },
+    "characters/swat-neutral.glb": {
+      "hash": "c33aa3ed5638489b",
+      "sha256": "c33aa3ed5638489bd56f000f4c46a95ee1667ca60f1b0cd9628454f7e322f247",
+      "bytes": 332152,
+      "triangles": 4790,
+      "images": [
+        {
+          "width": 16,
+          "height": 4
+        }
+      ]
+    },
     "characters/swat-red.glb": {
       "hash": "2e5c1d3732924776",
       "sha256": "2e5c1d37329247763b50b0ee7a11644e5cf5a6d6b77729eee0a95034aa16c0bd",
@@ -104,10 +116,22 @@
         }
       ]
     },
+    "weapons/grenade.glb": {
+      "hash": "ed6db07edfe0ca2c",
+      "sha256": "ed6db07edfe0ca2c2b4b29ddf33ef8f56753cb2277f5606866e526217ffeae06",
+      "bytes": 9384,
+      "triangles": 430,
+      "images": [
+        {
+          "width": 32,
+          "height": 4
+        }
+      ]
+    },
     "weapons/knife.glb": {
-      "hash": "1b0bcd7f4dda75bc",
-      "sha256": "1b0bcd7f4dda75bc62dc3d69581f80734a88026491127d817702b4c9d78bd4c2",
-      "bytes": 7984,
+      "hash": "0e2f6ca7991ac86b",
+      "sha256": "0e2f6ca7991ac86b59a1ee348e578d6f83812cf83b8d8a76410736dce1257f6a",
+      "bytes": 8276,
       "triangles": 687,
       "images": [
         {

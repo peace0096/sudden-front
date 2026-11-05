@@ -1,10 +1,13 @@
 import * as THREE from "three";
 import {
   Augment,
+  GameMode,
   HitZone,
   MapId,
+  MatchType,
   Team,
   type GameConfig,
+  type Grenade,
   type MapBox,
   type MatchEnd,
   type MatchStart,
@@ -18,6 +21,7 @@ import {
 } from "../gen/game_pb";
 import { WEAPON_ORDER } from "../weapons";
 import type { Connection } from "../net";
+import { mouseSensitivity } from "../settings";
 import { loadedArt, releaseGpu } from "./art/loader";
 import { projectileArt } from "./art/manifest";
 import { toLambert } from "./art/materials";
@@ -26,17 +30,23 @@ import { GameAudio } from "./audio";
 import { Character, releaseCharacterGpu, setCharacterView } from "./character";
 import { Effects } from "./effects";
 import { Hud, type RadarBlip } from "./hud";
-import { applyMove, CMD_DT, rayBox, rayWorld, type Vec2 } from "./movement";
+import { applyMove, CMD_DT, rayBox, rayWorld, type Body } from "./movement";
 import { PerfMeter, type PerfStats } from "./perf";
 import { ViewModel } from "./viewmodel";
 import { buildWorld, disposeWorld } from "./world";
 
+// Radians per pixel at a sensitivity setting of 1; the player's multiplier (settings.ts) scales it.
 const MOUSE_SENSITIVITY = 0.0022;
 const MAX_PITCH = 1.45;
 const INTERP_TICKS = 3;
 const CMDS_PER_PACKET = 2;
 const ENEMY_BLIP_SECONDS = 1.6;
 const STEP_INTERVAL = 0.42;
+/** Other players' footsteps are heard this far (m); a crouch walks silently. */
+const FOOTSTEP_RANGE = 30;
+/** Mouse wheel: how much scrolling (pixels) switches one weapon, and the least time between switches (ms). */
+const WHEEL_STEP = 40;
+const WHEEL_GAP_MS = 120;
 const BASE_FOV = 72;
 const SCOPE_FOV = 16;
 const BLOOM_DECAY = 0.09;
@@ -53,10 +63,10 @@ const VEST_MAX_HP = 200;
 // Lock API, which needs fullscreen and a secure context.
 const LOCKED_KEYS = ["KeyW", "KeyA", "KeyS", "KeyD", "KeyR"];
 const RECOIL_PER_SHOT: Record<number, { up: number; side: number }> = {
-  [WeaponKind.RIFLE]: { up: 0.012, side: 0.005 },
+  [WeaponKind.RIFLE]: { up: 0.0075, side: 0.003 },
   [WeaponKind.SNIPER]: { up: 0.06, side: 0.01 },
   [WeaponKind.MACHINE_GUN]: { up: 0.008, side: 0.006 },
-  [WeaponKind.SMG]: { up: 0.008, side: 0.005 },
+  [WeaponKind.SMG]: { up: 0.005, side: 0.003 },
   [WeaponKind.AKIMBO_SMG]: { up: 0.007, side: 0.006 },
   [WeaponKind.PISTOL]: { up: 0.022, side: 0.006 },
   [WeaponKind.PISTOL_PLUS]: { up: 0, side: 0.005 },
@@ -72,6 +82,19 @@ const BURST_RECOVERY = 0.2;
 const BURST_ROUNDS = 3;
 /** How far out from the camera the local player's tracers start, on the line through the gun's muzzle on screen. */
 const LOCAL_TRACER_START = 1.2;
+/**
+ * Commands that still carry the trigger after a throw is predicted: the server may find the
+ * grenade drawn a tick later than this client did. The gun that comes back takes longer than this
+ * to draw (the grenade's fire interval), so the held trigger never fires it.
+ */
+const THROW_HOLD = 8;
+/** A grenade's speed change between two snapshots (m/s) past which it hit something and clinks. */
+const GRENADE_CLINK = 2.5;
+/** How far ahead of the last snapshot (s) a grenade is drawn, at most; and how low, over the floor (m). */
+const GRENADE_AHEAD = 0.1;
+const GRENADE_FLOOR = 0.05;
+/** Seconds within which a kill of mine follows the last to count as the next in a row (DOUBLE KILL...). */
+const KILL_STREAK_WINDOW = 4;
 
 interface PendingCmd {
   seq: number;
@@ -82,6 +105,8 @@ interface PendingCmd {
   yaw: number;
   /** Move speed of the weapon held for this command, so a replay matches it. */
   speed: number;
+  /** Space held: a jump, if standing. */
+  jump: boolean;
 }
 
 interface MissileView {
@@ -91,9 +116,22 @@ interface MissileView {
   trail: number;
 }
 
+interface GrenadeView {
+  object: THREE.Object3D;
+  data: Grenade;
+  /** When `data` came, s. */
+  at: number;
+  /** It tumbles about this axis while it moves. */
+  spin: THREE.Vector3;
+  angle: number;
+}
+
 interface Sample {
   tick: number;
   x: number;
+  /** Feet height above the floor, and the vertical speed (0 while standing). */
+  y: number;
+  vy: number;
   z: number;
   yaw: number;
   pitch: number;
@@ -106,8 +144,12 @@ interface Remote {
   samples: Sample[];
   state: PlayerState | null;
   shownX: number;
+  shownY: number;
   shownZ: number;
   lastFired: number;
+  /** Seconds to their next footstep, and whether they were in the air (for a landing's thud). */
+  stepTimer: number;
+  airborne: boolean;
   /** The server's hitboxes around the player, under ?debug&hitbox. */
   hitbox: HitboxFrame | null;
 }
@@ -133,7 +175,11 @@ export class Game {
   private readonly audio = new GameAudio();
   private readonly hud: Hud;
   private readonly config: GameConfig;
+  /** A free-for-all match: no teams, and every other player is an enemy. Set from the config in the constructor. */
+  private readonly ffa: boolean;
   private readonly boxes: MapBox[];
+  /** The arena being played, which the host chose in the waiting room. */
+  private readonly mapId: MapId;
   private readonly myId: number;
   private readonly weapons: Map<WeaponKind, WeaponStats>;
   private weaponKind = WeaponKind.RIFLE;
@@ -150,6 +196,14 @@ export class Game {
   private localBurst = 0;
   private stunned = false;
   private readonly missiles = new Map<number, MissileView>();
+  private readonly grenades = new Map<number, GrenadeView>();
+  /** The grenade drawn when its model did not load. */
+  private readonly grenadeBall = new THREE.SphereGeometry(0.034, 10, 8);
+  private readonly grenadeSkin = new THREE.MeshLambertMaterial({ color: 0x4f5d2f });
+  /** Grenades left to throw (slot 4), the slot a throw goes back to, and commands still to carry a throw's trigger. */
+  private grenadesLeft = 0;
+  private slotBeforeGrenade = 1;
+  private throwHold = 0;
   private readonly missileBody = new THREE.CylinderGeometry(0.11, 0.11, 0.65, 10);
   private readonly missileNose = new THREE.ConeGeometry(0.11, 0.2, 10);
   private readonly missileSkin = new THREE.MeshLambertMaterial({ color: 0xc8ccc0 });
@@ -186,8 +240,13 @@ export class Game {
 
   // Local player: predicted position, previous step for render smoothing, and
   // the leftover visual error after a server correction.
-  private pos: Vec2 = { x: 0, z: 0 };
-  private prev: Vec2 = { x: 0, z: 0 };
+  private pos: Body = { x: 0, y: 0, z: 0, vy: 0 };
+  private prev: Body = { x: 0, y: 0, z: 0, vy: 0 };
+  /** Whether we were in the air last frame, for a landing's thud. */
+  private airborne = false;
+  /** Mouse wheel scrolling not yet turned into a weapon switch, and when the last switch was. */
+  private wheelAccum = 0;
+  private wheelAt = 0;
   private errX = 0;
   private errZ = 0;
   private yaw = 0;
@@ -220,6 +279,9 @@ export class Game {
   private recoil = 0;
   private recoilYaw = 0;
   private killerName: string | null = null;
+  /** My kills in a row, each within KILL_STREAK_WINDOW of the one before, and when the last came (s). */
+  private killStreak = 0;
+  private lastKillAt = -Infinity;
   private stepTimer = 0;
   private movingNow = false;
   private pingTimer = 0;
@@ -231,6 +293,7 @@ export class Game {
   private readonly onResize = () => this.resize();
   private readonly onKeyDown = (event: KeyboardEvent) => this.keyDown(event);
   private readonly onKeyUp = (event: KeyboardEvent) => this.keyUp(event);
+  private readonly onWheel = (event: WheelEvent) => this.wheel(event);
   private readonly onMouseMove = (event: MouseEvent) => this.mouseMove(event);
   private readonly onMouseDown = (event: MouseEvent) => {
     if (event.button === 0 && this.locked) this.trigger = true;
@@ -255,8 +318,10 @@ export class Game {
     private readonly connection: Connection,
   ) {
     this.config = start.config!;
+    this.ffa = this.config.matchType === MatchType.FREE_FOR_ALL;
     this.viewEye = this.config.eyeHeight;
     this.boxes = start.map!.boxes;
+    this.mapId = start.map!.id;
     this.myId = start.yourId;
     this.weapons = new Map(this.config.weapons.map((w) => [w.kind, w]));
 
@@ -273,7 +338,7 @@ export class Game {
     gameRoot.append(this.renderer.domElement);
 
     this.world = buildWorld(this.scene, start.map!);
-    this.effects = new Effects(this.scene, this.boxes, { indoor: start.map!.id === MapId.WAREHOUSE });
+    this.effects = new Effects(this.scene, this.boxes, { indoor: this.mapId === MapId.WAREHOUSE });
     this.scene.add(this.camera);
 
     this.hud = new Hud(
@@ -282,6 +347,8 @@ export class Game {
       () => this.connection.send({ case: "leaveRoom", value: {} }),
       () => this.requestLock(),
     );
+    this.hud.setFfa(this.ffa);
+    this.hud.setAugmentMode(this.config.mode === GameMode.AUGMENT);
     this.hud.setKillTarget(this.config.killsToWin);
     this.hud.renderBoard([], 0, 0, this.myId);
 
@@ -295,6 +362,7 @@ export class Game {
     window.addEventListener("keyup", this.onKeyUp);
     window.addEventListener("mousemove", this.onMouseMove);
     window.addEventListener("mousedown", this.onMouseDown);
+    window.addEventListener("wheel", this.onWheel, { passive: false });
     window.addEventListener("mouseup", this.onMouseUp);
     window.addEventListener("contextmenu", this.onContextMenu);
     window.addEventListener("blur", this.onBlur);
@@ -305,7 +373,18 @@ export class Game {
   }
 
   private updateSlots(): void {
-    this.hud.setSlots(this.primaryKind, this.sidearmKind, this.weaponKind);
+    this.hud.setSlots(this.primaryKind, this.sidearmKind, this.weaponKind, this.grenadesLeft);
+  }
+
+  /** What a slot (1 to 4) holds now. */
+  private slotKind(slot: number): WeaponKind {
+    return slot === 1 ? this.primaryKind : slot === 2 ? this.sidearmKind : slot === 3 ? WeaponKind.KNIFE : WeaponKind.GRENADE;
+  }
+
+  /** The slot (1 to 4) of the weapon in hand. */
+  private currentSlot(): number {
+    if (this.weaponKind === WeaponKind.GRENADE) return 4;
+    return this.weaponKind === this.primaryKind ? 1 : this.weaponKind === this.sidearmKind ? 2 : 3;
   }
 
   private reloadTime(): number {
@@ -316,6 +395,14 @@ export class Game {
 
   private has(augment: Augment): boolean {
     return this.myActive.includes(augment);
+  }
+
+  /**
+   * A teammate. Nobody is in a free-for-all match, where every team is UNSPECIFIED (mine too), so
+   * every other player follows the enemy rules: Wallhack, names, radar.
+   */
+  private isAlly(entry: RosterEntry): boolean {
+    return !this.ffa && entry.team === this.myTeam;
   }
 
   private stats(): WeaponStats {
@@ -454,11 +541,19 @@ export class Game {
     if (!this.locked) {
       this.keys.clear();
       this.trigger = false;
+    } else if (document.activeElement instanceof HTMLElement) {
+      // A settings field left focused would keep the keys (keyDown ignores what is typed into one).
+      document.activeElement.blur();
     }
     this.hud.setPaused(!this.locked && !this.matchOver && !this.menuOpen && !this.offerOpen);
   }
 
   private keyDown(event: KeyboardEvent): void {
+    // Typing in a settings field (a "b", Tab, digits) is not a game command, and Tab on a focused
+    // button moves on to the next control instead of showing the scoreboard.
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+    if (event.code === "Tab" && target instanceof HTMLButtonElement) return;
     if (event.code === "Tab") {
       event.preventDefault();
       if (!this.boardLocked) {
@@ -484,12 +579,29 @@ export class Game {
       return;
     }
     if (!this.locked) return;
-    // Ctrl is crouch here, so Ctrl+S and friends must not reach the browser.
-    if (event.ctrlKey) event.preventDefault();
+    // Ctrl is crouch here, so Ctrl+S and friends must not reach the browser; Space jumps, never presses a button.
+    if (event.ctrlKey || event.code === "Space") event.preventDefault();
     this.keys.add(event.code);
     if (event.code === "KeyR" && !event.repeat) this.reloadQueued = true;
-    const slot = /^Digit([1-3])$/.exec(event.code);
+    const slot = /^Digit([1-4])$/.exec(event.code);
     if (slot && !event.repeat) this.slotQueued = Number(slot[1]);
+  }
+
+  /** The mouse wheel switches weapons: down for the next slot, up for the previous, round again. */
+  private wheel(event: WheelEvent): void {
+    if (!this.locked || this.menuOpen || this.offerOpen) return;
+    event.preventDefault();
+    // A notched wheel sends a big step a click, a trackpad many small ones: they add up here.
+    this.wheelAccum += event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * WHEEL_STEP : event.deltaY;
+    const now = performance.now();
+    if (Math.abs(this.wheelAccum) < WHEEL_STEP || now - this.wheelAt < WHEEL_GAP_MS) return;
+    const step = Math.sign(this.wheelAccum);
+    this.wheelAccum = 0;
+    this.wheelAt = now;
+    // The grenade's slot is in the round only while there is one to throw.
+    const slots = this.grenadesLeft > 0 ? 4 : 3;
+    const current = Math.min(this.currentSlot(), slots);
+    this.slotQueued = ((current - 1 + step + slots) % slots) + 1;
   }
 
   private keyUp(event: KeyboardEvent): void {
@@ -504,7 +616,7 @@ export class Game {
   private mouseMove(event: MouseEvent): void {
     if (!this.locked) return;
     // Slower while zoomed so the same hand movement covers the same screen distance.
-    const sensitivity = MOUSE_SENSITIVITY * (this.camera.fov / BASE_FOV);
+    const sensitivity = MOUSE_SENSITIVITY * mouseSensitivity() * (this.camera.fov / BASE_FOV);
     this.yaw -= event.movementX * sensitivity;
     this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch - event.movementY * sensitivity));
   }
@@ -526,7 +638,7 @@ export class Game {
     for (const entry of roster) {
       if (entry.id === this.myId || this.remotes.has(entry.id)) continue;
       const character = new Character(entry.name, entry.team);
-      if (entry.team !== this.myTeam) character.enableXray();
+      if (!this.isAlly(entry)) character.enableXray();
       this.scene.add(character.root);
       const hitbox = this.showHitboxes ? hitboxFrame() : null;
       if (hitbox) this.scene.add(hitbox.group);
@@ -536,7 +648,10 @@ export class Game {
         samples: [],
         state: null,
         shownX: 0,
+        shownY: 0,
         shownZ: 0,
+        stepTimer: 0,
+        airborne: false,
         lastFired: -100,
         hitbox,
       });
@@ -554,12 +669,17 @@ export class Game {
     this.frozen = snapshot.freezeLeft > 0;
     this.syncOffer(snapshot);
     this.syncMissiles(snapshot.missiles);
+    this.syncGrenades(snapshot.grenades);
 
-    // Ammo fields describe the weapon in hand, so skip them until a switch lands.
+    // Ammo fields describe the weapon in hand, so skip them until a switch lands; a throw switches too.
     if (snapshot.lastInputSeq >= this.pendingSlotSeq) {
       this.magazine = snapshot.magazine;
       this.reserve = snapshot.reserve;
       this.reloadRemaining = snapshot.reloadRemaining;
+      if (snapshot.grenadesLeft !== this.grenadesLeft) {
+        this.grenadesLeft = snapshot.grenadesLeft;
+        this.updateSlots();
+      }
     }
     if (snapshot.primaryWeapon && snapshot.primaryWeapon !== this.primaryKind) {
       this.primaryKind = snapshot.primaryWeapon;
@@ -581,11 +701,22 @@ export class Game {
       remote.state = player;
       remote.character.setWeapon(player.weapon);
       remote.character.setLook(player.headScale, player.shieldHp > 0 && player.weapon === WeaponKind.PISTOL, player.stunLeft > 0);
-      remote.samples.push({ tick: snapshot.tick, x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, crouching: player.crouching });
+      remote.samples.push({ tick: snapshot.tick, x: player.x, y: player.y, vy: player.vy, z: player.z, yaw: player.yaw, pitch: player.pitch, crouching: player.crouching });
       if (remote.samples.length > 40) remote.samples.shift();
     }
 
-    this.hud.setScore(snapshot.redScore, snapshot.blueScore);
+    if (this.ffa) {
+      // The team scores stay 0: my kills, against the most any other player has.
+      let mine = 0;
+      let rival = 0;
+      for (const player of snapshot.players) {
+        if (player.id === this.myId) mine = player.kills;
+        else rival = Math.max(rival, player.kills);
+      }
+      this.hud.setScore(mine, rival);
+    } else {
+      this.hud.setScore(snapshot.redScore, snapshot.blueScore);
+    }
     this.hud.setClock(snapshot.clock);
     this.hud.setAmmo(
       this.magazine,
@@ -595,6 +726,8 @@ export class Game {
       this.stats().meleeRange > 0,
       this.has(Augment.INFINITE_AMMO),
       Math.floor(this.stats().magazine / 6),
+      // A grenade in hand counts the grenades; there is no reserve, Infinite Ammo or not.
+      this.weaponKind === WeaponKind.GRENADE,
     );
 
     for (const { event } of snapshot.events) {
@@ -621,6 +754,15 @@ export class Game {
             this.scopeOn = false;
           }
           break;
+        case "grenadeThrown": {
+          // Our own throw played when it was made.
+          const remote = this.remotes.get(event.value.playerId);
+          if (!remote || event.value.playerId === this.myId) break;
+          remote.character.throwGrenade();
+          const { distance, pan } = this.relative(remote.shownX, remote.shownZ);
+          this.audio.grenadeThrow(distance, pan);
+          break;
+        }
         default:
           break;
       }
@@ -659,7 +801,7 @@ export class Game {
       this.pitch = me.pitch;
       this.recoil = 0;
       this.recoilYaw = 0;
-      this.pos = { x: me.x, z: me.z };
+      this.pos = { x: me.x, y: me.y, z: me.z, vy: me.vy };
       this.prev = { ...this.pos };
       this.errX = this.errZ = 0;
       this.pending = this.pending.filter((cmd) => cmd.seq > ackSeq);
@@ -670,7 +812,7 @@ export class Game {
     // Rewind to the authoritative state and replay what it hasn't processed.
     this.pending = this.pending.filter((cmd) => cmd.seq > ackSeq);
     const before = { ...this.pos };
-    const replay: Vec2 = { x: me.x, z: me.z };
+    const replay: Body = { x: me.x, y: me.y, z: me.z, vy: me.vy };
     if (me.alive) {
       for (const cmd of this.pending) applyMove(replay, cmd, this.boxes, this.config, cmd.speed);
     }
@@ -683,17 +825,20 @@ export class Game {
       this.errZ += dz;
     }
     this.pos = replay;
+    // A height correction is rare (a landing decided a step apart) and shows at once.
     this.prev = {
       x: this.prev.x - dx,
+      y: this.prev.y - (before.y - replay.y),
       z: this.prev.z - dz,
+      vy: replay.vy,
     };
   }
 
   private playerPosition(id: number): THREE.Vector3 | null {
-    if (id === this.myId) return new THREE.Vector3(this.pos.x, this.config.eyeHeight, this.pos.z);
+    if (id === this.myId) return new THREE.Vector3(this.pos.x, this.pos.y + this.config.eyeHeight, this.pos.z);
     const remote = this.remotes.get(id);
     if (!remote) return null;
-    return new THREE.Vector3(remote.shownX, this.config.eyeHeight, remote.shownZ);
+    return new THREE.Vector3(remote.shownX, remote.shownY + this.config.eyeHeight, remote.shownZ);
   }
 
   private onShot(shot: {
@@ -745,6 +890,22 @@ export class Game {
     this.audio.gunshot(remote.state?.weapon ?? WeaponKind.RIFLE, distance, pan);
   }
 
+  /**
+   * Another player's footsteps, by how far and which side they are: none crouched or in the air,
+   * and a thud when they land.
+   */
+  private remoteFootsteps(remote: Remote, sample: Sample, state: PlayerState, dt: number): void {
+    const airborne = sample.vy !== 0;
+    const { distance, pan } = this.relative(sample.x, sample.z);
+    if (remote.airborne && !airborne && distance < FOOTSTEP_RANGE) this.audio.land(distance, pan);
+    remote.airborne = airborne;
+    if (!state.moving || airborne || sample.crouching || distance > FOOTSTEP_RANGE) return;
+    remote.stepTimer -= dt;
+    if (remote.stepTimer > 0) return;
+    this.audio.footstep(distance, pan);
+    remote.stepTimer = STEP_INTERVAL;
+  }
+
   private relative(x: number, z: number): { distance: number; pan: number; angle: number } {
     const dx = x - this.pos.x;
     const dz = z - this.pos.z;
@@ -779,14 +940,27 @@ export class Game {
         killerTeam: killer.team,
         victim: victim.name,
         victimTeam: victim.team,
+        killerIsMe: killerId === this.myId,
+        victimIsMe: victimId === this.myId,
         headshot,
         weapon,
       });
     }
-    if (killerId === this.myId) this.hud.showHit(headshot, true);
+    if (killerId === this.myId) {
+      this.hud.showHit(headshot, true);
+      // The banner at the top: KILL or HEADSHOT, then DOUBLE KILL and on while they keep coming.
+      const now = performance.now() / 1000;
+      this.killStreak = now - this.lastKillAt <= KILL_STREAK_WINDOW ? this.killStreak + 1 : 1;
+      this.lastKillAt = now;
+      this.hud.showKillBanner(this.killStreak, headshot, victim ?? null);
+      this.audio.killStreak(this.killStreak, headshot);
+    }
     if (victimId === this.myId) {
       this.killerName = killer?.name ?? null;
       this.trigger = false;
+      // A run of kills ends with the life.
+      this.killStreak = 0;
+      this.lastKillAt = -Infinity;
     }
   }
 
@@ -798,11 +972,23 @@ export class Game {
     document.exitPointerLock();
     this.hud.setPaused(false);
     this.hud.hideDeath();
-    const victory = end.winner === this.myTeam;
-    const winnerLabel = end.winner === Team.RED ? "RED TEAM" : "BLUE TEAM";
+    let victory: boolean;
+    let result: string;
+    if (this.ffa) {
+      // Every team is UNSPECIFIED here, so comparing teams would make everyone the winner. The
+      // winner is the player winnerId names, a bot or not.
+      const winner = end.scoreboard.find((entry) => entry.id === end.winnerId);
+      victory = end.winnerId === this.myId;
+      // A win by forfeit, with everyone else gone, can come short of the target.
+      const reached = (winner?.kills ?? 0) >= this.config.killsToWin;
+      result = `${winner?.name ?? ""} 승리${reached ? ` · ${this.config.killsToWin}킬 달성` : ""}`;
+    } else {
+      victory = end.winner === this.myTeam;
+      result = `${end.winner === Team.RED ? "RED TEAM" : "BLUE TEAM"} 승리`;
+    }
     this.hud.renderBoard(end.scoreboard, end.redScore, end.blueScore, this.myId, {
       title: victory ? "VICTORY" : "DEFEAT",
-      subtitle: `${winnerLabel} 승리 · ${Math.round(end.returnIn)}초 후 대기실로 돌아갑니다`,
+      subtitle: `${result} · ${Math.round(end.returnIn)}초 후 대기실로 돌아갑니다`,
       victory,
     });
     this.hud.showBoard(true);
@@ -841,17 +1027,20 @@ export class Game {
     const movementAllowed = this.locked && this.alive && !this.matchOver && !this.frozen && !this.stunned;
     const held = (code: string) => movementAllowed && this.keys.has(code);
 
-    // Switch before moving: this command is simulated at the new weapon's speed.
-    const slot = this.alive && !this.frozen && !this.stunned ? this.slotQueued : 0;
+    // Switch before moving: this command is simulated at the new weapon's speed. The grenade's slot
+    // is nothing to switch to with none left, here and on the server.
+    let slot = this.alive && !this.frozen && !this.stunned ? this.slotQueued : 0;
     this.slotQueued = 0;
+    if (slot === 4 && this.grenadesLeft === 0) slot = 0;
     if (slot) {
-      const kind = slot === 1 ? this.primaryKind : slot === 2 ? this.sidearmKind : WeaponKind.KNIFE;
+      const kind = this.slotKind(slot);
       if (kind !== this.weaponKind) {
+        if (slot === 4) this.slotBeforeGrenade = this.currentSlot();
         const carried = this.fireCooldown;
         this.setWeapon(kind);
         this.fireCooldown = Math.max(carried, this.config.drawTime);
         this.reloadRemaining = 0;
-        this.pendingSlotSeq = this.seq + 1;
+        this.pendingSlotSeq = Math.max(this.pendingSlotSeq, this.seq + 1);
       }
     }
 
@@ -865,6 +1054,8 @@ export class Game {
       right: held("KeyD"),
       yaw: this.aimYaw(),
       speed: this.stats().moveSpeed * (this.crouching ? this.config.crouchSpeedFactor : 1),
+      // Held, so a press just before landing jumps as soon as the feet touch down.
+      jump: held("Space"),
     };
     if (this.alive) applyMove(this.pos, cmd, this.boxes, this.config, cmd.speed);
     this.movingNow = cmd.forward || cmd.back || cmd.left || cmd.right;
@@ -874,8 +1065,9 @@ export class Game {
     // Read before firing: a shot leaves from where the crosshair was, and its
     // recoil only moves the ones after it.
     const aimPitch = this.aimPitch();
-    // A burst finishes after the button is released.
-    const firing = (this.trigger || this.localBurst > 0) && movementAllowed;
+    // A burst finishes after the button is released, and a throw's trigger is held a little longer.
+    const firing = (this.trigger || this.localBurst > 0 || this.throwHold > 0) && movementAllowed;
+    if (this.throwHold > 0) this.throwHold--;
     if (firing) this.tryLocalFire();
 
     // Remote players are displayed in the past; the server rewinds to the same
@@ -899,6 +1091,7 @@ export class Game {
             aim: c.aim,
             slot: c.slot,
             crouch: c.crouch,
+            jump: c.jump,
             yaw: c.yaw,
             pitch: c.pitch,
             renderTick: c.renderTick,
@@ -912,6 +1105,10 @@ export class Game {
   private tryLocalFire(): void {
     if (this.fireCooldown > 0) return;
     const stats = this.stats();
+    if (this.weaponKind === WeaponKind.GRENADE) {
+      this.throwGrenade(stats);
+      return;
+    }
     if (this.reloadRemaining > 0 && !(stats.shellReload && this.magazine > 0)) return;
     if (stats.meleeRange > 0) {
       this.fireCooldown = stats.fireInterval;
@@ -946,7 +1143,7 @@ export class Game {
     }
 
     // Local tracer from the gun towards where the crosshair points, stopped by the map or the ground.
-    const eye: [number, number, number] = [this.pos.x, this.eyeHeight(), this.pos.z];
+    const eye: [number, number, number] = [this.pos.x, this.pos.y + this.eyeHeight(), this.pos.z];
     const dir = this.aimDirection();
     let t = rayWorld(this.boxes, eye, dir, 200) ?? 200;
     if (dir[1] < 0) t = Math.min(t, eye[1] / -dir[1]);
@@ -962,6 +1159,30 @@ export class Game {
     }
     if (noRecoil) return;
     this.kickAim();
+  }
+
+  /**
+   * Throws the grenade in hand, as the server will on this command: the throw plays, and the last
+   * one gone, the weapon held before it comes back, ready once the throw's fire interval is up.
+   * The trigger is let go, so a held button doesn't go on to fire that weapon.
+   */
+  private throwGrenade(stats: WeaponStats): void {
+    if (this.grenadesLeft === 0) return;
+    this.grenadesLeft--;
+    this.trigger = false;
+    this.throwHold = THROW_HOLD;
+    this.viewModel.throwGrenade();
+    this.audio.grenadeThrow(0, 0);
+    if (this.grenadesLeft > 0) {
+      this.fireCooldown = stats.fireInterval;
+      this.updateSlots();
+      return;
+    }
+    this.setWeapon(this.slotKind(this.slotBeforeGrenade));
+    this.fireCooldown = Math.max(stats.fireInterval, this.config.drawTime);
+    this.reloadRemaining = 0;
+    // Until the server has had the trigger's last command, its snapshots may still show the grenade.
+    this.pendingSlotSeq = Math.max(this.pendingSlotSeq, this.seq + THROW_HOLD);
   }
 
   /** Every shot throws the aim up and sideways, however long the trigger is held. */
@@ -1035,6 +1256,61 @@ export class Game {
     return group;
   }
 
+  /**
+   * Grenades come and go with the snapshots. One whose speed changed more than gravity's pull since
+   * the last snapshot hit something on the way, and clinks there.
+   */
+  private syncGrenades(list: Grenade[]): void {
+    const live = new Set(list.map((g) => g.id));
+    for (const [id, view] of this.grenades) {
+      if (!live.has(id)) {
+        view.object.removeFromParent();
+        this.grenades.delete(id);
+      }
+    }
+    const now = performance.now() / 1000;
+    for (const data of list) {
+      let view = this.grenades.get(data.id);
+      if (!view) {
+        const spin = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
+        if (spin.lengthSq() < 1e-6) spin.set(1, 0, 0);
+        view = { object: this.buildGrenade(), data, at: now, spin: spin.normalize(), angle: 0 };
+        this.scene.add(view.object);
+        this.grenades.set(data.id, view);
+      } else {
+        const change = Math.hypot(data.vx - view.data.vx, data.vy - view.data.vy, data.vz - view.data.vz);
+        if (change > GRENADE_CLINK) {
+          const { distance, pan } = this.relative(data.x, data.z);
+          this.audio.grenadeBounce(distance, pan, Math.min(1, change / 12));
+        }
+      }
+      view.data = data;
+      view.at = now;
+    }
+  }
+
+  /** The grenade in flight: the art's model (its middle at the origin), or a ball. */
+  private buildGrenade(): THREE.Object3D {
+    const art = projectileArt(WeaponKind.GRENADE);
+    const gltf = art && loadedArt()?.models.get(art.file);
+    if (!gltf) return new THREE.Mesh(this.grenadeBall, this.grenadeSkin);
+    const model = gltf.scene.clone();
+    toLambert(model);
+    return model;
+  }
+
+  /** Each grenade where its last snapshot puts it now, tumbling while it moves. */
+  private updateGrenades(dt: number, now: number): void {
+    for (const view of this.grenades.values()) {
+      const { data } = view;
+      const flown = Math.min(now - view.at, GRENADE_AHEAD);
+      view.object.position.set(data.x + data.vx * flown, Math.max(GRENADE_FLOOR, data.y + data.vy * flown), data.z + data.vz * flown);
+      const speed = Math.hypot(data.vx, data.vy, data.vz);
+      view.angle += dt * speed * 2.5;
+      view.object.quaternion.setFromAxisAngle(view.spin, view.angle);
+    }
+  }
+
   private updateMissiles(dt: number, now: number): void {
     for (const view of this.missiles.values()) {
       const { data } = view;
@@ -1080,6 +1356,8 @@ export class Game {
         return {
           tick: renderTick,
           x: a.x + (b.x - a.x) * f,
+          y: a.y + (b.y - a.y) * f,
+          vy: f < 0.5 ? a.vy : b.vy,
           z: a.z + (b.z - a.z) * f,
           yaw: a.yaw + shortestAngle(a.yaw, b.yaw) * f,
           pitch: a.pitch + (b.pitch - a.pitch) * f,
@@ -1090,11 +1368,11 @@ export class Game {
     return samples[0];
   }
 
-  /** Whether a straight line from our eye reaches a player's head without crossing the map. */
-  private canSeeHead(x: number, z: number, crouching: boolean): boolean {
-    const eye: [number, number, number] = [this.pos.x, this.eyeHeight(), this.pos.z];
+  /** Whether a straight line from our eye reaches the head of a player standing on `y` without crossing the map. */
+  private canSeeHead(x: number, y: number, z: number, crouching: boolean): boolean {
+    const eye: [number, number, number] = [this.pos.x, this.pos.y + this.eyeHeight(), this.pos.z];
     const dx = x - eye[0];
-    const dy = (crouching ? this.config.crouchEyeHeight : this.config.eyeHeight) - eye[1];
+    const dy = y + (crouching ? this.config.crouchEyeHeight : this.config.eyeHeight) - eye[1];
     const dz = z - eye[2];
     const distance = Math.hypot(dx, dy, dz);
     if (distance < 1e-3) return true;
@@ -1103,19 +1381,19 @@ export class Game {
 
   /** Enemy under the crosshair, whose name is then shown. */
   private aimedEnemy(): number | null {
-    const eye: [number, number, number] = [this.pos.x, this.eyeHeight(), this.pos.z];
+    const eye: [number, number, number] = [this.pos.x, this.pos.y + this.eyeHeight(), this.pos.z];
     const dir = this.aimDirection();
     const wall = rayWorld(this.boxes, eye, dir, 200) ?? 200;
     let best: number | null = null;
     let bestT = wall;
     for (const [id, remote] of this.remotes) {
-      if (remote.entry.team === this.myTeam || !remote.state?.alive) continue;
+      if (this.isAlly(remote.entry) || !remote.state?.alive) continue;
       const pad = 0.42;
       const t = rayBox(
         eye,
         dir,
-        [remote.shownX - pad, 0, remote.shownZ - pad],
-        [remote.shownX + pad, remote.state.crouching ? 1.35 : 1.85, remote.shownZ + pad],
+        [remote.shownX - pad, remote.shownY, remote.shownZ - pad],
+        [remote.shownX + pad, remote.shownY + (remote.state.crouching ? 1.35 : 1.85), remote.shownZ + pad],
       );
       if (t !== null && t < bestT) {
         bestT = t;
@@ -1169,12 +1447,13 @@ export class Game {
     this.errZ *= decay;
     const alpha = this.accumulator / CMD_DT;
     const x = this.prev.x + (this.pos.x - this.prev.x) * alpha + this.errX;
+    const y = this.prev.y + (this.pos.y - this.prev.y) * alpha;
     const z = this.prev.z + (this.pos.z - this.prev.z) * alpha + this.errZ;
 
     // The stance changes at once in the simulation; only the view eases into it.
     this.viewEye += (this.eyeHeight() - this.viewEye) * Math.min(1, dt * 14);
     const eyeY = this.alive ? this.viewEye : 0.35;
-    this.camera.position.set(x, eyeY, z);
+    this.camera.position.set(x, y + eyeY, z);
     this.camera.rotation.order = "YXZ";
     this.camera.rotation.set(this.aimPitch(), this.aimYaw(), this.alive ? 0 : 0.5);
     const scoped = this.scoped();
@@ -1199,26 +1478,31 @@ export class Game {
         continue;
       }
       if (remote.hitbox) {
-        remote.hitbox.group.position.set(sample.x, 0, sample.z);
+        remote.hitbox.group.position.set(sample.x, sample.y, sample.z);
         const shielded = state.shieldHp > 0 && state.weapon === WeaponKind.PISTOL;
         remote.hitbox.pose(sample.crouching, state.headScale, shielded ? sample.yaw : null);
       }
       remote.shownX = sample.x;
+      remote.shownY = sample.y;
       remote.shownZ = sample.z;
-      remote.character.update(dt, sample.x, sample.z, sample.yaw, sample.pitch, state.moving, state.alive, state.protected, time, sample.crouching);
-      const ally = remote.entry.team === this.myTeam;
-      remote.character.setNameVisible((ally || id === aimed) && this.canSeeHead(sample.x, sample.z, sample.crouching));
+      remote.character.update(dt, sample.x, sample.z, sample.yaw, sample.pitch, state.moving, state.alive, state.protected, time, sample.crouching, sample.y);
+      const ally = this.isAlly(remote.entry);
+      remote.character.setNameVisible((ally || id === aimed) && this.canSeeHead(sample.x, sample.y, sample.z, sample.crouching));
+      if (state.alive) this.remoteFootsteps(remote, sample, state, dt);
       if (state.alive) {
         if (ally) blips.push({ x: sample.x, z: sample.z, enemy: false });
         else if (time - remote.lastFired < ENEMY_BLIP_SECONDS) blips.push({ x: sample.x, z: sample.z, enemy: true });
       }
     }
 
-    // Footsteps and head bob are local-only polish.
-    if (this.movingNow && this.alive) {
+    // Our own footsteps while walking on something (softer crouched), and a thud on landing.
+    const airborne = this.alive && this.pos.vy !== 0;
+    if (this.airborne && !airborne && this.alive) this.audio.land();
+    this.airborne = airborne;
+    if (this.movingNow && this.alive && !airborne) {
       this.stepTimer -= dt;
       if (this.stepTimer <= 0) {
-        this.audio.footstep();
+        this.audio.footstep(0, 0, this.crouching ? 0.35 : 1);
         this.stepTimer = this.crouching ? STEP_INTERVAL * 1.6 : STEP_INTERVAL;
       }
     }
@@ -1230,6 +1514,7 @@ export class Game {
 
     this.hud.setScope(scoped);
     this.updateMissiles(dt, now / 1000);
+    this.updateGrenades(dt, now / 1000);
     this.effects.update(dt);
     this.hud.update(dt);
     // The crosshair opens to the real cone, projected to pixels.
@@ -1277,12 +1562,15 @@ export class Game {
     this.missileNose.dispose();
     this.missileSkin.dispose();
     this.missileTip.dispose();
+    this.grenadeBall.dispose();
+    this.grenadeSkin.dispose();
     cancelAnimationFrame(this.frameHandle);
     window.removeEventListener("resize", this.onResize);
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("mousemove", this.onMouseMove);
     window.removeEventListener("mousedown", this.onMouseDown);
+    window.removeEventListener("wheel", this.onWheel);
     window.removeEventListener("mouseup", this.onMouseUp);
     window.removeEventListener("contextmenu", this.onContextMenu);
     window.removeEventListener("blur", this.onBlur);

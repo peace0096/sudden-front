@@ -11,16 +11,20 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { Team, WeaponKind } from "../gen/game_pb";
-import { BODY_TOP, CROUCH_DROP, HEAD_BASE, HEAD_HEIGHT, SHIELD_FAR, SHIELD_HALF_WIDTH, SHIELD_NEAR, SHIELD_TOP } from "./art/hitbox";
+import { BODY_TOP, CROUCH_DROP, HEAD_BASE, HEAD_HEIGHT, HEAD_SCALE_MAX, SHIELD_FAR, SHIELD_HALF_WIDTH, SHIELD_NEAR, SHIELD_TOP } from "./art/hitbox";
 import { loadedArt } from "./art/loader";
-import { characterArt, place, weaponArt, type CharacterArt, type HoldArt } from "./art/manifest";
+import { characterArt, place, teamFile, weaponArt, type CharacterArt, type HoldArt } from "./art/manifest";
 import { toLambert } from "./art/materials";
 import { placeholderFigure, placeholderGun } from "./art/placeholder";
-import { Rig } from "./art/rig";
+import { Rig, type Side } from "./art/rig";
 import { nameTexture } from "./textures";
 
+/**
+ * A name tag's colour: the team's, and the enemy red without a team, since in a free-for-all match
+ * every other player is an enemy.
+ */
 export function teamColor(team: Team): string {
-  return team === Team.RED ? "#ff5a4a" : "#5aa8ff";
+  return team === Team.BLUE ? "#5aa8ff" : "#ff5a4a";
 }
 
 /** Seconds one clip takes to blend into the next. */
@@ -38,6 +42,9 @@ const CROUCH_LIFT = 0.4;
 const KICK = 0.05;
 const KICK_MAX = 0.14;
 const KICK_SETTLE = 14;
+/** A throw's overarm swing: how long it takes (s) and how far up the arm goes first (radians). */
+const THROW_SWING = 0.5;
+const THROW_REACH = 0.9;
 /** The name tag clears the head top by this much, and never sits lower than NAME_MIN. */
 const NAME_CLEARANCE = 0.15;
 const NAME_MIN = 2.1;
@@ -55,8 +62,10 @@ interface GaitClip {
   offset: number;
 }
 
-/** One team's soldier, prepared once and cloned for every player of that team. */
+/** One look's soldier (a team's, or the free-for-all's), prepared once and cloned for every player wearing it. */
 interface Template {
+  /** The soldier file it was made from (art manifest character.files): which look it is. */
+  file: string;
   scene: THREE.Object3D;
   art: CharacterArt;
   idle: THREE.AnimationClip;
@@ -101,7 +110,7 @@ function stride(clip: THREE.AnimationClip): { speed: number; phase: number } | n
   return { speed: travel / time, phase: (Math.atan2(y, x) / (2 * Math.PI) + 1) % 1 };
 }
 
-function prepare(art: CharacterArt, scene: THREE.Object3D, animations: THREE.AnimationClip[]): Template {
+function prepare(art: CharacterArt, file: string, scene: THREE.Object3D, animations: THREE.AnimationClip[]): Template {
   // Throws, so the team gets the placeholder, if a bone the rig needs is missing.
   new Rig(scene);
   const find = (name: string) => {
@@ -134,21 +143,21 @@ function prepare(art: CharacterArt, scene: THREE.Object3D, animations: THREE.Ani
     if (!holds.has(name)) holds.set(name, part(find(name), true));
   }
   if (!holds.has(art.clips.idle)) holds.set(art.clips.idle, part(find(art.clips.idle), true));
-  return { scene, art, idle: part(find(art.clips.idle), false), gaits, holds, death: find(art.clips.death), sphere: null, headVertices: null, footVertices: null };
+  return { file, scene, art, idle: part(find(art.clips.idle), false), gaits, holds, death: find(art.clips.death), sphere: null, headVertices: null, footVertices: null };
 }
 
 function template(team: Team): Template | null {
   const art = characterArt();
   const set = loadedArt();
   if (!art || !set) return null;
-  const file = team === Team.RED ? art.files.red : art.files.blue;
+  const file = teamFile(art.files, team);
   if (templates.has(file)) return templates.get(file)!;
   const gltf = set.models.get(file);
   // A file that failed to load is not remembered: the loader's retry (loadArt) may bring it in.
   if (!gltf) return null;
   let made: Template | null = null;
   try {
-    made = prepare(art, gltf.scene, gltf.animations);
+    made = prepare(art, file, gltf.scene, gltf.animations);
   } catch (error) {
     console.warn(`[art] ${file}: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -228,17 +237,32 @@ export interface CharacterMeasure {
   /** The lowest point of the left and of the right foot. */
   feet: number[];
   muzzle: number[];
+  /** The grip: where the right fist holds the weapon. */
+  grip: number[];
   /** How far the muzzle is ahead of the character's position, along its facing. */
   muzzleAhead: number;
   /** Radians between the barrel and the aim. */
   gunToAim: number;
-  /** Metres from the left wrist to the gun's support point; null without one. */
+  /** Metres from the middle of the left fist to the gun's support point; null without one. */
   support: number | null;
+  /**
+   * How squarely the left palm faces the way its hold needs, as the dot product of its facing with
+   * that way: up into the handguard, or (supportGrip) across the grip toward the gun's right, from
+   * its left side. Null without a support.
+   */
+  supportFacing: number | null;
+  /**
+   * How far each wrist bends from straight (Rig.wristBend), in radians: the right hand on the
+   * grip, and the left one where it holds the gun too (a support or a second gun), else null. Both
+   * null without the rig.
+   */
+  wrist: { right: number | null; left: number | null };
   /** Visible meshes and sprites: the draw calls the character costs. */
   parts: number;
 }
 
 const _target = new THREE.Vector3();
+const _turn = new THREE.Quaternion();
 const _bounds = new THREE.Sphere();
 
 /** The view this frame is drawn in, from setCharacterView(); inactive until a camera is given. */
@@ -284,13 +308,20 @@ export class Character {
   private readonly leftSocket = new THREE.Group();
   private guns: THREE.Object3D[] = [];
   private muzzle: THREE.Object3D = this.rightSocket;
+  /** Where the left fist closes on the gun, in the gun's frame, and the left hand's turn relative to the gun there. */
   private support: THREE.Vector3 | null = null;
+  private supportGrip = false;
+  private readonly supportTurn = new THREE.Quaternion();
+  /** The middle of each fist in its hand's frame: the weapon's tp.position, mirrored for the left. */
+  private readonly fist: Record<Side, THREE.Vector3> = { R: new THREE.Vector3(), L: new THREE.Vector3() };
   private hold: HoldArt = {};
   private weapon = WeaponKind.UNSPECIFIED;
   private deadFor = -1;
   private crouchAmount = 0;
   private headScale = 1;
   private kickAmount = 0;
+  /** Seconds of a throw's swing still to play. */
+  private throwLeft = 0;
   /** The aim last drawn, for measure(). */
   private pitch = 0;
   private readonly shield: THREE.Mesh;
@@ -391,6 +422,18 @@ export class Character {
     this.hold = (art && this.made?.art.holds?.[art.hold]) ?? {};
     this.support = this.rig && art?.tp.support ? new THREE.Vector3().fromArray(art.tp.support) : null;
     if (this.rig && art) {
+      // A rig's left bones mirror its right ones: x negated, and a turn (x, y, z, w) is (x, −y, −z, w).
+      this.fist.R.fromArray(art.tp.position ?? [0, 0, 0]);
+      this.fist.L.copy(this.fist.R).setX(-this.fist.R.x);
+      this.supportGrip = !!art.tp.supportGrip;
+      if (this.supportGrip) {
+        // Beside the right fist on the grip: the right hand's hold mirrored. The gun's turn in that
+        // hand, inverted, is the hand's turn relative to the gun.
+        const grip = new THREE.Quaternion().setFromEuler(new THREE.Euler().fromArray([...(art.tp.rotation ?? [0, 0, 0]), "XYZ"] as [number, number, number, THREE.EulerOrder]));
+        this.supportTurn.set(grip.x, -grip.y, -grip.z, grip.w).invert();
+      } else {
+        this.supportTurn.copy(this.rig.supportTurn);
+      }
       place(this.rightSocket, art.tp);
       if (this.hold.mirror) {
         // The second gun: the first one's place in the right hand, mirrored into the left.
@@ -440,18 +483,31 @@ export class Character {
     this.kickAmount = Math.min(KICK_MAX, this.kickAmount + KICK * scale);
   }
 
+  /** The player threw a grenade: the arm swings up and over, and follows through below the aim. */
+  throwGrenade(): void {
+    this.throwLeft = THROW_SWING;
+  }
+
+  /** The throw's lift of the arm now, radians: up, then over and down past the aim, then back. */
+  private throwSwing(): number {
+    if (this.throwLeft <= 0) return 0;
+    const p = 1 - this.throwLeft / THROW_SWING;
+    return THROW_REACH * Math.sin(2 * Math.PI * p) * (1 - p);
+  }
+
   /**
    * `shielded` is spawn protection, which makes the model blink. The stride follows the positions
    * given, not the server's moving flag: that flag runs ahead of the interpolated position, so it
    * would stop the legs while the body still slides to a halt.
    */
-  update(dt: number, x: number, z: number, yaw: number, pitch: number, _moving: boolean, alive: boolean, shielded: boolean, time: number, crouching: boolean): void {
+  update(dt: number, x: number, z: number, yaw: number, pitch: number, _moving: boolean, alive: boolean, shielded: boolean, time: number, crouching: boolean, y = 0): void {
     this.crouchAmount += (Number(crouching && alive) - this.crouchAmount) * Math.min(1, dt * 14);
     const drop = CROUCH_DROP * this.crouchAmount;
     this.name.position.y = Math.max(NAME_MIN, HEAD_BASE + HEAD_HEIGHT * this.headScale + NAME_CLEARANCE) - drop;
     this.shield.scale.y = 1 - (CROUCH_DROP / SHIELD_TOP) * this.crouchAmount;
     this.track(dt, x, z);
-    this.root.position.set(x, 0, z);
+    // `y` lifts the feet off the floor: a box top, or in the air.
+    this.root.position.set(x, y, z);
     this.root.rotation.y = yaw;
 
     this.sparks.visible = this.stunned && alive;
@@ -506,6 +562,7 @@ export class Character {
   /** Poses the model for this frame; while it is hidden or `inView` is false it only counts the time. */
   private animate(dt: number, pitch: number, alive: boolean, time: number, inView = true): void {
     this.kickAmount *= Math.exp(-dt * KICK_SETTLE);
+    this.throwLeft = Math.max(0, this.throwLeft - dt);
     this.pitch = pitch;
     this.behind += dt;
     if (!this.root.visible || !inView) return;
@@ -525,18 +582,22 @@ export class Character {
     if (weight > 0) {
       this.rig.steady(weight);
       this.rig.addRotations(this.hold.bones, weight);
+      if (this.hold.fist) this.rig.closeIndex("R", weight);
       if (this.hold.mirror) this.rig.mirrorArms(weight);
       else if (this.support) this.rig.mirrorFingers(weight);
       this.rig.pose(this.root, {
         pitch: pitch * weight,
-        kick: this.kickAmount * weight,
+        kick: (this.kickAmount + this.throwSwing()) * weight,
         shake,
         lean: CROUCH_LEAN * this.crouchAmount * weight,
         drop: CROUCH_DROP * this.crouchAmount * weight,
         lift: 1 - (1 - CROUCH_LIFT) * this.crouchAmount,
         bothArms: !!this.support || !!this.hold.mirror,
       });
-      if (this.support && alive) this.rig.reach(this.rightSocket.localToWorld(_target.copy(this.support)), this.root);
+      if (this.support && alive) {
+        const turn = this.rightSocket.getWorldQuaternion(_turn).multiply(this.supportTurn);
+        this.rig.support(this.rightSocket.localToWorld(_target.copy(this.support)), turn, this.fist.L, this.root);
+      }
     }
     this.rig.setHeadScale(this.headScale);
   }
@@ -637,7 +698,7 @@ export class Character {
 
   /**
    * The skinned mesh's bounds over the poses that reach furthest (aiming up standing, aiming down
-   * crouched, lying dead, all with a doubled head), a tenth larger, in the mesh's own frame.
+   * crouched, lying dead, all with the biggest head Big Head grows), a tenth larger, in the mesh's own frame.
    */
   private posedBounds(mesh: THREE.SkinnedMesh): THREE.Sphere {
     const sphere = new THREE.Sphere();
@@ -648,7 +709,7 @@ export class Character {
       else sphere.union(mesh.boundingSphere!);
     };
     const look = this.headScale;
-    this.headScale = 2;
+    this.headScale = HEAD_SCALE_MAX;
     for (const [crouch, pitch] of [[0, 1.45], [1, -1.45]]) {
       this.crouchAmount = crouch;
       this.animate(0, pitch, true, 0);
@@ -659,7 +720,7 @@ export class Character {
     this.blend(FADE, false);
     this.mixer!.update(this.made!.death.duration + 0.1);
     this.rig!.capture();
-    this.rig!.setHeadScale(2);
+    this.rig!.setHeadScale(HEAD_SCALE_MAX);
     take();
     // Standing again: animate() restores the clip pose, stops the death clip and poses afresh.
     this.headScale = look;
@@ -709,9 +770,17 @@ export class Character {
       feet = soles.map((list) => Math.min(...heights(list)));
     }
     let support: number | null = null;
+    let supportFacing: number | null = null;
     if (this.support && this.rig) {
-      const wrist = this.rig.bones.handL.getWorldPosition(new THREE.Vector3());
-      support = wrist.distanceTo(this.rightSocket.localToWorld(this.support.clone()));
+      const fist = this.rig.bones.handL.localToWorld(this.fist.L.clone());
+      support = fist.distanceTo(this.rightSocket.localToWorld(this.support.clone()));
+      const wanted = new THREE.Vector3(this.supportGrip ? 1 : 0, this.supportGrip ? 0 : 1, 0).applyQuaternion(this.rightSocket.getWorldQuaternion(new THREE.Quaternion()));
+      supportFacing = this.rig.palmFacing("L").dot(wanted);
+    }
+    const wrist: CharacterMeasure["wrist"] = { right: null, left: null };
+    if (this.rig) {
+      wrist.right = this.rig.wristBend("R");
+      if (this.support || this.hold.mirror) wrist.left = this.rig.wristBend("L");
     }
     let count = 0;
     this.root.traverseVisible((object) => {
@@ -723,9 +792,12 @@ export class Character {
       headTop,
       feet,
       muzzle: muzzle.toArray(),
+      grip: grip.toArray(),
       muzzleAhead: muzzle.clone().sub(at).dot(facing),
       gunToAim: barrel.angleTo(aim),
       support,
+      supportFacing,
+      wrist,
       parts: count,
     };
   }

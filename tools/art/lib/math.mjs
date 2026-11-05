@@ -132,3 +132,61 @@ export function eulerXYZ(m) {
 }
 
 export const round = (value, places = 4) => Math.round(value * 10 ** places) / 10 ** places || 0;
+
+// [x, y, z] vectors.
+export const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+export const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+export const scale = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+export const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+export const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+export const normalize = (a) => scale(a, 1 / Math.hypot(a[0], a[1], a[2]));
+
+/** The determinant of a 3×3 matrix given as rows. */
+const det3 = (m) =>
+  m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+
+/**
+ * The circle that best fits points along an arc lying near one plane: the plane through their
+ * centroid square to the turn the arc makes, then Kåsa's least squares in it. Returns its centre
+ * and radius, and the plane's normal, the way the arc turns by the right-hand rule.
+ */
+export function fitCircle(points) {
+  const centroid = scale(points.reduce(add), 1 / points.length);
+  let turn = [0, 0, 0];
+  for (let i = 0; i + 1 < points.length; i++) turn = add(turn, cross(sub(points[i], centroid), sub(points[i + 1], centroid)));
+  // Points in a line make no turn and have no plane of their own.
+  if (Math.hypot(turn[0], turn[1], turn[2]) < 1e-12) throw new Error("the points do not bend round a circle");
+  const normal = normalize(turn);
+  const first = sub(points[0], centroid);
+  const u = normalize(sub(first, scale(normal, dot(first, normal))));
+  const v = cross(normal, u);
+  // x² + y² + D·x + E·y + F = 0 by least squares; the centre is (−D/2, −E/2).
+  const sums = { xx: 0, xy: 0, yy: 0, x: 0, y: 0, xr: 0, yr: 0, r: 0 };
+  for (const point of points) {
+    const offset = sub(point, centroid);
+    const x = dot(offset, u);
+    const y = dot(offset, v);
+    const r = x * x + y * y;
+    sums.xx += x * x;
+    sums.xy += x * y;
+    sums.yy += y * y;
+    sums.x += x;
+    sums.y += y;
+    sums.xr += x * r;
+    sums.yr += y * r;
+    sums.r += r;
+  }
+  const a = [
+    [sums.xx, sums.xy, sums.x],
+    [sums.xy, sums.yy, sums.y],
+    [sums.x, sums.y, points.length],
+  ];
+  const b = [-sums.xr, -sums.yr, -sums.r];
+  const d = det3(a);
+  if (Math.abs(d) < 1e-18) throw new Error("the points do not bend round a circle");
+  const solve = (column) => det3(a.map((row, i) => row.map((value, j) => (j === column ? b[i] : value)))) / d;
+  const [dx, ey, f] = [solve(0), solve(1), solve(2)];
+  const cx = -dx / 2;
+  const cy = -ey / 2;
+  return { centre: add(centroid, add(scale(u, cx), scale(v, cy))), radius: Math.sqrt(Math.max(0, cx * cx + cy * cy - f)), normal };
+}

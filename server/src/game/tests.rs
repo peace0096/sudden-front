@@ -1,7 +1,8 @@
 use super::components::*;
 use super::map::build_map;
 use super::nav::NavGrid;
-use super::physics::{blocks, step_move};
+use super::physics::{blocks, step_move, step_vertical};
+use super::systems::{roll_grenade, GRENADE_FUSE, GRENADE_RADIUS};
 use pb::Augment as Aug;
 use pb::WeaponKind as Kind;
 use super::*;
@@ -30,8 +31,7 @@ fn place(game: &mut Match, id: u32, x: f32, z: f32, yaw: f32) {
         x,
         z,
         yaw,
-        pitch: 0.0,
-        crouching: false,
+        ..Default::default()
     };
     game.world.get_mut::<Vitals>(entity).unwrap().protect_left = 0.0;
     game.world.get_mut::<History>(entity).unwrap().samples.clear();
@@ -61,6 +61,9 @@ fn spawns_with_30_mag_and_120_reserve() {
 
 #[test]
 fn every_map_is_fully_connected_and_spawns_are_clear() {
+    // Nothing may be over a free-for-all spawn below this, which keeps them out of doorways
+    // and the warehouse's vent tunnel.
+    const HEADROOM: f32 = 4.0;
     for id in [pb::MapId::SupplyYard, pb::MapId::Warehouse] {
         let def = build_map(id);
         let map = &def.data;
@@ -82,6 +85,23 @@ fn every_map_is_fully_connected_and_spawns_are_clear() {
                 assert!(!inside, "{id:?}: point ({x},{z}) is inside a collider");
             }
         }
+        // Free-for-all spawns are in world coordinates, and include both teams' spawns.
+        for &(x, z) in &def.ffa_spawns {
+            assert_eq!(nav.reachable_from(x, z), total, "{id:?}: free-for-all spawn ({x},{z}) is cut off");
+            let covered = map.boxes.iter().any(|b| {
+                b.min_y < HEADROOM
+                    && x + PLAYER_HALF_WIDTH > b.min_x
+                    && x - PLAYER_HALF_WIDTH < b.max_x
+                    && z + PLAYER_HALF_WIDTH > b.min_z
+                    && z - PLAYER_HALF_WIDTH < b.max_z
+            });
+            assert!(!covered, "{id:?}: free-for-all spawn ({x},{z}) is inside or under something");
+        }
+        for &(x, z) in &def.spawns {
+            for point in [(x, z), (-x, -z)] {
+                assert!(def.ffa_spawns.contains(&point), "{id:?}: team spawn {point:?} is no free-for-all spawn");
+            }
+        }
     }
 }
 
@@ -90,10 +110,124 @@ fn walls_stop_movement() {
     let map = build_map(YARD).data;
     let (mut x, mut z) = (-20.0, -3.0);
     for _ in 0..200 {
-        step_move(&map.boxes, &mut x, &mut z, 0.0, -0.1);
+        step_move(&map.boxes, &mut x, &mut z, 0.0, 0.0, -0.1);
     }
     // The loading dock's front edge is at z = -5.4.
     assert!((z - (-5.4 + PLAYER_HALF_WIDTH)).abs() < 1e-3, "z = {z}");
+}
+
+// ---------------------------------------------------------------- jumping
+
+/// A crate-sized box: 1.2 m on a side from x 0 to 1.2, centred on z 0.
+fn crate_box() -> pb::MapBox {
+    pb::MapBox {
+        min_x: 0.0,
+        max_x: 1.2,
+        min_y: 0.0,
+        max_y: 1.2,
+        min_z: -0.6,
+        max_z: 0.6,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_jump_rises_about_a_metre_and_a_third_and_comes_back_down() {
+    let (mut y, mut vy) = (0.0f32, 0.0f32);
+    step_vertical(&[], 0.0, 0.0, &mut y, &mut vy, true);
+    let (mut apex, mut steps) = (y, 1);
+    while y > 0.0 {
+        step_vertical(&[], 0.0, 0.0, &mut y, &mut vy, false);
+        apex = apex.max(y);
+        steps += 1;
+        assert!(steps < 200, "never landed");
+    }
+    assert!((1.3..1.4).contains(&apex), "apex {apex}");
+    assert_eq!((y, vy), (0.0, 0.0));
+    // About three quarters of a second in the air.
+    assert!((40..50).contains(&steps), "{steps} steps");
+}
+
+#[test]
+fn a_jump_clears_a_crate_lands_on_it_and_walking_off_falls_to_the_floor() {
+    let boxes = [crate_box()];
+    let (mut x, mut z, mut y, mut vy) = (-1.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let step = 5.0 * CMD_DT;
+    let mut stood = false;
+    for i in 0..120 {
+        step_move(&boxes, &mut x, &mut z, y, step, 0.0);
+        step_vertical(&boxes, x, z, &mut y, &mut vy, i == 0);
+        // Over the crate (with the collision's 1 mm of slack) the feet are never below its top.
+        let over = x + PLAYER_HALF_WIDTH - 0.001 > 0.0 && x - PLAYER_HALF_WIDTH + 0.001 < 1.2;
+        assert!(!over || y >= 1.19, "step {i}: inside the crate at x {x}, y {y}");
+        stood |= over && y == 1.2 && vy == 0.0;
+    }
+    assert!(stood, "never stood on the crate");
+    assert!(x > 1.2 + PLAYER_HALF_WIDTH && y == 0.0 && vy == 0.0, "x {x}, y {y}, vy {vy}");
+}
+
+#[test]
+fn a_crate_too_high_to_clear_stops_the_player_at_its_side() {
+    let tall = pb::MapBox { max_y: 2.6, ..crate_box() };
+    let (mut x, mut z, mut y, mut vy) = (-1.0f32, 0.0f32, 0.0f32, 0.0f32);
+    for i in 0..90 {
+        step_move(&[tall], &mut x, &mut z, y, 5.0 * CMD_DT, 0.0);
+        step_vertical(&[tall], x, z, &mut y, &mut vy, i == 0);
+    }
+    assert!((x - (0.0 - PLAYER_HALF_WIDTH)).abs() < 1e-4, "x {x}");
+    assert_eq!((y, vy), (0.0, 0.0));
+}
+
+#[test]
+fn a_box_overhead_stops_a_jump() {
+    // The warehouse vent tunnel's lid starts 2.3 m up: a head 1.8 m up has 0.5 m to rise.
+    let lid = pb::MapBox { min_x: -1.0, max_x: 1.0, min_y: 2.3, max_y: 2.6, min_z: -1.0, max_z: 1.0, ..Default::default() };
+    let (mut y, mut vy) = (0.0f32, 0.0f32);
+    let mut apex = 0.0f32;
+    for i in 0..60 {
+        step_vertical(&[lid], 0.0, 0.0, &mut y, &mut vy, i == 0);
+        apex = apex.max(y);
+    }
+    assert!((apex - 0.5).abs() < 1e-4, "apex {apex}");
+    assert_eq!((y, vy), (0.0, 0.0));
+}
+
+#[test]
+fn a_jump_takes_off_only_from_the_ground() {
+    // Holding jump in the air adds nothing: the next jump waits for the landing.
+    let (mut y, mut vy) = (0.0f32, 0.0f32);
+    let mut apex = 0.0f32;
+    for _ in 0..40 {
+        step_vertical(&[], 0.0, 0.0, &mut y, &mut vy, true);
+        apex = apex.max(y);
+    }
+    assert!(apex < 1.4, "apex {apex}");
+}
+
+#[test]
+fn a_player_in_the_air_is_hit_where_they_are() {
+    // The victim 4 m away hangs 0.6 m up: a shot at that height plus a standing head's middle
+    // (1.63 m) is a headshot, one at a standing head misses over their shoulder.
+    let shoot = |raised: f32, aim_height: f32| -> i32 {
+        let mut game = duel();
+        let yaw = -std::f32::consts::FRAC_PI_2;
+        place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+        place(&mut game, VICTIM, -42.0, 0.0, 0.0);
+        game.world.get_mut::<Pose>(game.entities[&VICTIM]).unwrap().y = raised;
+        game.tick(); // History holds the raised victim.
+        let shot = pb::InputCmd {
+            fire: true,
+            yaw,
+            pitch: (aim_height - EYE_HEIGHT).atan2(4.0),
+            ..cmd(1, tick_now(&game))
+        };
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        100 - hp(&game, VICTIM)
+    };
+    assert_eq!(shoot(0.6, 0.6 + 1.63), weapons::stats(RIFLE).damage_head);
+    assert_eq!(shoot(0.6, 0.6 + 0.4), weapons::stats(RIFLE).damage_legs);
+    assert_eq!(shoot(0.0, 0.6 + 1.63), 0, "over a standing player's head");
 }
 
 #[test]
@@ -341,8 +475,8 @@ fn a_chosen_kill_target_ends_the_match_there_and_reaches_the_client() {
     let shot = line_up(&mut game, 0.03);
     game.push_inputs(SHOOTER, vec![shot]);
     game.tick();
-    assert_eq!(game.winner(), Some(pb::Team::Red));
-    assert_eq!(game.end_message(pb::Team::Red, 8.0).red_score, 10);
+    assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Red)));
+    assert_eq!(game.end_message(8.0).red_score, 10);
 }
 
 #[test]
@@ -352,8 +486,9 @@ fn first_team_to_30_kills_wins_and_the_match_freezes() {
     let shot = line_up(&mut game, 0.03);
     game.push_inputs(SHOOTER, vec![shot]);
     game.tick();
-    assert_eq!(game.winner(), Some(pb::Team::Red));
-    let end = game.end_message(pb::Team::Red, 8.0);
+    assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Red)));
+    let end = game.end_message(8.0);
+    assert_eq!((end.winner, end.winner_id), (pb::Team::Red as i32, 0));
     assert_eq!(end.red_score, KILLS_TO_WIN);
     let frozen = tick_now(&game);
     game.tick();
@@ -406,8 +541,8 @@ fn a_team_left_with_nobody_forfeits_the_match() {
     let mut game = duel_with_bots([2, 0], pb::GameMode::Normal);
     assert_eq!(game.winner(), None);
     game.remove_player(VICTIM);
-    assert_eq!(game.winner(), Some(pb::Team::Red));
-    let end = game.end_message(pb::Team::Red, 8.0);
+    assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Red)));
+    let end = game.end_message(8.0);
     assert_eq!((end.winner, end.red_score, end.blue_score), (pb::Team::Red as i32, 0, 0));
     // It is over: the clock no longer runs.
     let frozen = tick_now(&game);
@@ -420,7 +555,7 @@ fn a_forfeit_ends_a_match_that_is_still_choosing_augments() {
     let mut game = duel_with_bots([0, 0], pb::GameMode::Augment);
     assert!(game.world.resource::<MatchState>().freeze_left > 0.0, "still frozen before play");
     game.remove_player(SHOOTER);
-    assert_eq!(game.winner(), Some(pb::Team::Blue));
+    assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Blue)));
 }
 
 #[test]
@@ -439,9 +574,9 @@ fn a_team_that_still_has_a_bot_does_not_forfeit() {
 #[test]
 fn a_forfeit_does_not_overwrite_a_result_already_in() {
     let mut game = duel_with_bots([0, 0], pb::GameMode::Normal);
-    game.world.resource_mut::<MatchState>().winner = Some(pb::Team::Red);
+    game.world.resource_mut::<MatchState>().winner = Some(Winner::Team(pb::Team::Red));
     game.remove_player(SHOOTER);
-    assert_eq!(game.winner(), Some(pb::Team::Red));
+    assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Red)));
 }
 
 #[cfg(debug_assertions)]
@@ -464,7 +599,7 @@ fn bot_match_plays_to_completion_with_a_30_kill_winner() {
     }
     let winner = game.winner().expect("bots never finished: AI is stuck");
     let snapshot = game.shared_snapshot();
-    let (winning, losing) = if winner == pb::Team::Red {
+    let (winning, losing) = if winner == Winner::Team(pb::Team::Red) {
         (snapshot.red_score, snapshot.blue_score)
     } else {
         (snapshot.blue_score, snapshot.red_score)
@@ -651,7 +786,7 @@ fn sliding_along_any_wall_never_teleports() {
                 for (mut x, mut z, along_x, along_z, into_x, into_z) in faces {
                     for _ in 0..60 {
                         let (old_x, old_z) = (x, z);
-                        step_move(&map.boxes, &mut x, &mut z, along_x + into_x, along_z + into_z);
+                        step_move(&map.boxes, &mut x, &mut z, 0.0, along_x + into_x, along_z + into_z);
                         let moved = (x - old_x).abs().max((z - old_z).abs());
                         assert!(moved <= step * 1.5, "{id:?}: jumped {moved} from ({old_x},{old_z}) to ({x},{z})");
                     }
@@ -735,9 +870,8 @@ fn sidearm_stats_match_the_spec() {
     assert!(knife.melee_range > 0.0);
 }
 
-/// Shooter drawn to `slot`, ready to attack, with the victim `dist` away along +x.
-fn melee_setup(dist: f32) -> (Match, pb::InputCmd) {
-    let mut game = duel();
+/// The shooter in `game` with the knife drawn, ready to attack, and the victim `dist` away along +x.
+fn melee_setup(mut game: Match, dist: f32) -> (Match, pb::InputCmd) {
     let yaw = -std::f32::consts::FRAC_PI_2;
     place(&mut game, SHOOTER, -46.0, 0.0, yaw);
     place(&mut game, VICTIM, -46.0 + dist, 0.0, 0.0);
@@ -751,7 +885,7 @@ fn melee_setup(dist: f32) -> (Match, pb::InputCmd) {
 
 #[test]
 fn knife_hits_in_reach_for_high_damage_without_ammo() {
-    let (mut game, swing) = melee_setup(1.5);
+    let (mut game, swing) = melee_setup(duel(), 1.5);
     game.push_inputs(SHOOTER, vec![swing]);
     game.tick();
     let victim = game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap();
@@ -761,7 +895,7 @@ fn knife_hits_in_reach_for_high_damage_without_ammo() {
 
 #[test]
 fn knife_cannot_reach_far_targets() {
-    let (mut game, swing) = melee_setup(4.0);
+    let (mut game, swing) = melee_setup(duel(), 4.0);
     game.push_inputs(SHOOTER, vec![swing]);
     game.tick();
     assert_eq!(game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap().hp, MAX_HP);
@@ -773,7 +907,7 @@ fn knife_cannot_reach_far_targets() {
 
 #[test]
 fn knife_never_triggers_a_reload_or_empty_state() {
-    let (mut game, _) = melee_setup(1.5);
+    let (mut game, _) = melee_setup(duel(), 1.5);
     for _ in 0..10 {
         game.tick();
     }
@@ -967,7 +1101,8 @@ fn bloom_recovers_once_the_trigger_is_released() {
         game.tick();
     }
     let e = game.entities[&SHOOTER];
-    assert!(game.world.get::<Weapon>(e).unwrap().bloom > 0.02);
+    // Ten shots in a second fill the rifle's bloom.
+    assert!(game.world.get::<Weapon>(e).unwrap().bloom > weapons::stats(RIFLE).bloom_max * 0.8);
     for _ in 0..TICK_RATE {
         game.tick();
     }
@@ -1635,9 +1770,14 @@ fn big_head_grows_the_victims_head_additively_for_every_contributor() {
     let scale = |game: &Match| game.world.get::<Perks>(v).unwrap().head_scale;
     assert_eq!(scale(&game), 1.0);
     kill_victim(&mut game, 1);
-    assert!((scale(&game) - 1.1).abs() < 1e-4);
+    assert!((scale(&game) - (1.0 + augments::BIG_HEAD_STEP)).abs() < 1e-4);
     kill_victim(&mut game, 2);
-    assert!((scale(&game) - 1.2).abs() < 1e-4, "adds up over deaths");
+    assert!((scale(&game) - (1.0 + 2.0 * augments::BIG_HEAD_STEP)).abs() < 1e-4, "adds up over deaths");
+    // It stops growing at the cap, however many more deaths follow.
+    for seq in 3..20 {
+        kill_victim(&mut game, seq);
+    }
+    assert_eq!(scale(&game), augments::BIG_HEAD_MAX);
 
     // An assist counts: the killer has no such augment, a helper who hurt the victim does.
     let mut game = Match::with_mode(
@@ -1661,7 +1801,7 @@ fn big_head_grows_the_victims_head_additively_for_every_contributor() {
     let helper = game.entities[&77];
     game.world.get_mut::<Perks>(v).unwrap().damaged_by.push(helper);
     kill_victim(&mut game, 2);
-    assert!((game.world.get::<Perks>(v).unwrap().head_scale - 1.1).abs() < 1e-4);
+    assert!((game.world.get::<Perks>(v).unwrap().head_scale - (1.0 + augments::BIG_HEAD_STEP)).abs() < 1e-4);
 }
 
 #[test]
@@ -1879,4 +2019,586 @@ fn full_augment_matches_run_clean() {
         }
         assert!(game.winner().is_some(), "seed {seed} never finished");
     }
+}
+
+// ---------------------------------------------------------------- free-for-all
+
+const NO_TEAM: pb::Team = pb::Team::Unspecified;
+/// A third free-for-all player, well out of the way unless placed.
+const THIRD: u32 = 3;
+
+/// `SHOOTER` and `VICTIM` in a free-for-all with `bots` bots.
+fn ffa_with_bots(bots: usize, mode: pb::GameMode) -> Match {
+    let humans = [(SHOOTER, "a".into(), NO_TEAM, RIFLE), (VICTIM, "b".into(), NO_TEAM, RIFLE)];
+    Match::with_rules(&humans, YARD, mode, pb::MatchType::FreeForAll, [bots, 0], 42)
+}
+
+fn ffa_duel() -> Match {
+    ffa_with_bots(0, pb::GameMode::Normal)
+}
+
+/// A free-for-all of three past its waiting time, in which the shooter fires missiles.
+fn ffa_missiles() -> Match {
+    let humans = [
+        (SHOOTER, "a".into(), NO_TEAM, RIFLE),
+        (VICTIM, "b".into(), NO_TEAM, RIFLE),
+        (THIRD, "c".into(), NO_TEAM, RIFLE),
+    ];
+    let mut game = Match::with_rules(&humans, YARD, pb::GameMode::Augment, pb::MatchType::FreeForAll, [0, 0], 42);
+    game.apply_augment(SHOOTER, Aug::Missile);
+    game.apply_augment(VICTIM, Aug::QuickReload);
+    game.apply_augment(THIRD, Aug::QuickReload);
+    game.world.resource_mut::<MatchState>().freeze_left = 0.0;
+    place(&mut game, THIRD, 40.0, 28.0, 0.0);
+    game
+}
+
+fn exploded(game: &mut Match) -> bool {
+    game.shared_snapshot()
+        .events
+        .iter()
+        .any(|e| matches!(e.event, Some(pb::game_event::Event::Explosion(_))))
+}
+
+/// Checks that a player stands on a free-for-all spawn point, facing the middle of the map.
+fn assert_ffa_spawned(game: &Match, entity: Entity) -> (f32, f32) {
+    let pose = *game.world.get::<Pose>(entity).unwrap();
+    let point = (pose.x, pose.z);
+    assert!(game.world.resource::<Arena>().ffa_spawns.contains(&point), "{point:?} is no spawn point");
+    let look = super::physics::view_dir(pose.yaw, 0.0);
+    let to_middle = (-pose.x, -pose.z);
+    let facing = (look[0] * to_middle.0 + look[2] * to_middle.1) / (to_middle.0.hypot(to_middle.1));
+    assert!(facing > 0.999, "at {point:?} the yaw {} looks away from the middle", pose.yaw);
+    point
+}
+
+#[test]
+fn in_a_free_for_all_anyone_can_shoot_anyone_and_no_team_scores() {
+    let mut game = ffa_duel();
+    let shot = line_up(&mut game, 0.03);
+    game.push_inputs(SHOOTER, vec![shot]);
+    game.tick();
+    assert!(!game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap().alive);
+    let snapshot = game.shared_snapshot();
+    assert_eq!((snapshot.red_score, snapshot.blue_score), (0, 0));
+    let kills: Vec<(u32, u32)> = snapshot.players.iter().map(|p| (p.id, p.kills)).collect();
+    assert_eq!(kills, [(SHOOTER, 1), (VICTIM, 0)]);
+    assert_eq!(game.winner(), None);
+}
+
+#[test]
+fn in_a_free_for_all_the_knife_cuts_anyone() {
+    let (mut game, swing) = melee_setup(ffa_duel(), 1.5);
+    game.push_inputs(SHOOTER, vec![swing]);
+    game.tick();
+    assert_eq!(hp(&game, VICTIM), MAX_HP - weapons::stats(Kind::Knife).damage_body);
+}
+
+#[test]
+fn the_first_player_to_the_target_wins_a_free_for_all() {
+    let mut game = ffa_duel();
+    game.set_kills_to_win(10);
+    game.world.get_mut::<Stats>(game.entities[&SHOOTER]).unwrap().kills = 9;
+    let shot = line_up(&mut game, 0.03);
+    assert_eq!(game.winner(), None);
+    game.push_inputs(SHOOTER, vec![shot]);
+    game.tick();
+    assert_eq!(game.winner(), Some(Winner::Player(SHOOTER)));
+    let end = game.end_message(8.0);
+    assert_eq!((end.winner, end.winner_id), (NO_TEAM as i32, SHOOTER));
+    assert_eq!((end.red_score, end.blue_score), (0, 0));
+    assert_eq!((end.scoreboard[0].id, end.scoreboard[0].kills), (SHOOTER, 10));
+    assert!(end.scoreboard.iter().all(|s| s.team == NO_TEAM as i32));
+    // It is over: the clock no longer runs.
+    let frozen = tick_now(&game);
+    game.tick();
+    assert_eq!(tick_now(&game), frozen);
+}
+
+#[test]
+fn a_free_for_all_tells_its_players_there_are_no_teams() {
+    let start = ffa_with_bots(3, pb::GameMode::Normal).start_message(SHOOTER);
+    let config = start.config.unwrap();
+    assert_eq!((config.match_type, config.kills_to_win), (pb::MatchType::FreeForAll as i32, KILLS_TO_WIN_FFA));
+    assert_eq!(start.roster.len(), 5);
+    assert!(start.roster.iter().all(|r| r.team == NO_TEAM as i32));
+
+    let config = duel().start_message(SHOOTER).config.unwrap();
+    assert_eq!((config.match_type, config.kills_to_win), (pb::MatchType::TeamDeathmatch as i32, KILLS_TO_WIN));
+}
+
+#[test]
+fn a_free_for_all_missile_spares_its_shooter_and_hits_whoever_it_meets() {
+    let mut game = ffa_missiles();
+    let events = shoot_once(&mut game, 1);
+    assert!(events.iter().any(|e| matches!(&e.event, Some(pb::game_event::Event::Shot(s)) if s.explosive)));
+    assert!(
+        !events.iter().any(|e| matches!(e.event, Some(pb::game_event::Event::Explosion(_)))),
+        "it went off in the shooter's hands"
+    );
+    assert_eq!(game.shared_snapshot().missiles.len(), 1);
+
+    let mut blew = false;
+    for _ in 0..4 {
+        game.tick();
+        blew |= exploded(&mut game);
+    }
+    assert!(blew);
+    let dealt = 150 - hp(&game, VICTIM);
+    assert!(dealt > 60 && dealt <= 150, "dealt {dealt}");
+    assert_eq!(hp(&game, SHOOTER), 150, "no damage to yourself");
+}
+
+#[test]
+fn a_kill_by_a_missile_whose_shooter_has_left_counts_for_nobody() {
+    let mut game = ffa_missiles();
+    // One kill would win, and the victim dies of anything.
+    game.set_kills_to_win(1);
+    game.world.get_mut::<Vitals>(game.entities[&VICTIM]).unwrap().hp = 1;
+    shoot_once(&mut game, 1);
+    assert_eq!(game.shared_snapshot().missiles.len(), 1, "still in the air");
+    game.remove_player(SHOOTER);
+    assert_eq!(game.winner(), None, "two are left");
+
+    let mut blew = false;
+    for _ in 0..4 {
+        game.tick();
+        blew |= exploded(&mut game);
+    }
+    assert!(blew);
+    assert_eq!(game.world.get::<Stats>(game.entities[&VICTIM]).unwrap().deaths, 1);
+    let snapshot = game.shared_snapshot();
+    assert!(snapshot.players.iter().all(|p| p.kills == 0));
+    assert_eq!((snapshot.red_score, snapshot.blue_score), (0, 0));
+    assert_eq!(game.winner(), None);
+}
+
+#[test]
+fn a_free_for_all_left_with_one_player_is_theirs() {
+    let mut game = ffa_duel();
+    game.remove_player(VICTIM);
+    assert_eq!(game.winner(), Some(Winner::Player(SHOOTER)));
+    let end = game.end_message(8.0);
+    assert_eq!((end.winner, end.winner_id, end.red_score, end.blue_score), (NO_TEAM as i32, SHOOTER, 0, 0));
+}
+
+#[test]
+fn a_free_for_all_with_a_bot_left_goes_on() {
+    let mut game = ffa_with_bots(1, pb::GameMode::Normal);
+    game.remove_player(VICTIM);
+    assert_eq!(game.winner(), None, "the shooter and the bot play on");
+    for _ in 0..(5 * TICK_RATE) {
+        game.tick();
+    }
+    assert_eq!(game.roster().len(), 2);
+    assert_eq!(game.winner(), None);
+}
+
+#[test]
+fn a_free_for_all_forfeit_ends_a_match_that_is_still_choosing_augments() {
+    let mut game = ffa_with_bots(0, pb::GameMode::Augment);
+    assert!(game.world.resource::<MatchState>().pick_left > 0.0, "still choosing");
+    game.remove_player(SHOOTER);
+    assert_eq!(game.winner(), Some(Winner::Player(VICTIM)));
+}
+
+#[test]
+fn free_for_all_players_start_on_points_of_their_own_facing_the_middle() {
+    for map in [YARD, pb::MapId::Warehouse] {
+        for seed in 1..=50 {
+            let game = Match::with_rules(&[], map, pb::GameMode::Normal, pb::MatchType::FreeForAll, [5, 5], seed);
+            let mut taken = Vec::new();
+            for &entity in game.entities.values() {
+                let point = assert_ffa_spawned(&game, entity);
+                assert!(!taken.contains(&point), "{map:?}, seed {seed}: two start at {point:?}");
+                taken.push(point);
+            }
+            assert_eq!(taken.len(), 2 * TEAM_SIZE);
+        }
+    }
+}
+
+#[test]
+fn free_for_all_players_respawning_on_the_same_tick_get_points_of_their_own() {
+    let humans = [(SHOOTER, "a".into(), NO_TEAM, RIFLE), (VICTIM, "b".into(), NO_TEAM, RIFLE)];
+    for map in [YARD, pb::MapId::Warehouse] {
+        for seed in 1..=50 {
+            let mut game = Match::with_rules(&humans, map, pb::GameMode::Normal, pb::MatchType::FreeForAll, [4, 4], seed);
+            // Everyone but the shooter is due back on the next tick.
+            for (&id, &entity) in &game.entities {
+                if id != SHOOTER {
+                    let mut vitals = game.world.get_mut::<Vitals>(entity).unwrap();
+                    vitals.alive = false;
+                    vitals.hp = 0;
+                    vitals.respawn_left = 0.01;
+                }
+            }
+            game.tick();
+            let shooter = game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap();
+            let mut taken = vec![(shooter.x, shooter.z)];
+            for (&id, &entity) in &game.entities {
+                if id == SHOOTER {
+                    continue;
+                }
+                assert!(game.world.get::<Vitals>(entity).unwrap().alive);
+                let point = assert_ffa_spawned(&game, entity);
+                assert!(!taken.contains(&point), "{map:?}, seed {seed}: two at {point:?}");
+                taken.push(point);
+            }
+        }
+    }
+}
+
+#[test]
+fn bot_free_for_alls_finish_with_one_player_at_the_target() {
+    for map in [YARD, pb::MapId::Warehouse] {
+        for mode in [pb::GameMode::Normal, pb::GameMode::Augment] {
+            let mut game = Match::with_rules(&[], map, mode, pb::MatchType::FreeForAll, [5, 5], 7);
+            // 30 simulated minutes is far beyond any plausible match length.
+            for _ in 0..(30 * 60 * TICK_RATE) {
+                game.tick();
+                if game.winner().is_some() {
+                    break;
+                }
+            }
+            let Some(Winner::Player(winner)) = game.winner() else {
+                panic!("{map:?} {mode:?}: the bots never finished");
+            };
+            let snapshot = game.shared_snapshot();
+            let at_target: Vec<(u32, u32)> = snapshot
+                .players
+                .iter()
+                .filter(|p| p.kills >= KILLS_TO_WIN_FFA)
+                .map(|p| (p.id, p.kills))
+                .collect();
+            assert_eq!(at_target, [(winner, KILLS_TO_WIN_FFA)], "{map:?} {mode:?}");
+            assert_eq!((snapshot.red_score, snapshot.blue_score), (0, 0));
+            println!(
+                "{map:?} {mode:?} free-for-all took {:.1}s, {} kills in all",
+                snapshot.tick as f32 / TICK_RATE as f32,
+                snapshot.players.iter().map(|p| p.kills).sum::<u32>()
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------- grenades
+
+const MATE: u32 = 3;
+
+fn thrown(events: &[pb::GameEvent]) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e.event, Some(pb::game_event::Event::GrenadeThrown(_))))
+        .count()
+}
+
+fn explosions(events: &[pb::GameEvent]) -> Vec<pb::ExplosionEvent> {
+    events
+        .iter()
+        .filter_map(|e| match &e.event {
+            Some(pb::game_event::Event::Explosion(blast)) => Some(*blast),
+            _ => None,
+        })
+        .collect()
+}
+
+fn grenades_left(game: &mut Match, id: u32) -> u32 {
+    let mut snapshot = game.shared_snapshot();
+    game.fill_personal(id, &mut snapshot);
+    snapshot.grenades_left
+}
+
+/// Takes out slot 4 and waits for it to be drawn. Returns the next command number.
+fn draw_grenade(game: &mut Match, id: u32, seq: u32) -> u32 {
+    game.push_inputs(id, vec![pb::InputCmd { slot: 4, ..cmd(seq, tick_now(game)) }]);
+    for _ in 0..=(DRAW_TIME * TICK_RATE as f32).ceil() as u32 {
+        game.tick();
+    }
+    seq + 1
+}
+
+/// Throws what is in hand along (yaw, pitch); the tick's events.
+fn throw(game: &mut Match, id: u32, seq: u32, yaw: f32, pitch: f32) -> Vec<pb::GameEvent> {
+    game.push_inputs(id, vec![pb::InputCmd { fire: true, yaw, pitch, ..cmd(seq, tick_now(game)) }]);
+    game.tick();
+    game.shared_snapshot().events
+}
+
+#[test]
+fn slot_4_holds_one_grenade_a_life_and_a_throw_goes_back_to_the_gun() {
+    let mut game = duel();
+    let yaw = -std::f32::consts::FRAC_PI_2;
+    place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+    assert_eq!(grenades_left(&mut game, SHOOTER), 1);
+
+    let seq = draw_grenade(&mut game, SHOOTER, 1);
+    assert_eq!(held(&game, SHOOTER), Kind::Grenade);
+    assert_eq!(weapon(&game, SHOOTER), (1, 0, false));
+    // A grenade's stats come to the client like any weapon's, for its name and the throw's timing.
+    assert!(weapons::all_stats().iter().any(|w| w.kind == Kind::Grenade as i32 && w.magazine == 1 && w.splash_radius > 0.0));
+
+    let events = throw(&mut game, SHOOTER, seq, yaw, 0.2);
+    assert_eq!(thrown(&events), 1);
+    assert_eq!(game.shared_snapshot().grenades.len(), 1);
+    assert_eq!(grenades_left(&mut game, SHOOTER), 0);
+    // Straight back to the rifle and its magazine, which has to be drawn before it fires.
+    assert_eq!(held(&game, SHOOTER), RIFLE);
+    assert_eq!(weapon(&game, SHOOTER), (30, 120, false));
+    let w = game.world.get::<Weapon>(game.entities[&SHOOTER]).unwrap();
+    assert!(w.cooldown >= weapons::stats(Kind::Grenade).fire_interval - 0.05, "cooldown {}", w.cooldown);
+
+    // With none left, slot 4 is nothing to switch to.
+    game.push_inputs(SHOOTER, vec![pb::InputCmd { slot: 4, ..cmd(seq + 1, tick_now(&game)) }]);
+    game.tick();
+    assert_eq!(held(&game, SHOOTER), RIFLE);
+}
+
+#[test]
+fn a_throw_goes_back_to_the_slot_held_before_the_grenade() {
+    let mut game = duel();
+    let yaw = -std::f32::consts::FRAC_PI_2;
+    place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+    game.push_inputs(SHOOTER, vec![pb::InputCmd { slot: 3, ..cmd(1, tick_now(&game)) }]);
+    game.tick();
+    assert_eq!(held(&game, SHOOTER), Kind::Knife);
+    let seq = draw_grenade(&mut game, SHOOTER, 2);
+    throw(&mut game, SHOOTER, seq, yaw, 0.2);
+    assert_eq!(held(&game, SHOOTER), Kind::Knife);
+}
+
+#[test]
+fn a_grenade_goes_off_three_seconds_after_the_throw_where_it_lies() {
+    let mut game = duel();
+    let yaw = -std::f32::consts::FRAC_PI_2;
+    place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+    place(&mut game, VICTIM, 40.0, 0.0, 0.0);
+    let seq = draw_grenade(&mut game, SHOOTER, 1);
+    throw(&mut game, SHOOTER, seq, yaw, 0.3);
+    let thrown_at = tick_now(&game) - 1;
+    let mut last = game.shared_snapshot().grenades[0];
+    let went_off = loop {
+        game.tick();
+        let snapshot = game.shared_snapshot();
+        if let Some(blast) = explosions(&snapshot.events).pop() {
+            assert!(snapshot.grenades.is_empty());
+            break (tick_now(&game) - 1, blast);
+        }
+        last = snapshot.grenades[0];
+        assert!(tick_now(&game) < thrown_at + 200, "never went off");
+    };
+    let (tick, blast) = went_off;
+    assert_eq!(tick - thrown_at, (GRENADE_FUSE * TICK_RATE as f32) as u32, "fuse");
+    // Thrown forward, it came to rest on the floor before going off, where it lay.
+    assert!(last.x > -40.0, "landed at {}", last.x);
+    assert_eq!((last.vx, last.vy, last.vz), (0.0, 0.0, 0.0), "still moving: {last:?}");
+    assert!((last.y - GRENADE_RADIUS).abs() < 0.01, "not on the floor: {}", last.y);
+    assert_eq!((blast.x, blast.y, blast.z), (last.x, last.y, last.z));
+}
+
+/// A grenade of `owner`'s lying still on the floor at (x, z), going off on the next tick but one.
+fn drop_grenade(game: &mut Match, owner: u32, x: f32, z: f32) {
+    let entity = game.entities[&owner];
+    let team = game.world.get::<Player>(entity).unwrap().team;
+    let mut grenades = game.world.resource_mut::<Grenades>();
+    grenades.next_id += 1;
+    let id = grenades.next_id;
+    grenades.live.push(Grenade {
+        id,
+        owner: entity,
+        owner_id: owner,
+        team,
+        pos: [x, GRENADE_RADIUS, z],
+        vel: [0.0; 3],
+        fuse_ticks: 1,
+    });
+}
+
+/// The kills of the next two ticks.
+fn kills_in_two_ticks(game: &mut Match) -> Vec<pb::KillEvent> {
+    let mut kills = Vec::new();
+    for _ in 0..2 {
+        game.tick();
+        for event in game.shared_snapshot().events {
+            if let Some(pb::game_event::Event::Kill(kill)) = event.event {
+                kills.push(kill);
+            }
+        }
+    }
+    kills
+}
+
+#[test]
+fn a_grenade_hurts_enemies_around_it_but_not_its_thrower_or_teammates() {
+    let mut game = Match::new(
+        &[
+            (SHOOTER, "a".into(), pb::Team::Red, RIFLE),
+            (VICTIM, "b".into(), pb::Team::Blue, RIFLE),
+            (MATE, "c".into(), pb::Team::Red, RIFLE),
+        ],
+        YARD,
+        false,
+        42,
+    );
+    place(&mut game, SHOOTER, -44.0, 0.0, 0.0);
+    place(&mut game, VICTIM, -42.5, 0.0, 0.0);
+    place(&mut game, MATE, -44.0, 1.0, 0.0);
+    drop_grenade(&mut game, SHOOTER, -44.0, 0.5);
+    assert!(kills_in_two_ticks(&mut game).is_empty());
+    // 1.5 m off along the floor, 1.14 m below the torso: 1.88 m from it, 74 % of the damage.
+    let dealt = 100 - hp(&game, VICTIM);
+    assert!((75..=85).contains(&dealt), "dealt {dealt}");
+    assert_eq!(hp(&game, SHOOTER), 100, "no damage to yourself");
+    assert_eq!(hp(&game, MATE), 100, "no friendly fire");
+
+    // Further out it hurts less, and past its radius not at all.
+    let at = |distance: f32| {
+        let mut game = duel();
+        place(&mut game, SHOOTER, -44.0, 10.0, 0.0);
+        place(&mut game, VICTIM, -44.0, 0.0, 0.0);
+        drop_grenade(&mut game, SHOOTER, -44.0 + distance, 0.0);
+        kills_in_two_ticks(&mut game);
+        100 - hp(&game, VICTIM)
+    };
+    assert!(at(1.0) > at(3.0) && at(3.0) > 0, "{} {}", at(1.0), at(3.0));
+    assert_eq!(at(5.5), 0);
+
+    // A blast that finishes someone off is the grenade's kill.
+    game.world.get_mut::<Vitals>(game.entities[&VICTIM]).unwrap().hp = 10;
+    drop_grenade(&mut game, SHOOTER, -42.5, 1.0);
+    let kills = kills_in_two_ticks(&mut game);
+    assert_eq!(kills.len(), 1);
+    assert_eq!((kills[0].killer_id, kills[0].victim_id, kills[0].weapon), (SHOOTER, VICTIM, Kind::Grenade as i32));
+    assert_eq!(game.shared_snapshot().red_score, 1);
+}
+
+#[test]
+fn walls_shelter_from_a_grenade() {
+    // The walk-through warehouse's north wall (z 7 to 7.5) between the grenade and the victim.
+    let dealt = |victim_z: f32| {
+        let mut game = duel();
+        place(&mut game, SHOOTER, -46.0, 0.0, 0.0);
+        place(&mut game, VICTIM, -30.0, victim_z, 0.0);
+        drop_grenade(&mut game, SHOOTER, -30.0, 6.0);
+        kills_in_two_ticks(&mut game);
+        100 - hp(&game, VICTIM)
+    };
+    assert!(dealt(4.5) > 0);
+    // Inside, between the wall and the container along it.
+    assert_eq!(dealt(8.0), 0, "behind the wall");
+}
+
+#[test]
+fn a_grenade_bounces_off_a_wall_and_settles_on_the_floor_never_inside_anything() {
+    let wall = pb::MapBox { min_x: 2.0, max_x: 3.0, min_y: 0.0, max_y: 3.0, min_z: -5.0, max_z: 5.0, ..Default::default() };
+    let (mut pos, mut vel) = ([0.0f32, 1.4, 0.0], [12.0f32, 2.0, 1.0]);
+    let mut back = false;
+    for tick in 0..(4 * TICK_RATE) {
+        roll_grenade(&[wall], 50.0, 50.0, &mut pos, &mut vel);
+        assert!(pos[0] < wall.min_x - GRENADE_RADIUS + 0.01, "tick {tick}: in the wall at {pos:?}");
+        assert!(pos[1] > GRENADE_RADIUS - 0.01, "tick {tick}: under the floor at {pos:?}");
+        back |= vel[0] < 0.0;
+    }
+    assert!(back, "never bounced off the wall");
+    assert!(pos[0] < 2.0, "{pos:?}");
+    assert_eq!(vel, [0.0; 3], "still rolling");
+    assert!((pos[1] - GRENADE_RADIUS).abs() < 0.01, "{pos:?}");
+}
+
+#[test]
+fn a_grenade_lobbed_over_the_perimeter_wall_stays_in_the_map() {
+    let map = build_map(YARD).data;
+    let (mut pos, mut vel) = ([47.0f32, 1.4, 0.0], [9.0f32, 15.0, 0.0]);
+    let mut back = false;
+    for tick in 0..(4 * TICK_RATE) {
+        roll_grenade(&map.boxes, map.half_x, map.half_z, &mut pos, &mut vel);
+        assert!(pos[0] < map.half_x - GRENADE_RADIUS + 0.01, "tick {tick}: out of the map at {pos:?}");
+        back |= vel[0] < 0.0;
+    }
+    assert!(back, "never turned back at the map's edge");
+}
+
+#[test]
+fn a_grenade_comes_back_with_each_life() {
+    let mut game = duel();
+    let yaw = -std::f32::consts::FRAC_PI_2;
+    place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+    let seq = draw_grenade(&mut game, SHOOTER, 1);
+    throw(&mut game, SHOOTER, seq, yaw, 0.2);
+    assert_eq!(grenades_left(&mut game, SHOOTER), 0);
+    {
+        let mut vitals = game.world.get_mut::<Vitals>(game.entities[&SHOOTER]).unwrap();
+        vitals.alive = false;
+        vitals.respawn_left = TICK_DT;
+    }
+    game.tick();
+    assert!(game.world.get::<Vitals>(game.entities[&SHOOTER]).unwrap().alive);
+    assert_eq!(grenades_left(&mut game, SHOOTER), 1);
+}
+
+#[test]
+fn bots_throw_grenades_too() {
+    let mut game = Match::new(&[], YARD, true, 777);
+    let (mut throws, mut blasts) = (0, 0);
+    for _ in 0..(3 * 60 * TICK_RATE) {
+        game.tick();
+        let events = game.shared_snapshot().events;
+        throws += thrown(&events);
+        blasts += explosions(&events).len();
+        if game.winner().is_some() {
+            break;
+        }
+    }
+    assert!(throws > 0 && blasts > 0, "{throws} thrown, {blasts} went off");
+    println!("bots threw {throws} grenades, {blasts} went off");
+}
+
+// ---------------------------------------------------------------- climbing
+
+#[test]
+fn every_warehouse_container_with_crates_beside_it_can_be_climbed() {
+    let map = build_map(pb::MapId::Warehouse).data;
+    let step = weapons::stats(RIFLE).move_speed * CMD_DT;
+    for (x, z, dx, dz) in super::map::WAREHOUSE_CLIMBS {
+        for side in [1.0, -1.0] {
+            let (x, z, dx, dz) = (x * side, z * side, dx * side, dz * side);
+            // From the floor beyond the single crate, straight at the container, jump held.
+            let (mut px, mut pz) = (x + dx * 3.2, z + dz * 3.2);
+            let (mut y, mut vy) = (0.0f32, 0.0f32);
+            let mut on_top = false;
+            for _ in 0..(5 * 60) {
+                step_move(&map.boxes, &mut px, &mut pz, y, -dx * step, -dz * step);
+                step_vertical(&map.boxes, px, pz, &mut y, &mut vy, true);
+                if y == 2.6 && vy == 0.0 {
+                    on_top = true;
+                    break;
+                }
+            }
+            assert!(on_top, "the container behind the crates at ({x}, {z}) is out of reach: stopped at ({px}, {pz}) {y} m up");
+        }
+    }
+}
+
+#[test]
+fn the_leaning_container_collides_where_it_is_drawn_not_as_one_tall_box() {
+    let map = build_map(pb::MapId::Warehouse).data;
+    let slices: Vec<&pb::MapBox> = map.boxes.iter().filter(|b| b.kind == pb::BoxKind::Invisible as i32).collect();
+    assert_eq!(slices.len() % 2, 0, "one set for each half");
+    // The container tips its east end up: its slices climb with it, from about 2 m to about 3.9 m.
+    let west: Vec<&&pb::MapBox> = slices.iter().filter(|b| b.max_x < 0.0).collect();
+    let (low, high) = (west.iter().map(|b| b.max_y).fold(f32::MAX, f32::min), west.iter().map(|b| b.max_y).fold(f32::MIN, f32::max));
+    assert!((1.9..2.3).contains(&low) && (3.8..4.0).contains(&high), "tops from {low} to {high}");
+    // Up the slope in steps under 0.2 m to its top corner, and down the container's east end after it.
+    let mut by_x = west.clone();
+    by_x.sort_by(|a, b| a.min_x.total_cmp(&b.min_x));
+    let peak = by_x.iter().position(|b| b.max_y == high).unwrap();
+    assert!(by_x[..=peak].windows(2).all(|pair| pair[1].max_y > pair[0].max_y && pair[1].max_y - pair[0].max_y < 0.2), "not a steady climb");
+    assert!(by_x[peak..].windows(2).all(|pair| pair[1].max_y < pair[0].max_y), "no way down the end");
+
+    // A level shot 2.5 m up across the container's low west end flies on; one at 1.5 m stops at its side.
+    let shot = |height: f32| super::physics::ray_world(&map.boxes, [-10.0, height, 12.0], [0.0, 0.0, 1.0], 4.5);
+    assert_eq!(shot(2.5), None, "stopped above the container");
+    assert!(shot(1.5).is_some_and(|t| (t - 2.0).abs() < 0.01), "{:?}", shot(1.5));
+    // Over its high east end the same shot at 2.5 m hits it.
+    assert!(super::physics::ray_world(&map.boxes, [-6.0, 2.5, 12.0], [0.0, 0.0, 1.0], 4.5).is_some());
 }

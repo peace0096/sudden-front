@@ -35,10 +35,12 @@ const KIT_BOXES = new Map<BoxKind, string>([
   [BoxKind.BARREL, "#4c5a3c"],
 ]);
 
-/** The leaning container's height; the prop's width and height are its length and depth. */
+/**
+ * The leaning container's height; the prop's width and height are its length and depth, and its
+ * tilt how far it tips one end up. The server's map.rs (CONTAINER_H) cuts its collision slices
+ * from a container this tall.
+ */
 const TILTED_HEIGHT = 2.6;
-/** How far it tips one end up: radians about its own z axis, across its length. */
-const TILT = 0.34;
 
 /** Props drawn as a textured plane, width × height, facing +Z turned by the prop's rotation. */
 const PLANES = new Map<PropKind, () => THREE.Texture>([
@@ -402,10 +404,10 @@ export function buildWorld(scene: THREE.Scene, map: MapData): THREE.Group {
         trusses.push(...trussParts(prop));
         break;
       case PropKind.TILTED_CONTAINER: {
-        // Leans over at an angle, with its collision footprint authored on the server: a container
-        // centred on the prop, turned by its rotation and tipped one end up.
+        // Leans over at the server's angle, which its collision slices (map.rs) follow: a container
+        // centred on the prop, tipped its +X end up about its own depth, then turned by its rotation.
         const at = new THREE.Vector3(prop.x, prop.y, prop.z);
-        const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, prop.rotation, TILT));
+        const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, prop.rotation, prop.tilt));
         const art = propArt(PropKind[prop.kind]);
         const model = kitModel(PropKind[prop.kind], art);
         if (art && model) {

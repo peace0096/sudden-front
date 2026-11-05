@@ -53,7 +53,8 @@ check("the server took the sniper picked with B in game", true);
 
 await watcher.waitForFunction(() => document.querySelector(".status.live"));
 check("running room shows as in game in the list", true);
-check("running room can't be joined", await watcher.locator(".room-row button").isDisabled());
+// Mid-match a newcomer takes only an open seat, and this room's other seats all hold bots.
+check("a running room full of bots can't be joined", await watcher.locator(".room-row button").isDisabled());
 
 await host.waitForFunction(() => window.__game.matchOver, null, { timeout: 600000, polling: 500 });
 await host.screenshot({ path: join(shots, "8-results.png") });

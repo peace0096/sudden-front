@@ -6,11 +6,16 @@
 // Character and holds it to the server's hitboxes: the neck (head bone) on the head box's base
 // standing and crouched and over the hitbox column at the steepest aim, the head top at each head
 // size, the soles on the floor, every gun pointing along the aim from in front of the character
-// with the left hand on it where the hold says, and at most 4 draw calls a character. Its
-// first-person bench drives the game's real ViewModel through every weapon's idle, kick, reload,
-// bolt or pump cycle and knife swing: the right hand on the grip and, on a two-handed gun, the left
-// hand on its support point or second grip, each within 1.5 cm; every muzzle on screen in idle; and
-// the draw calls at most 5 (arms, guns, flash while it shows, shield while it is up). Its map bench
+// (the knife's blade forward and up instead, from a wrist within 20° of straight, and the grenade
+// in the fist with its fuze up) with the left
+// fist closed on it where the weapon says and its palm turned to hold it, and at most 4 draw calls
+// a character. Its first-person bench drives the game's real ViewModel through every weapon's
+// idle, kick, reload, bolt or pump cycle, knife swing and grenade throw: the right fist on the grip and, on a
+// two-handed gun, the left fist on its support point (palm up into it) or second grip, each within
+// 1.5 cm; the knife hand's wrist within 20° of straight; every muzzle on screen in idle, and the
+// hands that hold the weapon there (the grip hand of a one-handed weapon, both akimbo hands, a long
+// gun's support hand); and the draw calls at most 5 (arms, guns, flash while it shows, shield while
+// it is up). The other weapons' wrist bends are printed as INFO. Its map bench
 // builds a small map holding every BoxKind and PropKind with the game's buildWorld: every container,
 // crate and barrel copy fills its server box within 1 cm (containers turned along Z included) in its
 // kit's tint, each leaning container leans like the box it replaces within 1 cm, every lamp has its
@@ -50,6 +55,9 @@ const NECK = 1.5;
 const CROUCHED_NECK = 1.0;
 const MAX_PITCH = 1.45;
 const HAND_TOLERANCE = 0.015;
+// Degrees the knife hand's wrist may bend from straight in either view (client/src/game/art/preview.ts
+// KNIFE_WRIST_LIMIT): its tip points where the arm puts it, not where a bent wrist does.
+const KNIFE_WRIST_LIMIT = 20;
 const FP_MAX_CALLS = 5;
 const BUDGETS = JSON.parse(readFileSync(fileURLToPath(new URL("../src/game/art/manifest.json", import.meta.url)), "utf8")).budgets;
 const ARMS_TRIANGLES = BUDGETS.triangles.arms;
@@ -110,7 +118,7 @@ check(`all ${KINDS.length} weapons resolve to a loaded model`, weapons.every(([,
 check("every weapon has a muzzle node", weapons.every(([, weapon]) => weapon?.muzzle), weapons.filter(([, weapon]) => !weapon?.muzzle).map(([kind]) => kind).join(", "));
 
 const teams = Object.entries(report.characters);
-check("both team soldiers loaded", teams.length === 2 && teams.every(([, soldier]) => soldier.loaded), teams.map(([team, soldier]) => `${team} ${soldier.file}`).join(", "));
+check("all three soldiers loaded (red, blue and the free-for-all's neutral)", teams.length === 3 && teams.every(([, soldier]) => soldier.loaded), teams.map(([team, soldier]) => `${team} ${soldier.file}`).join(", "));
 for (const [team, soldier] of teams) {
   const missingBones = BONES.filter((bone) => !soldier.bones.includes(bone));
   check(`${team}: canonical bones ${BONES.join(", ")}`, missingBones.length === 0, missingBones.length ? `missing ${missingBones.join(", ")}` : `${soldier.bones.length} bones`);
@@ -190,7 +198,7 @@ const states = Object.entries(bench);
 const still = states.filter(([, s]) => s.alive && !s.moving);
 const deg = (radians) => ((radians * 180) / Math.PI).toFixed(1);
 const at = (id) => bench[id] ?? { neck: [NaN, NaN, NaN], neckOffset: NaN, headTop: NaN, feet: [NaN, NaN] };
-check(`the bench measured every state (${states.length})`, states.length >= 19 + KINDS.length, states.map(([id]) => id).join(", "));
+check(`the bench measured every state (${states.length})`, states.length >= 20 + KINDS.length, states.map(([id]) => id).join(", "));
 check(`standing neck at ${NECK} ± 0.03 m`, Math.abs(at("stand").neck[1] - NECK) <= 0.03, `${at("stand").neck[1]?.toFixed(3)} m`);
 check(`crouched neck at ${CROUCHED_NECK} ± 0.04 m`, Math.abs(at("crouch").neck[1] - CROUCHED_NECK) <= 0.04, `${at("crouch").neck[1]?.toFixed(3)} m`);
 const steep = ["aimUp", "aimDown", "crouchAimUp", "crouchAimDown"].map((id) => [id, at(id)]);
@@ -213,10 +221,49 @@ check(
   holds.every(([, s]) => s && s.muzzleAhead >= 0.3),
   holds.map(([kind, s]) => `${kind} ${s?.muzzleAhead.toFixed(2)}`).join(", "),
 );
-const askew = states.filter(([, s]) => s.alive && s.gunToAim > (5 * Math.PI) / 180);
-check("the gun points along the aim (within 5°) in every live state, aiming up, down and moving", askew.length === 0, askew.map(([id, s]) => `${id} ${deg(s.gunToAim)}°`).join(", ") || `max ${deg(Math.max(...states.filter(([, s]) => s.alive).map(([, s]) => s.gunToAim)))}°`);
+// The knife and the grenade are held in the fist along the grip's line, not along the aim; the arm
+// held low points the knife's blade ahead.
+const FIST_HELD = ["KNIFE", "GRENADE"];
+const guns = states.filter(([, s]) => s.alive && !FIST_HELD.includes(s.weapon));
+const askew = guns.filter(([, s]) => s.gunToAim > (5 * Math.PI) / 180);
+check("the gun points along the aim (within 5°) in every live state, aiming up, down and moving", guns.length > 0 && askew.length === 0, askew.map(([id, s]) => `${id} ${deg(s.gunToAim)}°`).join(", ") || `max ${deg(Math.max(...guns.map(([, s]) => s.gunToAim)))}°`);
+const knife = at("hold:KNIFE");
+// The bench faces −Z: ahead is down z.
+const blade = knife.muzzle && knife.grip ? { ahead: knife.grip[2] - knife.muzzle[2], up: knife.muzzle[1] - knife.grip[1] } : null;
+check(
+  "the knife's blade points ahead of the fist and up from it",
+  blade !== null && blade.ahead > 0.1 && blade.up > 0 && blade.up < blade.ahead,
+  blade ? `tip ${(blade.ahead * 100).toFixed(1)} cm ahead, ${(blade.up * 100).toFixed(1)} cm up` : "not measured",
+);
+const grenade = at("hold:GRENADE");
+check(
+  "the grenade sits in the fist with its fuze up",
+  !!grenade.muzzle && !!grenade.grip && grenade.muzzle[1] > grenade.grip[1],
+  grenade.muzzle && grenade.grip ? `fuze ${((grenade.muzzle[1] - grenade.grip[1]) * 100).toFixed(1)} cm above the middle of the fist` : "not measured",
+);
+const knifeWrist = knife.wrist?.right;
+check(
+  `the knife hand's wrist bends at most ${KNIFE_WRIST_LIMIT}° from straight`,
+  typeof knifeWrist === "number" && Number(deg(knifeWrist)) <= KNIFE_WRIST_LIMIT,
+  typeof knifeWrist === "number" ? `${deg(knifeWrist)}°` : "not measured",
+);
+// The guns' holds bend the wrists further; shown, not held to a limit (yet).
+const widest = (list, hand) => list.filter(([, s]) => typeof s.wrist?.[hand] === "number").reduce((best, item) => (!best || item[1].wrist[hand] > best[1].wrist[hand] ? item : best), null);
+for (const hand of ["right", "left"]) {
+  const most = widest(guns.filter(([id]) => id.startsWith("hold:")), hand);
+  if (most) console.log(`INFO  third person: the most bent ${hand} wrist on a gun is ${deg(most[1].wrist[hand])}° (${most[0]})`);
+}
 const loose = states.filter(([, s]) => s.alive && s.support !== null && s.support > 0.03);
-check("the left hand holds the gun where the weapon says (within 3 cm)", loose.length === 0, loose.map(([id, s]) => `${id} ${(s.support * 100).toFixed(1)} cm`).join(", ") || `${states.filter(([, s]) => s.support !== null && s.alive).length} states`);
+check("the left fist closes on the gun where the weapon says (within 3 cm)", loose.length === 0, loose.map(([id, s]) => `${id} ${(s.support * 100).toFixed(1)} cm`).join(", ") || `${states.filter(([, s]) => s.support !== null && s.alive).length} states`);
+// The fist's place alone is measured through the same turn that put it there; the palm, read from
+// the knuckles, shows the turn itself: up into a handguard, or toward the grip from its left side.
+const supported = states.filter(([, s]) => s.alive && s.support !== null);
+const palmAway = supported.filter(([, s]) => !(s.supportFacing > 0.7));
+check(
+  "the left palm faces the gun it holds (facing · wanted way > 0.7)",
+  supported.length > 0 && palmAway.length === 0,
+  palmAway.map(([id, s]) => `${id} ${s.supportFacing?.toFixed(2)}`).join(", ") || `min ${Math.min(...supported.map(([, s]) => s.supportFacing)).toFixed(2)} over ${supported.length} states`,
+);
 const plain = states.filter(([, s]) => s.alive && !s.shielded && !s.stunned);
 const costly = plain.filter(([, s]) => s.calls > (s.weapon === "AKIMBO_SMG" ? 5 : 4));
 check("at most 4 draw calls a character (body, gun, blob, name; 5 with two guns)", plain.length > 0 && costly.length === 0, costly.map(([id, s]) => `${id} ${s.calls}`).join(", ") || `max ${Math.max(...plain.map(([, s]) => s.calls))}`);
@@ -226,20 +273,49 @@ console.log(`INFO  taser sparks: ${at("stunned").calls} draw calls while stunned
 // The first-person bench (preview.ts): the real ViewModel, in each weapon's moments.
 const fp = Object.entries(report.firstPerson ?? {});
 const cm = (metres) => (metres === null || metres === undefined ? "none" : `${(metres * 100).toFixed(3)} cm`);
-// Idle red and blue for every weapon, kick and reload for every gun, the knife's swing, two cycles and the shield.
-const fpExpected = KINDS.length * 2 + (KINDS.length - 1) * 2 + 1 + 2 + 1;
+// Idle red and blue for every weapon, kick and reload for every gun, the knife's swing, the grenade's
+// throw, two cycles, the shield and the knife in the free-for-all's neutral sleeves.
+const fpExpected = KINDS.length * 2 + (KINDS.length - 2) * 2 + 1 + 1 + 2 + 1 + 1;
 const fpIdle = (kind) => fp.some(([, s]) => s.weapon === kind && s.pose === "idle");
 check(`the first-person bench measured every weapon's moments (${fp.length})`, fp.length >= fpExpected && KINDS.every(fpIdle), `${fp.length} of ${fpExpected}; ${KINDS.filter((kind) => !fpIdle(kind)).join(", ") || "every weapon idle"}`);
 const fpLoose = fp.filter(([, s]) => s.right === null || s.right > HAND_TOLERANCE || (s.twoHanded && (s.left === null || s.left > HAND_TOLERANCE)));
 const worst = (key) => cm(Math.max(...fp.map(([, s]) => s[key] ?? 0)));
 check(
-  `the right hand holds every grip and the left hand every two-handed gun, within ${HAND_TOLERANCE * 100} cm`,
+  `the right fist closes on every grip and the left fist on every two-handed gun, within ${HAND_TOLERANCE * 100} cm`,
   fp.length > 0 && fpLoose.length === 0,
   fpLoose.map(([id, s]) => `${id} right ${cm(s.right)} left ${cm(s.left)}`).slice(0, 4).join(", ") || `worst right ${worst("right")}, left ${worst("left")}`,
 );
+const fpKnife = fp.filter(([, s]) => s.weapon === "KNIFE");
+const fpBent = fpKnife.filter(([, s]) => !(typeof s.wrist?.right === "number" && Number(deg(s.wrist.right)) <= KNIFE_WRIST_LIMIT));
+check(
+  `the knife hand's wrist bends at most ${KNIFE_WRIST_LIMIT}° from straight in first person (${fpKnife.length} states)`,
+  fpKnife.length > 0 && fpBent.length === 0,
+  fpBent.map(([id, s]) => `${id} ${typeof s.wrist?.right === "number" ? deg(s.wrist.right) + "°" : "none"}`).join(", ") || `max ${deg(Math.max(...fpKnife.map(([, s]) => s.wrist.right)))}°`,
+);
+for (const hand of ["right", "left"]) {
+  const most = widest(fp.filter(([, s]) => s.weapon !== "KNIFE"), hand);
+  if (most) console.log(`INFO  first person: the most bent ${hand} wrist on a gun is ${deg(most[1].wrist[hand])}° (${most[0]})`);
+}
 const offGun = fp.filter(([, s]) => !s.twoHanded && s.left !== null);
 check("one-handed weapons keep the left hand off the gun", offGun.length === 0, offGun.map(([id]) => id).join(", ") || `${fp.filter(([, s]) => !s.twoHanded).length} states`);
+const fpSupported = fp.filter(([, s]) => s.twoHanded && s.weapon !== "AKIMBO_SMG");
+const fpTurned = fpSupported.filter(([, s]) => !(s.supportFacing > 0.7));
+check(
+  "the left palm faces up into every handguard it holds (facing · gun up > 0.7)",
+  fpSupported.length > 0 && fpTurned.length === 0,
+  fpTurned.map(([id, s]) => `${id} ${s.supportFacing?.toFixed(2) ?? "none"}`).join(", ") || `min ${Math.min(...fpSupported.map(([, s]) => s.supportFacing)).toFixed(2)} over ${fpSupported.length} states`,
+);
 const fpIdleStates = fp.filter(([, s]) => s.pose === "idle");
+// The hands that hold the weapon in view: a one-handed weapon's grip hand, both akimbo hands, and a
+// long gun's support hand (its grip hand may sit below the view). Knuckles within the screen.
+const shownHand = (ndc) => !!ndc && ndc.every((value) => Math.abs(value) < 1);
+const heldHands = (s) => (s.weapon === "AKIMBO_SMG" ? [s.hands.right, s.hands.left] : [s.twoHanded ? s.hands.left : s.hands.right]);
+const handsOff = fpIdleStates.filter(([, s]) => !s.hands || !heldHands(s).every(shownHand));
+check(
+  "the hands holding each weapon are on screen in idle",
+  fpIdleStates.length > 0 && handsOff.length === 0,
+  handsOff.map(([id, s]) => `${id} ${heldHands(s).map((ndc) => (ndc ? ndc.slice(0, 2).map((v) => v.toFixed(2)).join("/") : "none")).join(" ")}`).join(", ") || `${fpIdleStates.length} idle states`,
+);
 const offScreen = fpIdleStates.filter(([, s]) => !s.muzzles.length || s.muzzles.some(([x, y, z]) => !(Math.abs(x) < 1 && Math.abs(y) < 1 && Math.abs(z) < 1)));
 check(
   "every muzzle is on screen in idle",

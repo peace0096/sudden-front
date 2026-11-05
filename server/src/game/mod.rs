@@ -22,6 +22,8 @@ pub const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
 pub const CMD_DT: f32 = 1.0 / 60.0;
 
 pub const KILLS_TO_WIN: u32 = 30;
+/// A free-for-all's default target: one player takes longer than a team to reach a total.
+pub const KILLS_TO_WIN_FFA: u32 = 20;
 /// The kill targets a host can choose from.
 pub const KILL_TARGETS: [u32; 4] = [10, 20, 30, 50];
 pub const RESPAWN_TIME: f32 = 3.0;
@@ -40,6 +42,10 @@ pub const MAX_PITCH: f32 = 1.45;
 pub const CROUCH_DROP: f32 = 0.5;
 pub const CROUCH_EYE_HEIGHT: f32 = EYE_HEIGHT - CROUCH_DROP;
 pub const CROUCH_SPEED_FACTOR: f32 = 0.5;
+/// A jump's take-off speed (m/s up) and the gravity that ends it (m/s²): stepped at CMD_DT, it
+/// lifts the feet about 1.34 m, over a crate (1.2 m) or a barrel (1.1 m), and lasts about 0.75 s.
+pub const JUMP_SPEED: f32 = 7.5;
+pub const GRAVITY: f32 = 20.0;
 pub const CROUCH_SPREAD_FACTOR: f32 = 0.5;
 
 /// Seats per team.
@@ -73,7 +79,8 @@ impl Match {
         self.world.resource_mut::<MatchState>().kills_to_win = kills;
     }
 
-    /// `bots` is how many bots each team gets, `[red, blue]`.
+    /// A team deathmatch; `bots` is how many bots each team gets, `[red, blue]`.
+    #[cfg(test)]
     pub fn with_mode(
         humans: &[(u32, String, pb::Team, pb::WeaponKind)],
         map_id: pb::MapId,
@@ -81,14 +88,28 @@ impl Match {
         bots: [usize; 2],
         seed: u64,
     ) -> Self {
+        Self::with_rules(humans, map_id, mode, pb::MatchType::TeamDeathmatch, bots, seed)
+    }
+
+    /// `bots` is how many bots each team gets, `[red, blue]`. A free-for-all gets their sum;
+    /// nobody in it has a team, so its humans come with `Unspecified` as well.
+    pub fn with_rules(
+        humans: &[(u32, String, pb::Team, pb::WeaponKind)],
+        map_id: pb::MapId,
+        mode: pb::GameMode,
+        match_type: pb::MatchType,
+        bots: [usize; 2],
+        seed: u64,
+    ) -> Self {
         let augmented = mode == pb::GameMode::Augment;
-        let map::MapDef { data: map, spawns, lanes } = map::build_map(map_id);
+        let ffa = match_type == pb::MatchType::FreeForAll;
+        let map::MapDef { data: map, spawns, ffa_spawns, lanes } = map::build_map(map_id);
         let nav = nav::NavGrid::new(&map.boxes, map.half_x, map.half_z);
 
         let mut world = World::new();
-        world.insert_resource(Arena { map, nav, spawns, lanes });
+        world.insert_resource(Arena { map, nav, spawns, ffa_spawns, lanes });
         world.insert_resource(MatchState {
-            kills_to_win: KILLS_TO_WIN,
+            kills_to_win: if ffa { KILLS_TO_WIN_FFA } else { KILLS_TO_WIN },
             pick_left: if augmented { augments::AUGMENT_PICK } else { 0.0 },
             freeze_left: if augmented { augments::AUGMENT_WAIT } else { 0.0 },
             ..Default::default()
@@ -96,9 +117,11 @@ impl Match {
         world.insert_resource(Rules {
             mode,
             max_hp: if augmented { augments::AUGMENT_MAX_HP } else { MAX_HP },
+            ffa,
         });
         world.insert_resource(EventLog::default());
         world.insert_resource(Missiles::default());
+        world.insert_resource(Grenades::default());
         world.insert_resource(GameRng(seed | 1));
 
         let mut schedule = Schedule::default();
@@ -124,11 +147,24 @@ impl Match {
             next_bot_id: FIRST_BOT_ID,
         };
 
+        debug_assert!(
+            !ffa || humans.iter().all(|h| h.2 == pb::Team::Unspecified),
+            "a free-for-all has no teams"
+        );
         for (id, name, team, weapon) in humans {
             game.spawn_player(*id, name.clone(), *team, false, *weapon);
             if augmented {
                 game.deal_offer(*id);
             }
+        }
+        if ffa {
+            let count = bots[0] + bots[1];
+            let seated = humans.len() + count;
+            debug_assert!(seated <= 2 * TEAM_SIZE, "a free-for-all would seat {seated} players");
+            for _ in 0..count {
+                game.spawn_bot(pb::Team::Unspecified);
+            }
+            return game;
         }
         for (team, count) in [pb::Team::Red, pb::Team::Blue].into_iter().zip(bots) {
             let seated = humans.iter().filter(|h| h.2 == team).count() + count;
@@ -297,10 +333,19 @@ impl Match {
     }
 
     fn spawn_player(&mut self, id: u32, name: String, team: pb::Team, is_bot: bool, weapon: pb::WeaponKind) {
-        let spawns = self.world.resource::<Arena>().spawns.clone();
-        let (x, z) = {
-            let mut rng = self.world.resource_mut::<GameRng>();
-            systems::choose_spawn(&spawns, team, &[], &mut rng)
+        let (x, z, yaw) = if self.world.resource::<Rules>().ffa {
+            // Away from everyone already in, so that the players spread over the map.
+            let others: Vec<(f32, f32)> = self.world.query::<&Pose>().iter(&self.world).map(|p| (p.x, p.z)).collect();
+            let points = self.world.resource::<Arena>().ffa_spawns.clone();
+            let (x, z) = systems::furthest_spawn(&points, &others, &mut self.world.resource_mut::<GameRng>());
+            (x, z, systems::ffa_yaw(x, z))
+        } else {
+            let spawns = self.world.resource::<Arena>().spawns.clone();
+            let (x, z) = {
+                let mut rng = self.world.resource_mut::<GameRng>();
+                systems::choose_spawn(&spawns, team, &[], &mut rng)
+            };
+            (x, z, systems::spawn_yaw(team))
         };
         let mut entity = self.world.spawn((
             Player {
@@ -312,9 +357,8 @@ impl Match {
             Pose {
                 x,
                 z,
-                yaw: systems::spawn_yaw(team),
-                pitch: 0.0,
-                crouching: false,
+                yaw,
+                ..Default::default()
             },
             Vitals {
                 hp: self.world.resource::<Rules>().max_hp,
@@ -376,8 +420,47 @@ impl Match {
         }
     }
 
-    /// A human left mid-match. Nobody takes the seat: the match goes on a player short, unless
-    /// that leaves a team with nobody, which forfeits.
+    /// A human joins while the match runs. They come in as a respawn would: at the spawn point
+    /// furthest from every living enemy, under spawn protection. In augment mode they are dealt a
+    /// hand to choose from while the cards are still being chosen; after that one of it is taken
+    /// at random at once, as for anyone who didn't choose in time. Their kills and deaths start at
+    /// zero and the scores stay as they are. Returns the roster with them in it.
+    pub fn add_player(&mut self, id: u32, name: String, team: pb::Team, weapon: pb::WeaponKind) -> Vec<pb::RosterEntry> {
+        // They aren't in yet, so in a free-for-all everyone living counts.
+        let enemies: Vec<(f32, f32)> = {
+            let mut living = self.world.query::<(&Player, &Pose, &Vitals)>();
+            let rules = self.world.resource::<Rules>();
+            living
+                .iter(&self.world)
+                .filter(|(player, _, vitals)| vitals.alive && rules.hostile(player.team, team))
+                .map(|(_, pose, _)| (pose.x, pose.z))
+                .collect()
+        };
+        let (x, z, yaw) = if self.world.resource::<Rules>().ffa {
+            let points = self.world.resource::<Arena>().ffa_spawns.clone();
+            let (x, z) = systems::furthest_spawn(&points, &enemies, &mut self.world.resource_mut::<GameRng>());
+            (x, z, systems::ffa_yaw(x, z))
+        } else {
+            let spawns = self.world.resource::<Arena>().spawns.clone();
+            let (x, z) = systems::choose_spawn(&spawns, team, &enemies, &mut self.world.resource_mut::<GameRng>());
+            (x, z, systems::spawn_yaw(team))
+        };
+        self.spawn_player(id, name, team, false, weapon);
+        // spawn_player places players for the start of a match; this one goes where it is safe now.
+        if let Some(mut pose) = self.entities.get(&id).and_then(|&entity| self.world.get_mut::<Pose>(entity)) {
+            (pose.x, pose.z, pose.yaw) = (x, z, yaw);
+        }
+        if self.world.resource::<Rules>().mode == pb::GameMode::Augment {
+            self.deal_offer(id);
+            if self.world.resource::<MatchState>().pick_left <= 0.0 {
+                self.pick_random(id);
+            }
+        }
+        self.roster()
+    }
+
+    /// A human left mid-match. No bot takes the seat: the match goes on a player short, unless
+    /// that leaves a team with nobody, or a free-for-all with one player, which forfeits.
     pub fn remove_player(&mut self, id: u32) -> Vec<pb::RosterEntry> {
         if let Some(entity) = self.entities.remove(&id) {
             self.world.despawn(entity);
@@ -386,14 +469,24 @@ impl Match {
         self.roster()
     }
 
-    /// The moment a team has nobody left, the other team wins. A result that is already in stays.
+    /// The moment a team has nobody left, the other team wins. In a free-for-all each player is
+    /// a team of their own, so the last one left wins. A result that is already in stays.
     fn forfeit_an_empty_team(&mut self) {
+        let ffa = self.world.resource::<Rules>().ffa;
         let mut query = self.world.query::<&Player>();
-        let teams: Vec<pb::Team> = query.iter(&self.world).map(|p| p.team).collect();
-        let winner = match (teams.contains(&pb::Team::Red), teams.contains(&pb::Team::Blue)) {
-            (true, false) => Some(pb::Team::Red),
-            (false, true) => Some(pb::Team::Blue),
-            _ => None,
+        let winner = if ffa {
+            let ids: Vec<u32> = query.iter(&self.world).map(|p| p.id).collect();
+            match ids[..] {
+                [id] => Some(Winner::Player(id)),
+                _ => None,
+            }
+        } else {
+            let teams: Vec<pb::Team> = query.iter(&self.world).map(|p| p.team).collect();
+            match (teams.contains(&pb::Team::Red), teams.contains(&pb::Team::Blue)) {
+                (true, false) => Some(Winner::Team(pb::Team::Red)),
+                (false, true) => Some(Winner::Team(pb::Team::Blue)),
+                _ => None,
+            }
         };
         let mut state = self.world.resource_mut::<MatchState>();
         if state.winner.is_none() {
@@ -413,7 +506,7 @@ impl Match {
         self.schedule.run(&mut self.world);
     }
 
-    pub fn winner(&self) -> Option<pb::Team> {
+    pub fn winner(&self) -> Option<Winner> {
         self.world.resource::<MatchState>().winner
     }
 
@@ -466,6 +559,13 @@ impl Match {
                 } else {
                     0.0
                 },
+                match_type: if self.world.resource::<Rules>().ffa {
+                    pb::MatchType::FreeForAll
+                } else {
+                    pb::MatchType::TeamDeathmatch
+                } as i32,
+                jump_speed: JUMP_SPEED,
+                gravity: GRAVITY,
             }),
             map: Some(self.world.resource::<Arena>().map.clone()),
             roster,
@@ -482,7 +582,9 @@ impl Match {
             .map(|(player, pose, vitals, intent, weapon, stats, perks)| pb::PlayerState {
                 id: player.id,
                 x: pose.x,
+                y: pose.y,
                 z: pose.z,
+                vy: pose.vy,
                 yaw: pose.yaw,
                 pitch: pose.pitch,
                 hp: vitals.hp,
@@ -527,6 +629,21 @@ impl Match {
                     vz: m.dir[2] * systems::MISSILE_SPEED,
                 })
                 .collect(),
+            grenades: self
+                .world
+                .resource::<Grenades>()
+                .live
+                .iter()
+                .map(|g| pb::Grenade {
+                    id: g.id,
+                    x: g.pos[0],
+                    y: g.pos[1],
+                    z: g.pos[2],
+                    vx: g.vel[0],
+                    vy: g.vel[1],
+                    vz: g.vel[2],
+                })
+                .collect(),
             events: self.world.resource::<EventLog>().0.clone(),
             ..Default::default()
         }
@@ -542,6 +659,7 @@ impl Match {
             snapshot.reload_remaining = weapon.reload_left;
             snapshot.primary_weapon = weapon.primary as i32;
             snapshot.sidearm_weapon = weapon.sidearm as i32;
+            snapshot.grenades_left = weapon.grenades();
         }
         if let Some(loadout) = self.world.get::<Loadout>(entity) {
             snapshot.selected_weapon = loadout.0 as i32;
@@ -555,10 +673,16 @@ impl Match {
         }
     }
 
-    pub fn end_message(&mut self, winner: pb::Team, return_in: f32) -> pb::MatchEnd {
-        let (red_score, blue_score) = {
+    /// The result, once there is a winner: a team, or in a free-for-all a player.
+    pub fn end_message(&mut self, return_in: f32) -> pb::MatchEnd {
+        let (red_score, blue_score, winner) = {
             let state = self.world.resource::<MatchState>();
-            (state.red_score, state.blue_score)
+            (state.red_score, state.blue_score, state.winner)
+        };
+        let (winner, winner_id) = match winner {
+            Some(Winner::Team(team)) => (team, 0),
+            Some(Winner::Player(id)) => (pb::Team::Unspecified, id),
+            None => (pb::Team::Unspecified, 0),
         };
         let mut query = self.world.query::<(&Player, &Stats)>();
         let mut scoreboard: Vec<pb::ScoreEntry> = query
@@ -579,6 +703,7 @@ impl Match {
             blue_score,
             scoreboard,
             return_in,
+            winner_id,
         }
     }
 }

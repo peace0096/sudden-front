@@ -1,11 +1,12 @@
 // The first-person view: the local player's arms and gun, drawn in a scene of their own with a
 // camera that never moves, over the world (game.ts clears the depth first, and skips it while
-// scoped). The arms are the third-person soldier of the player's team (art manifest `arms`), of
+// scoped). The arms are the third-person soldier in the player's look (art manifest `arms`), of
 // which only the arm triangles are drawn: those skinned to the clavicles and the bones below, so
 // no head, torso or legs can come into view. The gun sits in the rig where its manifest `fp` puts
-// it; the right hand holds the grip as `tp` places a gun in the palm and the left wrist goes to
-// the support point, both by two-bone IK (art/rig.ts) from shoulders kept below the view. Akimbo
-// puts a second gun, mirrored, in the left hand; a one-handed gun folds the left arm away.
+// it; the right fist closes round the grip as `tp` places a gun in the fist and the left fist round
+// the support point, palm up under the handguard, each wrist brought where its turned hand needs
+// it by two-bone IK (art/rig.ts) from shoulders kept below the view. Akimbo puts a second gun,
+// mirrored, in the left hand; a one-handed gun folds the left arm away.
 // The scripted motion moves the whole rig, arms and gun together, so the hands stay on the gun:
 // the kick, the flash at the muzzle node, the reload dip with the left hand dropping away to swap
 // the magazine, the bolt or pump cycle (the left hand racking a pump), the knife slash, the
@@ -17,7 +18,7 @@ import * as THREE from "three";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { Team, WeaponKind } from "../gen/game_pb";
 import { loadedArt } from "./art/loader";
-import { armsArt, characterArt, place, weaponArt, type WeaponArt } from "./art/manifest";
+import { armsArt, characterArt, place, teamFile, weaponArt, type WeaponArt } from "./art/manifest";
 import { toLambert } from "./art/materials";
 import { Rig, type Side } from "./art/rig";
 import { makeGun } from "./character";
@@ -34,24 +35,21 @@ const SHOULDER_REACH = 0.85;
 const POLE: Record<Side, THREE.Vector3> = { R: new THREE.Vector3(0.5, -0.5, 0), L: new THREE.Vector3(-0.6, -0.4, 0) };
 /** Where the left hand goes during a reload, from the gun, in the rig: down and back for a magazine. */
 const RELOAD_REACH = new THREE.Vector3(-0.04, -0.16, 0.12);
-/**
- * The left hand under a handguard, in the gun's frame: the palm faces up into it, its length
- * running across to the gun's right where the fingers close around it, the index finger forward.
- */
-const SUPPORT_FINGERS = new THREE.Vector3(0.85, -0.45, -0.25).normalize();
-const SUPPORT_INDEX = new THREE.Vector3(0, 0, -1);
 /** The flash's colour (linear, above 1 for its glare) and how long it shows, s. */
 const FLASH_COLOUR = new THREE.Color(0xffa64d).multiplyScalar(1.6);
 const FLASH_LIFE = 0.045;
+/** A throw: how long the arm takes (s), and the share of that at which the grenade leaves the hand. */
+const THROW_TIME = 0.45;
+const THROW_RELEASE = 0.5;
 
-/** The soldier's arms in one team's colour. */
+/** The soldier's arms in one team's colour, or the neutral uniform without a team. */
 interface Arms {
   team: Team;
+  /** The soldier file they were made from (art manifest arms.files): which look they are. */
+  file: string;
   model: THREE.Object3D;
   mesh: THREE.SkinnedMesh;
   rig: Rig;
-  /** The left hand's turn on a handguard, relative to the gun. */
-  supportTurn: THREE.Quaternion;
 }
 
 /** The gun in hand, measured in the rig when it was set. */
@@ -61,25 +59,43 @@ interface Held {
   guns: THREE.Object3D[];
   /** Each gun's muzzle, where its flash shows. */
   muzzles: THREE.Vector3[];
-  /** Where the left wrist rests on the gun, for a two-handed gun. */
+  /** Where the left fist closes on the gun, in the rig, for a two-handed gun. */
   support: THREE.Vector3 | null;
   /** The barrel's backward direction, along which a pump racks. */
   back: THREE.Vector3;
-  /** The grip's place and turn in the right palm (tp), each hand mirroring them for its own side. */
-  palm: Record<Side, THREE.Vector3>;
+  /** The middle of the fist and the gun's turn in it (tp), each hand mirroring them for its own side. */
+  fist: Record<Side, THREE.Vector3>;
   turn: Record<Side, THREE.Quaternion>;
+  /** Whether the right index finger closes round the grip too (the hold's `fist`: a knife). */
+  closed: boolean;
   /** Each shoulder's place for this gun; the left one is null while that arm is folded away. */
   shoulders: Record<Side, THREE.Vector3 | null>;
 }
 
 /** What measure() reports, for the ?art bench and e2e/art.mjs. Distances are in the view's metres. */
 export interface ViewModelMeasure {
-  /** From the right palm to the grip of the gun it holds; null without arms. */
+  /** From the middle of the right fist to the grip of the gun it holds; null without arms. */
   right: number | null;
-  /** From the left hand to where it should be: the support point (moved by a reload or pump) or the second gun's grip; null when it is off the gun. */
+  /** From the middle of the left fist to where it should close: the support point (moved by a reload or pump) or the second gun's grip; null when it is off the gun. */
   left: number | null;
   /** Each muzzle in the camera's normalised device coordinates: on screen within ±1. */
   muzzles: number[][];
+  /**
+   * Each hand on the weapon, where its knuckles (the middle finger's first joint) are in the
+   * camera's normalised device coordinates: on screen within ±1. Null for a hand off the weapon,
+   * or without arms.
+   */
+  hands: { right: number[] | null; left: number[] | null };
+  /**
+   * How squarely the left palm faces up into the gun it holds from below: the dot product of its
+   * facing with the gun's up, 1 for straight up. Null while that hand is off the support.
+   */
+  supportFacing: number | null;
+  /**
+   * How far each wrist on the weapon bends from straight (Rig.wristBend), in radians; null for a
+   * hand off the weapon, or without arms.
+   */
+  wrist: { right: number | null; left: number | null };
   /** Triangles the arms draw. */
   armTriangles: number;
 }
@@ -87,11 +103,15 @@ export interface ViewModelMeasure {
 /** Teams whose arms could not be built from their model: told once a page, then shown without arms. */
 const brokenArms = new Set<Team>();
 
-/** A team's soldier model, from the art manifest's arms files; null if it did not load. */
-function armsTemplate(team: Team): THREE.Object3D | null {
+/**
+ * A team's soldier model (the neutral one without a team) and its file, from the art manifest's
+ * arms files; null if it did not load.
+ */
+function armsTemplate(team: Team): { file: string; scene: THREE.Object3D } | null {
   const art = armsArt();
-  const file = art && (team === Team.RED ? art.files.red : art.files.blue);
-  return (file && loadedArt()?.models.get(file)?.scene) || null;
+  const file = art && teamFile(art.files, team);
+  const scene = file && loadedArt()?.models.get(file)?.scene;
+  return file && scene ? { file, scene } : null;
 }
 
 /**
@@ -138,29 +158,13 @@ function armsGeometry(mesh: THREE.SkinnedMesh, rig: Rig): THREE.BufferGeometry {
 }
 
 /**
- * A hand's frame from its own bones: along the palm to the middle finger, then across it toward
- * the index finger, then square to both.
- */
-function handBasis(rig: Rig, side: Side, basis: THREE.Matrix4): THREE.Matrix4 {
-  const bone = (name: string) => rig.bones[`hand${side}`].getObjectByName(`${name}${side}1`)!.position;
-  return basis3(bone("middle").clone(), bone("index").clone().sub(bone("pinky")), basis);
-}
-
-/** An orthonormal basis whose first axis is `along` and whose second lies toward `across`. */
-function basis3(along: THREE.Vector3, across: THREE.Vector3, basis: THREE.Matrix4): THREE.Matrix4 {
-  along.normalize();
-  across.addScaledVector(along, -across.dot(along)).normalize();
-  return basis.makeBasis(along, across, new THREE.Vector3().crossVectors(along, across));
-}
-
-/**
  * A team's arms, or null without their model. A model they can't be built from is told once and
  * remembered (brokenArms), and leaves nothing of its own behind: the arms' geometry is made last.
  */
 function buildArms(team: Team): Arms | null {
   const template = armsTemplate(team);
   if (!template) return null;
-  const model = cloneSkinned(template);
+  const model = cloneSkinned(template.scene);
   toLambert(model);
   try {
     const rig = new Rig(model);
@@ -170,14 +174,10 @@ function buildArms(team: Team): Arms | null {
     });
     if (!mesh) throw new Error("no skinned mesh");
     const skinned: THREE.SkinnedMesh = mesh;
-    // The hand frame that lines its palm up with SUPPORT_*: wanted · own⁻¹ (orthonormal, so transposed).
-    const own = handBasis(rig, "L", new THREE.Matrix4()).transpose();
-    const wanted = basis3(SUPPORT_FINGERS.clone(), SUPPORT_INDEX.clone(), new THREE.Matrix4());
-    const supportTurn = new THREE.Quaternion().setFromRotationMatrix(wanted.multiply(own));
     skinned.geometry = armsGeometry(skinned, rig);
     // The pose decides what is in view, not the bounds of the rest pose.
     skinned.frustumCulled = false;
-    return { team, model, mesh: skinned, rig, supportTurn };
+    return { team, file: template.file, model, mesh: skinned, rig };
   } catch (error) {
     brokenArms.add(team);
     console.warn(`[art] first-person arms: ${error instanceof Error ? error.message : String(error)}`);
@@ -217,8 +217,9 @@ export class ViewModel {
     muzzles: [],
     support: null,
     back: new THREE.Vector3(0, 0, 1),
-    palm: { R: new THREE.Vector3(), L: new THREE.Vector3() },
+    fist: { R: new THREE.Vector3(), L: new THREE.Vector3() },
     turn: { R: new THREE.Quaternion(), L: new THREE.Quaternion() },
+    closed: false,
     shoulders: { R: null, L: null },
   };
   private readonly flash: ParticleBatch;
@@ -234,9 +235,12 @@ export class ViewModel {
   /** The left hand's offsets this frame, as fractions of the reload reach and the pump stroke. */
   private reloadOut = 0;
   private cycle = 0;
-  /** Where the left wrist was sent last, in the world, for measure(), while it holds the support. */
+  /** Where the left fist was last closed, in the world (the support point, moved by a reload or pump), for measure(), while it holds the support. */
   private readonly leftTarget = new THREE.Vector3();
   private leftOnSupport = false;
+  /** The share of a throw still to play, and the weapon to show once it is over. */
+  private throwLeft = 0;
+  private afterThrow = WeaponKind.UNSPECIFIED;
 
   constructor() {
     // The world's outdoor sky and sun (world.ts), on the same Lambert models as the soldiers in it.
@@ -270,7 +274,7 @@ export class ViewModel {
     this.setWeapon(WeaponKind.RIFLE);
   }
 
-  /** The arms in the local player's team colour. */
+  /** The arms in the local player's team colour, or the neutral uniform without a team (free-for-all). */
   setTeam(team: Team): void {
     if (this.arms?.team === team || (!this.arms && brokenArms.has(team))) return;
     this.dropArms();
@@ -280,6 +284,11 @@ export class ViewModel {
   }
 
   setWeapon(kind: WeaponKind): void {
+    // A throw plays to its end with the grenade in hand; what comes next waits for it.
+    if (this.throwLeft > 0) {
+      this.afterThrow = kind;
+      return;
+    }
     if (kind === this.kind) return;
     this.kind = kind;
     const art = weaponArt(kind);
@@ -303,7 +312,7 @@ export class ViewModel {
     this.rig.updateMatrixWorld(true);
     const inRig = (point: THREE.Vector3) => this.rig.worldToLocal(point);
     const support = art?.fp.support ?? art?.tp.support;
-    const palm = new THREE.Vector3().fromArray(art?.tp.position ?? [0, 0, 0]);
+    const fist = new THREE.Vector3().fromArray(art?.tp.position ?? [0, 0, 0]);
     const turn = new THREE.Quaternion().setFromEuler(new THREE.Euler().fromArray([...(art?.tp.rotation ?? [0, 0, 0]), "XYZ"] as [number, number, number, THREE.EulerOrder]));
     this.held = {
       art,
@@ -312,8 +321,9 @@ export class ViewModel {
       support: art && !art.fp.oneHanded && guns.length === 1 && support ? new THREE.Vector3().fromArray(support).applyMatrix4(right.gun.matrix) : null,
       back: new THREE.Vector3(0, 0, 1).applyQuaternion(right.gun.quaternion),
       // A rig's left bones mirror its right ones: x negated, and a turn (x, y, z, w) is (x, −y, −z, w).
-      palm: { R: palm, L: palm.clone().setX(-palm.x) },
+      fist: { R: fist, L: fist.clone().setX(-fist.x) },
       turn: { R: turn, L: new THREE.Quaternion(turn.x, -turn.y, -turn.z, turn.w) },
+      closed: !!(art && characterArt()?.holds?.[art.hold]?.fist),
       shoulders: { R: null, L: null },
     };
     this.fit();
@@ -360,6 +370,15 @@ export class ViewModel {
     this.flash.spawn(p);
   }
 
+  /**
+   * Throws the grenade in hand: the arm draws back and whips forward, letting go on the way. The
+   * weapon set meanwhile (setWeapon) comes up from below when the throw is over.
+   */
+  throwGrenade(): void {
+    this.throwLeft = 1;
+    this.afterThrow = this.kind;
+  }
+
   /** Where the muzzle that fired last is in the view, in normalised device coordinates. */
   muzzleNdc(target: THREE.Vector3): THREE.Vector3 {
     const muzzles = this.held.muzzles;
@@ -395,36 +414,78 @@ export class ViewModel {
     // Knife: a slash across from the right, recovering to the guard.
     const slash = this.swing > 0 ? Math.sin((1 - this.swing) * Math.PI) : 0;
 
+    // Throw: drawn back and up over the shoulder, then whipped forward and down out of view.
+    let windUp = 0;
+    let whip = 0;
+    if (this.throwLeft > 0) {
+      this.throwLeft = Math.max(0, this.throwLeft - dt / THROW_TIME);
+      const p = 1 - this.throwLeft;
+      windUp = p < THROW_RELEASE ? Math.sin((p / THROW_RELEASE) * (Math.PI / 2)) : Math.max(0, 1 - (p - THROW_RELEASE) / 0.2);
+      whip = p < THROW_RELEASE ? 0 : Math.sin(((p - THROW_RELEASE) / (1 - THROW_RELEASE)) * Math.PI);
+      for (const gun of this.held.guns) gun.visible = p < THROW_RELEASE;
+      if (this.throwLeft === 0) this.endThrow();
+    }
+
     const fp = this.held.art?.fp;
     const kick = this.kick * (fp?.kickScale ?? 1);
     const [offsetX, offsetY, offsetZ] = fp?.rigOffset ?? [0, 0, 0];
     this.rig.position.set(
-      0.2 + offsetX + bobX - slash * 0.2,
-      -0.19 + offsetY - bobY - dip * 0.08 - cycle * 0.03 - this.lowered * 0.5 + slash * 0.04,
-      -0.42 + offsetZ + kick * 0.028 - slash * 0.1,
+      0.2 + offsetX + bobX - slash * 0.2 + windUp * 0.04,
+      -0.19 + offsetY - bobY - dip * 0.08 - cycle * 0.03 - this.lowered * 0.5 + slash * 0.04 + windUp * 0.07 - whip * 0.22,
+      -0.42 + offsetZ + kick * 0.028 - slash * 0.1 + windUp * 0.1 - whip * 0.16,
     );
-    this.rig.rotation.set(kick * 0.03 + dip * 0.5 + cycle * 0.12 + slash * 0.1, slash * 0.8, dip * 0.28 + cycle * 0.2 + slash * 0.3);
+    this.rig.rotation.set(
+      kick * 0.03 + dip * 0.5 + cycle * 0.12 + slash * 0.1 - windUp * 0.5 + whip * 0.9,
+      slash * 0.8,
+      dip * 0.28 + cycle * 0.2 + slash * 0.3 + windUp * 0.15,
+    );
     this.pose();
+  }
+
+  /** The throw is over: the grenade's place in hand is filled again, and a new weapon comes up from below. */
+  private endThrow(): void {
+    for (const gun of this.held.guns) gun.visible = true;
+    const next = this.afterThrow;
+    this.afterThrow = WeaponKind.UNSPECIFIED;
+    if (next === WeaponKind.UNSPECIFIED || next === this.kind) return;
+    this.setWeapon(next);
+    this.lowered = Math.max(this.lowered, 0.8);
   }
 
   /** Where everything the bench checks is, for the ?art page and e2e/art.mjs. */
   measure(): ViewModelMeasure {
     this.scene.updateMatrixWorld(true);
     this.camera.updateMatrixWorld();
-    const { guns, art, palm } = this.held;
+    const { guns, art, fist } = this.held;
     let right: number | null = null;
     let left: number | null = null;
+    const hands: ViewModelMeasure["hands"] = { right: null, left: null };
+    const wrist: ViewModelMeasure["wrist"] = { right: null, left: null };
+    let supportFacing: number | null = null;
     if (this.arms?.model.visible && art) {
       const b = this.arms.rig.bones;
-      const grip = (side: Side, gun: THREE.Object3D) => b[`hand${side}`].localToWorld(scratch.a.copy(palm[side])).distanceTo(gun.getWorldPosition(scratch.b));
-      right = grip("R", guns[0]);
-      if (guns.length > 1) left = grip("L", guns[1]);
-      else if (this.leftOnSupport) left = b.handL.getWorldPosition(scratch.a).distanceTo(this.leftTarget);
+      const fistAt = (side: Side) => b[`hand${side}`].localToWorld(scratch.a.copy(fist[side]));
+      const knuckles = (side: Side) => b[`hand${side}`].getObjectByName(`middle${side}2`)!.getWorldPosition(new THREE.Vector3()).project(this.camera).toArray();
+      right = fistAt("R").distanceTo(guns[0].getWorldPosition(scratch.b));
+      hands.right = knuckles("R");
+      wrist.right = this.arms.rig.wristBend("R");
+      if (guns.length > 1) left = fistAt("L").distanceTo(guns[1].getWorldPosition(scratch.b));
+      else if (this.leftOnSupport) {
+        left = fistAt("L").distanceTo(this.leftTarget);
+        supportFacing = this.arms.rig.palmFacing("L").dot(new THREE.Vector3(0, 1, 0).applyQuaternion(guns[0].getWorldQuaternion(scratch.turn)));
+      }
+      if (left !== null) {
+        hands.left = knuckles("L");
+        wrist.left = this.arms.rig.wristBend("L");
+      }
     }
     return {
       right,
       left,
       muzzles: this.held.muzzles.map((muzzle) => this.rig.localToWorld(scratch.a.copy(muzzle)).project(this.camera).toArray()),
+      hands,
+      supportFacing,
+      wrist,
       armTriangles: this.arms ? this.arms.mesh.geometry.index!.count / 3 : 0,
     };
   }
@@ -468,7 +529,7 @@ export class ViewModel {
     rig.restore();
     const character = characterArt();
     const clipName = character?.holds?.[art.hold]?.clip ?? character?.clips.idle;
-    const clip = clipName && loadedArt()?.models.get(armsArt()!.files[arms.team === Team.RED ? "red" : "blue"])?.animations.find((item) => item.name === clipName);
+    const clip = clipName && loadedArt()?.models.get(arms.file)?.animations.find((item) => item.name === clipName);
     if (clip) poseAtStart(arms.model, clip);
     rig.capture();
 
@@ -481,14 +542,18 @@ export class ViewModel {
       (b.upperArmR.getWorldPosition(scratch.a).distanceTo(b.foreArmR.getWorldPosition(scratch.b)) + scratch.b.distanceTo(b.handR.getWorldPosition(scratch.c))) /
       this.rig.getWorldScale(scratch.c).x;
     const shoulder = (side: Side, wrist: THREE.Vector3) => wrist.addScaledVector(SHOULDER[side], SHOULDER_REACH * length);
+    // The rig is where this frame put it, so each wrist is worked out in the world and brought back.
     const restWrist = (side: Side, gun: THREE.Object3D) => {
-      // The rig is where this frame put it, so the wrist is worked out in the world and brought back.
       this.handHold(side, gun, scratch.wrist, scratch.hand);
+      return inRig(scratch.wrist.clone());
+    };
+    const supportWrist = (point: THREE.Vector3) => {
+      this.supportHold(guns[0], this.rig.localToWorld(scratch.a.copy(point)), scratch.wrist, scratch.hand);
       return inRig(scratch.wrist.clone());
     };
     const shoulders: Record<Side, THREE.Vector3 | null> = { R: shoulder("R", restWrist("R", guns[0])), L: null };
     if (guns.length > 1) shoulders.L = shoulder("L", restWrist("L", guns[1]));
-    else if (support) shoulders.L = shoulder("L", support.clone());
+    else if (support) shoulders.L = shoulder("L", supportWrist(support));
     this.held.shoulders = shoulders;
     // The right shoulder where its clavicle already puts it, so only the left one moves.
     this.armsRoot.position.add(shoulders.R!.clone().sub(inRig(b.upperArmR.getWorldPosition(scratch.a))));
@@ -497,33 +562,48 @@ export class ViewModel {
 
   /** The world place (of the wrist) and turn the hand on `side` takes to hold `gun` as tp says. */
   private handHold(side: Side, gun: THREE.Object3D, wrist: THREE.Vector3, rotation: THREE.Quaternion): void {
-    // The hand's turn is the gun's, less the gun's turn in the palm.
+    // The hand's turn is the gun's, less the gun's turn in the fist.
     gun.getWorldQuaternion(rotation).multiply(scratch.turn.copy(this.held.turn[side]).invert());
+    this.wristFor(side, gun.getWorldPosition(wrist), rotation);
+  }
+
+  /** The world place (of the wrist) and turn the left hand takes to close its fist round the world point `point` on `gun`, from below. */
+  private supportHold(gun: THREE.Object3D, point: THREE.Vector3, wrist: THREE.Vector3, rotation: THREE.Quaternion): void {
+    gun.getWorldQuaternion(rotation).multiply(this.arms!.rig.supportTurn);
+    this.wristFor("L", wrist.copy(point), rotation);
+  }
+
+  /** Turns a world point the fist on `side` closes round into where that hand's wrist is, the hand turned to `rotation`. */
+  private wristFor(side: Side, point: THREE.Vector3, rotation: THREE.Quaternion): void {
     const scale = this.arms!.rig.bones[`hand${side}`].getWorldScale(scratch.b).x;
-    gun.getWorldPosition(wrist).sub(scratch.c.copy(this.held.palm[side]).multiplyScalar(scale).applyQuaternion(rotation));
+    point.sub(scratch.c.copy(this.held.fist[side]).multiplyScalar(scale).applyQuaternion(rotation));
   }
 
   /** Poses the arms on the gun for this frame. */
   private pose(): void {
     const arms = this.arms;
-    const { art, guns, shoulders, support, back } = this.held;
+    const { art, guns, shoulders, support, back, fist, closed } = this.held;
     this.leftOnSupport = false;
     if (!arms || !art || !guns.length || !shoulders.R) return;
     const rig = arms.rig;
     rig.restore();
+    // After restore(), so the clip pose that it puts back never keeps the closed finger: the clip
+    // may not move every joint of it.
+    if (closed) rig.closeIndex("R");
     this.rig.updateMatrixWorld(true);
     const world = (point: THREE.Vector3) => this.rig.localToWorld(point);
-    const reach = (side: Side, wrist: THREE.Vector3) => {
-      const at = world(scratch.a.copy(shoulders[side]!));
-      rig.moveShoulder(side, at);
-      const pole = world(scratch.pole.copy(shoulders[side]!).add(POLE[side]));
-      rig.reachWrist(side, wrist, pole);
+    // Each shoulder where fit() put it; returns the point its elbow bends toward.
+    const shoulder = (side: Side) => {
+      rig.moveShoulder(side, world(scratch.a.copy(shoulders[side]!)));
+      return world(scratch.pole.copy(shoulders[side]!).add(POLE[side]));
+    };
+    // The hand on `side` holds `gun` by its grip as tp says.
+    const grip = (side: Side, gun: THREE.Object3D) => {
+      const turn = gun.getWorldQuaternion(scratch.hand).multiply(scratch.turn.copy(this.held.turn[side]).invert());
+      rig.closeFist(side, gun.getWorldPosition(scratch.wrist), turn, fist[side], shoulder(side));
     };
 
-    this.handHold("R", guns[0], scratch.wrist, scratch.hand);
-    reach("R", scratch.wrist);
-    rig.orientHand("R", scratch.hand);
-
+    grip("R", guns[0]);
     if (!shoulders.L) {
       // One-handed: the left arm folds away to nothing at its shoulder, below the view.
       rig.bones.clavicleL.scale.setScalar(0);
@@ -531,14 +611,12 @@ export class ViewModel {
     }
     rig.mirrorFingers();
     if (guns.length > 1) {
-      this.handHold("L", guns[1], scratch.wrist, scratch.hand);
-      reach("L", scratch.wrist);
-      rig.orientHand("L", scratch.hand);
+      grip("L", guns[1]);
       return;
     }
     world(this.leftTarget.copy(support!).addScaledVector(RELOAD_REACH, this.reloadOut).addScaledVector(back, this.cycle * (art.fp.pump ?? 0)));
     this.leftOnSupport = true;
-    reach("L", this.leftTarget);
-    rig.orientHand("L", guns[0].getWorldQuaternion(scratch.hand).multiply(arms.supportTurn));
+    const turn = guns[0].getWorldQuaternion(scratch.hand).multiply(rig.supportTurn);
+    rig.closeFist("L", this.leftTarget, turn, fist.L, shoulder("L"));
   }
 }

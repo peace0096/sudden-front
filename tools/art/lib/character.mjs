@@ -3,7 +3,7 @@
 // clip names, the team colour painted into its uniform, ≤ 5,000 triangles in one draw call.
 import { joinPrimitives, palette, resample } from "@gltf-transform/functions";
 import { HEAD_TOP } from "../inspect.mjs";
-import { eulerXYZ, invert, multiply, rotation, round, transformPoint } from "./math.mjs";
+import { add, eulerXYZ, fitCircle, invert, multiply, normalize, rotation, round, scale, sub, transformPoint, transformVector } from "./math.mjs";
 import { bakeSkinned, decimate, poseAtStart } from "./normalize.mjs";
 import { hexToLinear, readSource, triangles, writeGlb } from "./scene.mjs";
 
@@ -181,9 +181,25 @@ function measureRest(doc, head) {
 }
 
 /**
+ * Where the right fist closes in the holdRifle pose, in world space: the middle, ring and little
+ * fingers each curl round the grip, so the circle through a finger's knuckle, joints and tip has
+ * the grip's line through its centre. The centres' mean is the grip's place, and the line from the
+ * little finger's centre to the middle finger's runs up the grip. (The index finger lies straight
+ * along the gun, on the trigger.)
+ */
+function fistHole(posed, find) {
+  const rings = ["middle", "ring", "pinky"].map((finger) => fitCircle(["2", "3", "4", "4End"].map((joint) => find(posed, `${finger}R${joint}`).getWorldTranslation())));
+  return {
+    centre: scale(rings.map((ring) => ring.centre).reduce(add), 1 / rings.length),
+    up: normalize(sub(rings[0].centre, rings[2].centre)),
+    radius: rings.reduce((sum, ring) => sum + ring.radius, 0) / rings.length,
+  };
+}
+
+/**
  * What the manifest and Phase 3 need from the finished rig: which way it faces, its head height,
  * and where a gun sits in the right hand while holding the rifle pose, as a placement relative
- * to the handR bone. The gun's grip is at its origin and its barrel along −Z.
+ * to the handR bone: its grip (the gun's origin, barrel along −Z) through the middle of the fist.
  */
 function describeRig(doc) {
   const find = (d, name) => d.getRoot().listNodes().find((node) => node.getName() === name);
@@ -192,15 +208,16 @@ function describeRig(doc) {
   const head = find(doc, "head").getWorldTranslation();
   const posed = poseAtStart(doc, "holdRifle");
   const hand = find(posed, "handR").getWorldMatrix();
-  // The palm: the middle finger's first bone spans it (handR → middleR1 is only the wrist joint).
-  const palmStart = find(posed, "middleR1").getWorldTranslation();
-  const palmEnd = find(posed, "middleR2").getWorldTranslation();
-  const palm = palmStart.map((value, i) => (value + palmEnd[i]) / 2);
+  const fist = fistHole(posed, find);
   // The model faces +Z; a gun pointing that way has its −Z turned half a circle about Y.
   const gun = rotation("y", 180);
   const handRotation = hand.slice();
   handRotation[12] = handRotation[13] = handRotation[14] = 0;
   const local = multiply(invert(handRotation), gun);
+  // The grip's line in the gun's frame (+Y up, −Z forward), and how far it leans: forward of
+  // straight up (as a pistol grip slopes back from the trigger) and to the gun's right.
+  const up = transformVector(invert(gun), fist.up);
+  const degrees = (radians) => round((radians * 180) / Math.PI, 1);
   return {
     forwardYaw: round(Math.PI, 6),
     headJoint: round(head[1], 4),
@@ -208,10 +225,13 @@ function describeRig(doc) {
     hips: hips.map((value) => round(value, 4)),
     feet: round(footL[1], 4),
     gripInHand: {
-      position: transformPoint(invert(hand), palm).map((value) => round(value, 4)),
+      position: transformPoint(invert(hand), fist.centre).map((value) => round(value, 4)),
       rotation: eulerXYZ(local).map((value) => round(value, 4)),
     },
-    palmInRifleHold: palm.map((value) => round(value, 4)),
+    gripAxis: up.map((value) => round(value, 3)),
+    gripLean: { forward: degrees(Math.atan2(-up[2], up[1])), right: degrees(Math.atan2(up[0], up[1])) },
+    fistRadius: round(fist.radius, 3),
+    gripInRifleHold: fist.centre.map((value) => round(value, 4)),
     bones: doc.getRoot().listSkins()[0].listJoints().map((joint) => joint.getName()),
     clips: doc.getRoot().listAnimations().map((animation) => animation.getName()),
     triangles: triangles(doc),

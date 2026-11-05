@@ -5,7 +5,7 @@
 // their four colours) and the effect atlases cell by cell. A bench then puts real Characters (the
 // game's remote soldier) through standing, crouching, aiming, head sizes, death and every weapon,
 // and measures them against the hitboxes; a second bench puts the game's first-person view model
-// through every weapon's idle, kick, reload, bolt or pump cycle and knife swing, and measures its
+// through every weapon's idle, kick, reload, bolt or pump cycle, knife swing and grenade throw, and measures its
 // hands on the gun, its muzzles on screen and its draw calls; a map bench builds a small map that
 // holds every BoxKind and PropKind with the game's buildWorld and measures each kit copy against
 // the box it fills, and the map's draw calls; and an effects bench (effects-bench.ts) runs the
@@ -183,6 +183,19 @@ function characterCard(viewer: Viewer, team: string, file: string, gltf: GLTF, p
 
 // ------------------------------------------------------------------ the character bench
 
+/**
+ * Degrees the knife hand's wrist may bend from straight, in both views (e2e/art.mjs holds it there):
+ * the knife's tip points where the arm puts it, never where a bent wrist does.
+ */
+const KNIFE_WRIST_LIMIT = 20;
+
+/** Each wrist's bend from straight, in degrees, and whether the knife hand keeps within its limit. */
+function wristFact(facts: HTMLDListElement, wrist: { right: number | null; left: number | null }, weapon: WeaponKind | undefined): void {
+  const degrees = (radians: number | null) => (radians === null ? "—" : `${THREE.MathUtils.radToDeg(radians).toFixed(1)}°`);
+  const straight = wrist.right !== null && THREE.MathUtils.radToDeg(wrist.right) <= KNIFE_WRIST_LIMIT;
+  fact(facts, "손목 꺾임 (오른 · 왼)", `${degrees(wrist.right)} · ${degrees(wrist.left)}`, weapon === WeaponKind.KNIFE ? (straight ? "ok" : "over") : undefined);
+}
+
 /** The rifle's ground speed (server weapons.rs: 5.2 × SPEED_SCALE 0.9) and half of it crouched. */
 const RUN_SPEED = 4.68;
 const CROUCH_SPEED = RUN_SPEED / 2;
@@ -203,6 +216,7 @@ function benchStates(): BenchState[] {
     { id: "shield", label: "방패병 (권총 + 방패)", weapon: WeaponKind.PISTOL, shielded: true },
     { id: "stunned", label: "마비 (테이저)", stunned: true },
     { id: "blue", label: "BLUE 팀", team: Team.BLUE },
+    { id: "neutral", label: "개인전 (중립 군복)", team: Team.UNSPECIFIED },
     { id: "run", label: "달리기", moving: { speed: RUN_SPEED, heading: 0 } },
     { id: "strafe", label: "오른쪽으로 달리기", moving: { speed: RUN_SPEED, heading: Math.PI / 2 } },
     { id: "diagonal", label: "대각선 앞오른쪽", moving: { speed: RUN_SPEED, heading: Math.PI / 4 } },
@@ -265,15 +279,27 @@ function benchCard(viewer: Viewer, state: BenchState, report: ArtReport): HTMLEl
   const threeQuarter = new THREE.PerspectiveCamera(30, width / height, 0.1, 30);
   threeQuarter.position.set(-2.4, 1.7, -3.6);
   threeQuarter.lookAt(0, 0.95, 0);
+  const views = [
+    { camera: threeQuarter, x: 0, width },
+    { camera: side, x: width, width },
+  ];
+  // A weapon's states add two close-ups of the hands on it, from its right and from below on its
+  // left, aimed a little ahead of the grip so the support hand is in view too.
+  if (state.weapon !== undefined) {
+    const hands = new THREE.Vector3().fromArray(measured.grip).add(new THREE.Vector3(0, 0, -0.1));
+    for (const offset of [new THREE.Vector3(0.62, 0.22, -0.5), new THREE.Vector3(-0.55, -0.28, -0.55)]) {
+      const closeUp = new THREE.PerspectiveCamera(32, width / height, 0.05, 10);
+      closeUp.position.copy(hands).add(offset);
+      closeUp.lookAt(hands);
+      views.push({ camera: closeUp, x: width * views.length, width });
+    }
+  }
   viewer.addCell({
     canvas,
-    width: width * 2,
+    width: width * views.length,
     height,
     scene,
-    views: [
-      { camera: threeQuarter, x: 0, width },
-      { camera: side, x: width, width },
-    ],
+    views,
     // Moving states keep moving; the rest hold the pose they were measured in.
     tick: state.moving ? () => drive(character, state, BENCH_DT, clock) : undefined,
   });
@@ -286,7 +312,8 @@ function benchCard(viewer: Viewer, state: BenchState, report: ArtReport): HTMLEl
   const top = 1.5 + 0.26 * scale - (state.crouch ? 0.5 : 0);
   fact(facts, "머리 꼭대기", `${measured.headTop.toFixed(3)} m (히트박스 ${top.toFixed(3)})`, state.alive === false ? undefined : Math.abs(measured.headTop - top) <= 0.05 * scale ? "ok" : "over");
   fact(facts, "발바닥 (왼 · 오른)", `${measured.feet.map((y) => y.toFixed(3)).join(" · ")} m`, state.alive === false || state.moving ? undefined : measured.feet.every((y) => y >= -0.03 && y <= 0.05) ? "ok" : "over");
-  fact(facts, "총구", `앞으로 ${measured.muzzleAhead.toFixed(2)} m · 조준과 ${THREE.MathUtils.radToDeg(measured.gunToAim).toFixed(1)}°${measured.support === null ? "" : ` · 왼손 ${(measured.support * 100).toFixed(1)} cm`}`);
+  fact(facts, "총구", `앞으로 ${measured.muzzleAhead.toFixed(2)} m · 조준과 ${THREE.MathUtils.radToDeg(measured.gunToAim).toFixed(1)}°${measured.support === null ? "" : ` · 왼손 ${(measured.support * 100).toFixed(1)} cm, 손바닥 ${measured.supportFacing?.toFixed(2)}`}`);
+  wristFact(facts, measured.wrist, state.weapon);
   fact(facts, "draw call", `${calls}`);
   root.append(facts);
   report.bench[state.id] = {
@@ -308,7 +335,7 @@ function benchCard(viewer: Viewer, state: BenchState, report: ArtReport): HTMLEl
 // ------------------------------------------------------------------ the first-person bench
 
 /** A moment the first-person bench holds a real ViewModel in. */
-type FirstPersonPose = "idle" | "kick" | "reload" | "cycle" | "swing";
+type FirstPersonPose = "idle" | "kick" | "reload" | "cycle" | "swing" | "throw";
 
 interface FirstPersonState {
   id: string;
@@ -331,20 +358,22 @@ export interface FirstPersonResult extends ViewModelMeasure {
   calls: number;
 }
 
-const POSE_LABELS: Record<FirstPersonPose, string> = { idle: "대기", kick: "발사 반동", reload: "장전 중간", cycle: "노리쇠·펌프 중간", swing: "베기" };
+const POSE_LABELS: Record<FirstPersonPose, string> = { idle: "대기", kick: "발사 반동", reload: "장전 중간", cycle: "노리쇠·펌프 중간", swing: "베기", throw: "던지기" };
 /** Guns whose shots are followed by a bolt or pump cycle: the server's hasScope and shellReload ones. */
 const CYCLING = [WeaponKind.SNIPER, WeaponKind.SHOTGUN];
 const FP_DT = 1 / 30;
-/** The bench's cells, at the game's aspect. */
+/** The bench's cells, at the game's aspect; idle ones larger, to see how the hands hold the weapon. */
 const FP_VIEW = { width: 320, height: 180 };
+const FP_IDLE_VIEW = { width: 480, height: 270 };
 
 function firstPersonStates(kinds: WeaponKind[]): FirstPersonState[] {
   const states: FirstPersonState[] = [];
   const add = (weapon: WeaponKind, pose: FirstPersonPose, team = Team.RED, shield = false) => {
-    const blue = team === Team.BLUE;
+    // Red is the default look; the others say theirs.
+    const look = team === Team.BLUE ? { id: ":blue", label: " (BLUE)" } : team === Team.RED ? { id: "", label: "" } : { id: ":neutral", label: " (개인전)" };
     states.push({
-      id: `fp:${WeaponKind[weapon]}:${pose}${blue ? ":blue" : ""}${shield ? ":shield" : ""}`,
-      label: `${WeaponKind[weapon]} — ${POSE_LABELS[pose]}${blue ? " (BLUE)" : ""}${shield ? " + 방패" : ""}`,
+      id: `fp:${WeaponKind[weapon]}:${pose}${look.id}${shield ? ":shield" : ""}`,
+      label: `${WeaponKind[weapon]} — ${POSE_LABELS[pose]}${look.label}${shield ? " + 방패" : ""}`,
       weapon,
       team,
       pose,
@@ -355,6 +384,8 @@ function firstPersonStates(kinds: WeaponKind[]): FirstPersonState[] {
     add(kind, "idle");
     if (kind === WeaponKind.KNIFE) {
       add(kind, "swing");
+    } else if (kind === WeaponKind.GRENADE) {
+      add(kind, "throw");
     } else {
       add(kind, "kick");
       add(kind, "reload");
@@ -363,7 +394,20 @@ function firstPersonStates(kinds: WeaponKind[]): FirstPersonState[] {
     add(kind, "idle", Team.BLUE);
   }
   add(WeaponKind.PISTOL, "idle", Team.RED, true);
+  // The free-for-all's neutral sleeves, on the weapon every player carries.
+  add(WeaponKind.KNIFE, "idle", Team.UNSPECIFIED);
   return states;
+}
+
+/**
+ * The hands that must show at rest: the one on the grip of a one-handed weapon or of each akimbo
+ * gun, and the support hand of a two-handed gun (a long gun's right hand may sit below the view).
+ */
+function handsInView(weapon: WeaponKind, measured: ViewModelMeasure): (number[] | null)[] {
+  const art = weaponArt(weapon);
+  if (!art) return [];
+  if (art.fp.handX !== undefined) return [measured.hands.right, measured.hands.left];
+  return [art.fp.oneHanded ? measured.hands.right : measured.hands.left];
 }
 
 /** Drives a view model the way game.ts does, a third of a second at rest, then into `pose`. */
@@ -382,32 +426,43 @@ function holdPose(viewModel: ViewModel, pose: FirstPersonPose): void {
     // The slash at its widest, halfway through the swing.
     viewModel.fire();
     viewModel.update(0.5 / 3.4, false, 0, 0, true);
+  } else if (pose === "throw") {
+    // Drawn back over the shoulder, a quarter of the way through: the grenade is still in hand.
+    viewModel.throwGrenade();
+    viewModel.update(0.12, false, 0, 0, true);
   }
 }
 
 function firstPersonCard(viewer: Viewer, state: FirstPersonState, report: ArtReport): HTMLElement {
-  const root = el("article", "art-card art-card-fp");
+  const root = el("article", state.pose === "idle" ? "art-card art-card-fp art-card-fp-idle" : "art-card art-card-fp");
   root.dataset.state = state.id;
   const canvas = el("canvas");
   root.append(el("h3", "", state.label), canvas);
+  const view = state.pose === "idle" ? FP_IDLE_VIEW : FP_VIEW;
   const viewModel = new ViewModel();
   viewModel.setTeam(state.team);
   viewModel.setWeapon(state.weapon);
   viewModel.setShield(state.shield);
-  viewModel.setAspect(FP_VIEW.width / FP_VIEW.height);
+  viewModel.setAspect(view.width / view.height);
   holdPose(viewModel, state.pose);
   const measured = viewModel.measure();
   const calls = viewer.drawCalls(viewModel.scene, viewModel.camera);
   // The outdoor sky's colour behind it; the game draws it over the world instead.
   viewModel.scene.background = new THREE.Color(0xb8cfdc);
-  viewer.addCell({ canvas, width: FP_VIEW.width, height: FP_VIEW.height, scene: viewModel.scene, views: [{ camera: viewModel.camera, x: 0, width: FP_VIEW.width }] });
+  viewer.addCell({ canvas, width: view.width, height: view.height, scene: viewModel.scene, views: [{ camera: viewModel.camera, x: 0, width: view.width }] });
 
   const art = weaponArt(state.weapon);
   const twoHanded = !!art && !art.fp.oneHanded;
   const mm = (metres: number | null) => (metres === null ? "없음" : `${(metres * 1000).toFixed(2)} mm`);
   const facts = el("dl", "art-facts");
   const held = measured.right !== null && measured.right <= 0.015 && (twoHanded ? measured.left !== null && measured.left <= 0.015 : measured.left === null);
-  fact(facts, "손 (오른 · 왼)", `${mm(measured.right)} · ${twoHanded ? mm(measured.left) : "총에서 뗌"}`, held ? "ok" : "over");
+  fact(facts, "주먹 (오른 · 왼)", `${mm(measured.right)} · ${twoHanded ? mm(measured.left) : "총에서 뗌"}`, held ? "ok" : "over");
+  if (measured.supportFacing !== null) fact(facts, "받침 손바닥 (위와)", measured.supportFacing.toFixed(2), measured.supportFacing > 0.7 ? "ok" : "over");
+  wristFact(facts, measured.wrist, state.weapon);
+  const shown = (ndc: number[] | null) => ndc !== null && Math.abs(ndc[0]) < 1 && Math.abs(ndc[1]) < 1 && Math.abs(ndc[2]) < 1;
+  const hands = [measured.hands.right, measured.hands.left].filter((ndc): ndc is number[] => ndc !== null);
+  const handsShown = state.pose === "idle" ? (handsInView(state.weapon, measured).every(shown) ? "ok" : "over") : undefined;
+  fact(facts, "손 (화면 좌표)", hands.map((ndc) => ndc.slice(0, 2).map((value) => value.toFixed(2)).join(", ")).join(" / ") || "없음", handsShown);
   const onScreen = measured.muzzles.every(([x, y, z]) => Math.abs(x) < 1 && Math.abs(y) < 1 && Math.abs(z) < 1);
   fact(facts, "총구 (화면 좌표)", measured.muzzles.map((muzzle) => muzzle.slice(0, 2).map((value) => value.toFixed(2)).join(", ")).join(" / "), state.pose === "idle" ? (onScreen ? "ok" : "over") : undefined);
   fact(facts, "draw call", `${calls} (팔 삼각형 ${number(measured.armTriangles)})`, calls <= 5 ? "ok" : "over");
@@ -416,7 +471,7 @@ function firstPersonCard(viewer: Viewer, state: FirstPersonState, report: ArtRep
     ...measured,
     label: state.label,
     weapon: WeaponKind[state.weapon],
-    team: state.team === Team.BLUE ? "blue" : "red",
+    team: state.team === Team.BLUE ? "blue" : state.team === Team.RED ? "red" : "neutral",
     pose: state.pose,
     shield: state.shield,
     twoHanded,
@@ -585,8 +640,8 @@ const PLANE_FRAMING = 0.9;
 function benchMap(): MapData {
   const box = (kind: BoxKind, minX: number, maxX: number, minY: number, maxY: number, minZ: number, maxZ: number) =>
     create(MapBoxSchema, { kind, minX, maxX, minY, maxY, minZ, maxZ });
-  const prop = (kind: PropKind, x: number, y: number, z: number, rotation: number, width = 0, height = 0) =>
-    create(MapPropSchema, { kind, x, y, z, rotation, width, height });
+  const prop = (kind: PropKind, x: number, y: number, z: number, rotation: number, width = 0, height = 0, tilt = 0) =>
+    create(MapPropSchema, { kind, x, y, z, rotation, width, height, tilt });
   return create(MapDataSchema, {
     name: "BENCH",
     id: MapId.SUPPLY_YARD,
@@ -623,8 +678,8 @@ function benchMap(): MapData {
       prop(PropKind.FLOOR_LINE, -11, 0.015, -2.4, Math.PI / 2, 3, 0.16),
       prop(PropKind.LAMP, 14.5, 0, -3, 0),
       prop(PropKind.LAMP, -14.5, 0, 1, Math.PI),
-      prop(PropKind.TILTED_CONTAINER, 2, 1.7, 7.5, 0, 6, 2.4),
-      prop(PropKind.TILTED_CONTAINER, -11, 1.7, 7.5, Math.PI, 6, 2.4),
+      prop(PropKind.TILTED_CONTAINER, 2, 1.7, 7.5, 0, 6, 2.4, TILTED_BOX_TIP),
+      prop(PropKind.TILTED_CONTAINER, -11, 1.7, 7.5, Math.PI, 6, 2.4, TILTED_BOX_TIP),
     ],
   });
 }
@@ -999,7 +1054,7 @@ export async function showArtPreview(root: HTMLElement): Promise<void> {
   contents.append(
     rows([
       ["무기", `${weapons.length}/${kinds.length}${weapons.length ? ` · ${weapons.map((kind) => WeaponKind[kind]).join(", ")}` : ""}`],
-      ["캐릭터", manifest.character ? `${manifest.character.files.red}, ${manifest.character.files.blue}` : "없음"],
+      ["캐릭터", manifest.character ? Object.values(manifest.character.files).join(", ") : "없음"],
       ["1인칭 팔", manifest.arms ? `캐릭터 파일의 팔 삼각형만 (쇄골 아래), ${manifest.arms.scale}배` : "없음"],
       ["투사체", `${count(manifest.projectiles)}개`],
       ["맵", `표면 ${count(manifest.map.surfaces)} · 키트 ${count(manifest.map.kits)} · 소품 ${count(manifest.map.props)}`],

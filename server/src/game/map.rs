@@ -8,6 +8,8 @@ pub struct MapDef {
     pub data: MapData,
     /// Red's spawn points; blue's are the mirror image.
     pub spawns: Vec<(f32, f32)>,
+    /// Free-for-all spawn points, in world coordinates.
+    pub ffa_spawns: Vec<(f32, f32)>,
     /// Places bots head to when they have no contact.
     pub lanes: Vec<(f32, f32)>,
 }
@@ -17,6 +19,17 @@ pub fn build_map(id: MapId) -> MapDef {
         MapId::Warehouse => warehouse(),
         _ => supply_yard(),
     }
+}
+
+/// Free-for-all spawn points: both teams' spawns, plus `open` points elsewhere picked by hand,
+/// each with its mirror image so neither half is favoured. An open point needs headroom, which
+/// rules out doorways and the warehouse's vent tunnel.
+fn ffa_spawns(spawns: &[(f32, f32)], open: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    spawns
+        .iter()
+        .chain(open)
+        .flat_map(|&(x, z)| [(x, z), (-x, -z)])
+        .collect()
 }
 
 fn assemble(
@@ -33,6 +46,10 @@ fn assemble(
     boxes.extend(centre);
     let mut all_props: Vec<MapProp> = props.iter().map(mirror_prop).collect();
     all_props.extend(props);
+    // A leaning container collides as slices that follow it.
+    for p in all_props.iter().filter(|p| p.kind == PropKind::TiltedContainer as i32) {
+        boxes.extend(lean_slices(p));
+    }
     MapData {
         name: name.into(),
         id: id as i32,
@@ -64,7 +81,60 @@ fn prop(kind: PropKind, x: f32, y: f32, z: f32, rotation: f32, width: f32, heigh
         rotation,
         width,
         height,
+        tilt: 0.0,
     }
+}
+
+/// A container's height, which a leaning one keeps: the client's world.ts draws it this tall
+/// (TILTED_HEIGHT).
+const CONTAINER_H: f32 = 2.6;
+/// How far the leaning container tips its +X end up, radians.
+const LEAN: f32 = 0.34;
+/// The longest a leaning container's collision slice is along it: as tall as the container is
+/// anywhere across it, a slice stands at most this × tan(LEAN) (0.18 m) above the slope.
+const LEAN_SLICE: f32 = 0.5;
+
+/// The boxes a leaning container (a TILTED_CONTAINER prop: `width` its length, `height` its depth)
+/// collides as: slices across its length, each from its underside, or the floor, to its top across
+/// the slice. A shot over its low end then flies on, and a slice is a box top to stand on. Exact
+/// for a prop turned by a multiple of a quarter turn, as both of the warehouse's are.
+fn lean_slices(p: &MapProp) -> Vec<MapBox> {
+    let (half_length, half_height, half_depth) = (p.width / 2.0, CONTAINER_H / 2.0, p.height / 2.0);
+    let (sin, cos) = p.tilt.sin_cos();
+    // The container's side tipped over, as (along, up) corners in order round it.
+    let corners: Vec<(f32, f32)> = [(-half_length, -half_height), (half_length, -half_height), (half_length, half_height), (-half_length, half_height)]
+        .into_iter()
+        .map(|(u, v)| (u * cos - v * sin, u * sin + v * cos))
+        .collect();
+    let start = corners.iter().map(|c| c.0).fold(f32::MAX, f32::min);
+    let end = corners.iter().map(|c| c.0).fold(f32::MIN, f32::max);
+    let count = ((end - start) / LEAN_SLICE).ceil().max(1.0) as usize;
+    let length = (end - start) / count as f32;
+    // Turned about +Y as three.js turns the model: x' = x cos + z sin, z' = −x sin + z cos.
+    let (yaw_sin, yaw_cos) = p.rotation.sin_cos();
+    let world = |u: f32, w: f32| (p.x + u * yaw_cos + w * yaw_sin, p.z - u * yaw_sin + w * yaw_cos);
+    (0..count)
+        .filter_map(|i| {
+            let (u0, u1) = (start + length * i as f32, start + length * (i + 1) as f32);
+            // The heights the side reaches across the slice: its corners within it, and where its
+            // edges cross the slice's ends.
+            let mut heights: Vec<f32> = corners.iter().filter(|c| (u0..=u1).contains(&c.0)).map(|c| c.1).collect();
+            for k in 0..corners.len() {
+                let ((ua, va), (ub, vb)) = (corners[k], corners[(k + 1) % corners.len()]);
+                for cut in [u0, u1] {
+                    if ua != ub && (ua - cut) * (ub - cut) <= 0.0 {
+                        heights.push(va + (vb - va) * (cut - ua) / (ub - ua));
+                    }
+                }
+            }
+            let low = heights.iter().copied().reduce(f32::min)?;
+            let high = heights.iter().copied().reduce(f32::max)?;
+            let ends = [world(u0, -half_depth), world(u0, half_depth), world(u1, -half_depth), world(u1, half_depth)];
+            let (x0, x1) = (ends.iter().map(|e| e.0).fold(f32::MAX, f32::min), ends.iter().map(|e| e.0).fold(f32::MIN, f32::max));
+            let (z0, z1) = (ends.iter().map(|e| e.1).fold(f32::MAX, f32::min), ends.iter().map(|e| e.1).fold(f32::MIN, f32::max));
+            Some(bx(BoxKind::Invisible, x0, x1, (p.y + low).max(0.0), p.y + high, z0, z1))
+        })
+        .collect()
 }
 
 fn mirror_box(b: &MapBox) -> MapBox {
@@ -142,6 +212,24 @@ fn yard_boxes() -> Vec<MapBox> {
         // Mid-north crate pile (mirrors into mid-south).
         bx(Crate, 2.0, 3.2, 0.0, crate_h, -12.0, -10.8),
         bx(Crate, 3.2, 4.4, 0.0, crate_h, -12.0, -10.8),
+        // Cover breaking up the centre lane from the spawn to the middle: a crate pile, a concrete
+        // barrier low enough to jump onto, and two barrels.
+        bx(Crate, -31.2, -30.0, 0.0, crate_h, 1.6, 2.8),
+        bx(Crate, -30.0, -28.8, 0.0, crate_h, 1.6, 2.8),
+        bx(Crate, -30.6, -29.4, crate_h, crate_h * 2.0, 1.6, 2.8),
+        bx(Concrete, -21.5, -18.5, 0.0, 1.1, -2.0, -1.4),
+        bx(Barrel, -13.4, -12.5, 0.0, 1.1, 1.6, 2.5),
+        bx(Barrel, -12.3, -11.4, 0.0, 1.1, 2.0, 2.9),
+        // A container between the solid warehouse's end and the middle.
+        bx(ContainerBlue, -5.4, -3.0, 0.0, 2.6, -16.5, -10.5),
+        // The open middle of the north lane: a barrier and a crate pile.
+        bx(Concrete, -6.0, -3.0, 0.0, 1.1, -26.3, -25.7),
+        bx(Crate, -12.6, -11.4, 0.0, crate_h, -29.4, -28.2),
+        bx(Crate, -11.4, -10.2, 0.0, crate_h, -29.4, -28.2),
+        bx(Crate, -12.0, -10.8, crate_h, crate_h * 2.0, -29.4, -28.2),
+        // Barrels between the spawn and the walk-through warehouse.
+        bx(Barrel, -39.0, -38.1, 0.0, 1.1, 11.2, 12.1),
+        bx(Barrel, -38.0, -37.1, 0.0, 1.1, 11.6, 12.5),
     ]
 }
 
@@ -178,17 +266,31 @@ fn yard_props() -> Vec<MapProp> {
 
 fn supply_yard() -> MapDef {
     let centre = vec![bx(BoxKind::ContainerRust, -1.2, 1.2, 0.0, 2.6, -3.0, 3.0)];
+    let spawns = vec![
+        (-46.0, -24.0),
+        (-46.0, -15.0),
+        (-46.0, -8.0),
+        (-46.0, 0.0),
+        (-46.0, 8.0),
+        (-46.0, 15.0),
+        (-46.0, 24.0),
+    ];
     MapDef {
         data: assemble(MapId::SupplyYard, "SUPPLY YARD", 50.0, 32.0, yard_boxes(), centre, yard_props()),
-        spawns: vec![
-            (-46.0, -24.0),
-            (-46.0, -15.0),
-            (-46.0, -8.0),
-            (-46.0, 0.0),
-            (-46.0, 8.0),
-            (-46.0, 15.0),
-            (-46.0, 24.0),
-        ],
+        ffa_spawns: ffa_spawns(
+            &spawns,
+            &[
+                // The middle of the north lane, between the warehouses.
+                (0.0, -20.0),
+                // The centre lane, and inside the walk-through warehouse.
+                (-24.0, 0.0),
+                (-24.0, 12.0),
+                // The north lane and the south yard.
+                (-18.0, -28.0),
+                (-18.0, 28.0),
+            ],
+        ),
+        spawns,
         lanes: vec![
             (0.0, -13.0),
             (0.0, 13.0),
@@ -212,6 +314,29 @@ fn supply_yard() -> MapDef {
 const WH_HALF_X: f32 = 30.0;
 const WH_HALF_Z: f32 = 20.0;
 const WH_CEILING: f32 = 9.0;
+const CRATE_H: f32 = 1.2;
+
+/// The ways up onto the warehouse's single containers (2.6 m), one each in a half: `(x, z)` is the
+/// middle of a stack of two crates (2.4 m) against the container's side, and `(dx, dz)` the way
+/// from it to a single crate in front. A jump rises about 1.34 m: from the floor onto the crate,
+/// from the crate onto the stack, and from the stack onto the container.
+pub const WAREHOUSE_CLIMBS: [(f32, f32, f32, f32); 6] = [
+    // The base's container, from the north.
+    (-28.3, 12.9, 0.0, -1.0),
+    // The hall's containers.
+    (-15.6, -3.0, -1.0, 0.0),
+    (-7.6, -7.8, -1.0, 0.0),
+    (-4.4, 9.0, 0.0, 1.0),
+    (-3.0, -15.0, 1.0, 0.0),
+    (-4.4, 18.2, 1.0, 0.0),
+];
+
+/// The three crates of one of `WAREHOUSE_CLIMBS`.
+fn climb((x, z, dx, dz): (f32, f32, f32, f32)) -> [MapBox; 3] {
+    let r = CRATE_H / 2.0;
+    let at = |x: f32, z: f32, y0: f32| bx(BoxKind::Crate, x - r, x + r, y0, y0 + CRATE_H, z - r, z + r);
+    [at(x, z, 0.0), at(x, z, CRATE_H), at(x + dx * CRATE_H, z + dz * CRATE_H, 0.0)]
+}
 
 fn warehouse_boxes() -> Vec<MapBox> {
     use BoxKind::*;
@@ -219,7 +344,7 @@ fn warehouse_boxes() -> Vec<MapBox> {
     let c = 2.6; // Container height.
     let door = 3.0;
     let wall = 4.6; // Base partition height.
-    vec![
+    let mut boxes = vec![
         // Shell.
         bx(Brick, -31.0, 31.0, 0.0, WH_CEILING, -21.0, -20.0),
         bx(Brick, -31.0, -30.0, 0.0, WH_CEILING, -21.0, 21.0),
@@ -247,21 +372,25 @@ fn warehouse_boxes() -> Vec<MapBox> {
         bx(ContainerPale, -15.0, -9.0, 0.0, c, 8.0, 10.4),
         bx(ContainerPale, -15.0, -9.0, c, c * 2.0, 8.0, 10.4),
         bx(ContainerPale, -6.0, -3.6, 0.0, c, -19.0, -13.0),
-        // Footprint of the container leaning on the stack.
-        bx(Invisible, -11.0, -5.0, 0.0, 4.2, 13.5, 17.0),
-        // What it leans on.
+        // What the leaning container (a prop, which collides as slices of itself) rests on.
         bx(Crate, -6.4, -5.2, 0.0, crate_h, 14.6, 15.8),
         bx(ContainerPale, -11.0, -5.0, 0.0, c, 17.0, 19.4),
         // Crates in the aisles.
         bx(Crate, -19.0, -17.8, 0.0, crate_h, 2.0, 3.2),
         bx(Crate, -19.0, -17.8, 0.0, crate_h, 3.2, 4.4),
         bx(Crate, -9.5, -8.3, 0.0, crate_h, -3.0, -1.8),
-    ]
+    ];
+    boxes.extend(WAREHOUSE_CLIMBS.into_iter().flat_map(climb));
+    boxes
 }
 
 fn warehouse_props() -> Vec<MapProp> {
     use PropKind::*;
-    let mut props = vec![prop(TiltedContainer, -8.0, 1.7, 15.2, 0.0, 6.0, 2.4)];
+    // A container tipped up onto a crate, its high end east.
+    let mut props = vec![MapProp {
+        tilt: LEAN,
+        ..prop(TiltedContainer, -8.0, 1.7, 15.2, 0.0, 6.0, 2.4)
+    }];
     // Roof trusses and lights over each half, louvered vents high on the end wall.
     for x in [-26.0, -18.0, -10.0, -2.0] {
         props.push(prop(Truss, x, WH_CEILING - 1.5, 0.0, 0.0, WH_HALF_Z * 2.0, 1.4));
@@ -290,17 +419,23 @@ fn warehouse() -> MapDef {
         bx(Crate, 0.0, 1.2, 0.0, crate_h, -1.2, 0.0),
         bx(Crate, -0.6, 0.6, crate_h, crate_h * 2.0, -0.6, 0.6),
     ];
+    let spawns = vec![
+        (-26.0, -16.0),
+        (-26.0, -11.0),
+        (-26.0, -6.0),
+        (-26.0, 0.0),
+        (-26.0, 5.0),
+        (-26.0, 10.0),
+        (-25.0, 16.0),
+    ];
     MapDef {
         data: assemble(MapId::Warehouse, "WAREHOUSE", WH_HALF_X, WH_HALF_Z, warehouse_boxes(), centre, warehouse_props()),
-        spawns: vec![
-            (-26.0, -16.0),
-            (-26.0, -11.0),
-            (-26.0, -6.0),
-            (-26.0, 0.0),
-            (-26.0, 5.0),
-            (-26.0, 10.0),
-            (-25.0, 16.0),
-        ],
+        // The hall: the bots' lanes but the two in the vent tunnel, and beside the tilted container.
+        ffa_spawns: ffa_spawns(
+            &spawns,
+            &[(-5.0, 0.0), (-19.0, -10.0), (-19.0, 8.0), (-8.0, -12.0), (-10.0, 4.0), (-3.0, 16.0)],
+        ),
+        spawns,
         lanes: vec![
             (-5.0, 0.0),
             (5.0, 0.0),

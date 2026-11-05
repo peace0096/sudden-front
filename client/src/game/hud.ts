@@ -1,5 +1,6 @@
 import { Augment, Team, WeaponKind, type MapBox, type ScoreEntry, type WeaponStats } from "../gen/game_pb";
 import { AUGMENTS, GRADE_CLASSES, GRADE_NAMES } from "../augments";
+import { sensitivityControl } from "../settings";
 import { sidearmNote, weaponCards, weaponTypeName } from "../weapons";
 
 const pad3 = (value: number) => String(value).padStart(3, "0");
@@ -18,7 +19,60 @@ const GUN_ICONS: Record<number, string> = {
   [WeaponKind.TASER]: gunIcon("M24 5h22v3H42v2H33l-1 2h-3l-2 5h-5l2.5-7H24z"),
   [WeaponKind.MISSILE]: gunIcon("M2 7h6l3-2h38l6-3h8v12h-8l-6-3H36l-1 2h-5l-1 4h-4l1-6H11L8 9H2z"),
   [WeaponKind.SMG]: gunIcon("M14 6h28v1h6v2h-6v2H33l-1 6h-5l1-6h-5l-2 4h-4l1.5-4H14L8 12H5V7h3l1 1h5z"),
+  // The body, the fuze on top with the spoon down its right, and the pin's ring (a hole in it) at its left.
+  [WeaponKind.GRENADE]: gunIcon(
+    "M26 11.5a6 6 0 1 0 12 0a6 6 0 1 0-12 0zM30 3h4v3.2h-4zM34 3h3.5l2.5 6h-2l-2-3.6H34zM24.6 4.2a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0-5.2 0zM25.8 4.2a1.4 1.4 0 1 1 2.8 0a1.4 1.4 0 1 1-2.8 0z",
+  ),
 };
+
+/**
+ * The kill banner's emblems, drawn here in the HUD's flat, faceted style: a rifle cartridge, light
+ * on its left and dark on its right, and a skull with a bullet hole in its brow.
+ */
+const BULLET_SVG = `<svg class="kb-bullet" viewBox="0 0 24 72" aria-hidden="true">
+<path d="M12 2L16.5 20V27L19 32V63L19.5 65V70H4.5V65L5 63V32L7.5 27V20Z" fill="none" stroke="#1d1306" stroke-width="2.6" stroke-linejoin="round"/>
+<path d="M12 2L7.5 20H12Z" fill="#f4b878"/><path d="M12 2L16.5 20H12Z" fill="#b5652e"/>
+<path d="M7.5 20H12V27H7.5Z" fill="#f2cf6a"/><path d="M12 20H16.5V27H12Z" fill="#b98a2b"/>
+<path d="M7.5 27H12V32H5Z" fill="#e8c158"/><path d="M12 27H16.5L19 32H12Z" fill="#a87b22"/>
+<path d="M5 32H12V63H5Z" fill="#f7d670"/><path d="M12 32H19V63H12Z" fill="#c4922c"/>
+<path d="M8 34H10V61H8Z" fill="#fff4c2" opacity="0.7"/>
+<path d="M5 63H19L19.5 65H4.5Z" fill="#5a3f10"/>
+<path d="M4.5 65H12V70H4.5Z" fill="#dcb24e"/><path d="M12 65H19.5V70H12Z" fill="#9c7020"/>
+</svg>`;
+const SKULL_SVG = `<svg class="kb-skull" viewBox="0 0 64 64" aria-hidden="true">
+<circle cx="40" cy="15" r="9" fill="#ff3b2f" opacity="0.45"/>
+<path d="M32 6C46 6 55 16 55 29C55 37 51 42 47 45V52C47 55 45 57 42 57H22C19 57 17 55 17 52V45C13 42 9 37 9 29C9 16 18 6 32 6Z" fill="#efe6cf" stroke="#1a120b" stroke-width="2.2" stroke-linejoin="round"/>
+<path d="M32 7C45 7 54 16 54 29C54 37 50 41 46 44V52C46 54.5 44.5 56 42 56H32Z" fill="#cdbf9d"/>
+<path d="M15 29C15 23 26 22 28 28C29 33 24 37 20 36C16 35 15 32 15 29Z" fill="#241a12"/>
+<path d="M49 29C49 23 38 22 36 28C35 33 40 37 44 36C48 35 49 32 49 29Z" fill="#241a12"/>
+<path d="M32 36L28.5 43H35.5Z" fill="#241a12"/>
+<path d="M21 47H43V49H21Z" fill="#241a12"/>
+<path d="M25 47V56M29 47V56M33 47V56M37 47V56M41 47V55" stroke="#241a12" stroke-width="1.6"/>
+<path d="M40 15L46.5 9.5L50 10.5M40 15L44.5 22M40 15L33.5 11.5L31 8" fill="none" stroke="#1a120b" stroke-width="1.4" stroke-linecap="round"/>
+<circle cx="40" cy="15" r="4.2" fill="#120c08"/>
+<path d="M41 19C42.2 22 42.2 25.5 40.6 27.5C39.4 25.5 39.4 22 41 19Z" fill="#c3271b"/>
+</svg>`;
+/** What a run of kills is called: one, two, three... each within the game's streak window of the last. */
+const STREAK_NAMES = ["KILL", "DOUBLE KILL", "TRIPLE KILL", "QUADRA KILL", "PENTA KILL", "HEXA KILL", "HEPTA KILL", "OCTA KILL", "NONA KILL", "DECA KILL"];
+/** The most cartridges the banner shows; a longer run shows this many. */
+const BANNER_BULLETS = 8;
+
+/** The keys and what they do, shown with the scoreboard on Tab. */
+const CONTROLS: [string, string][] = [
+  ["W A S D", "이동"],
+  ["마우스", "조준"],
+  ["왼쪽 클릭", "발사 / 나이프"],
+  ["오른쪽 클릭", "스코프 (저격소총)"],
+  ["R", "장전"],
+  ["Ctrl / C", "앉기 (누르는 동안)"],
+  ["Space", "점프 (낮은 상자·드럼통 위로 올라설 수 있음)"],
+  ["1 / 2 / 3", "주무기 / 보조무기 / 나이프 (증강 선택 중에는 카드 선택)"],
+  ["4", "수류탄 (목숨당 1개, 왼쪽 클릭으로 던지면 3초 뒤 폭발)"],
+  ["마우스 휠", "무기 바꾸기 (아래로 다음, 위로 이전)"],
+  ["B", "주무기 선택"],
+  ["Tab", "점수판·조작키 (누르는 동안)"],
+  ["Esc", "마우스 해제, 나가기 메뉴, 마우스 감도"],
+];
 
 function div(parent: HTMLElement, className: string, text = ""): HTMLDivElement {
   const node = document.createElement("div");
@@ -39,6 +93,9 @@ export interface KillLine {
   killerTeam: Team;
   victim: string;
   victimTeam: Team;
+  /** Whether each side is the local player, whose name a free-for-all feed picks out. */
+  killerIsMe: boolean;
+  victimIsMe: boolean;
   headshot: boolean;
   weapon: WeaponKind;
 }
@@ -74,6 +131,10 @@ export class Hud {
   private readonly target: HTMLDivElement;
   private readonly stun: HTMLDivElement;
   private killTarget = 30;
+  private ffa = false;
+  /** An augment match: Tab shows the augments in hand too, the card chosen and what it grants. */
+  private augmentMode = false;
+  private held: { chosen: Augment; active: Augment[] } = { chosen: Augment.UNSPECIFIED, active: [] };
   private readonly shieldPanel: HTMLDivElement;
   private readonly shieldValue: HTMLDivElement;
   private readonly badge: HTMLDivElement;
@@ -81,6 +142,7 @@ export class Hud {
   private readonly offerTimer: HTMLDivElement;
   private readonly offerBody: HTMLDivElement;
   private readonly countdown: HTMLDivElement;
+  private readonly killBanner: HTMLDivElement;
   private hurtTimer = 0;
   private markerTimer = 0;
 
@@ -103,6 +165,11 @@ export class Hud {
     this.blue = div(score, "score blue", "000");
 
     this.feed = div(this.root, "killfeed");
+    this.killBanner = div(this.root, "kill-banner hidden");
+    // Its animation ends hidden; the next kill shows it again.
+    this.killBanner.addEventListener("animationend", (event) => {
+      if (event.target === this.killBanner) this.killBanner.classList.add("hidden");
+    });
 
     const hpPanel = div(this.root, "hp-panel");
     div(hpPanel, "hp-label", "HP");
@@ -144,7 +211,7 @@ export class Hud {
 
     this.pause = div(this.root, "pause");
     div(this.pause, "pause-title", "클릭해서 전투 시작");
-    div(this.pause, "pause-keys", "WASD 이동 · 마우스 조준 · 좌클릭 공격 · 우클릭 스코프(저격소총) · 1 주무기 · 2 권총 · 3 나이프 · Ctrl/C 앉기 · R 장전 · B 주무기 선택 · Tab 점수판");
+    div(this.pause, "pause-keys", "WASD 이동 · 마우스 조준 · 좌클릭 공격 · 우클릭 스코프(저격소총) · 1 주무기 · 2 권총 · 3 나이프 · 4 수류탄 · 휠 무기 바꾸기 · Space 점프 · Ctrl/C 앉기 · R 장전 · B 주무기 선택 · Tab 점수판·조작키");
     const leave = document.createElement("button");
     leave.className = "btn";
     leave.textContent = "방 나가기";
@@ -153,7 +220,20 @@ export class Hud {
       onLeave();
     };
     this.pause.append(leave);
-    this.pause.onclick = onResume;
+    // Added after the leave button, which stays the first button on this screen. Pressing here
+    // must neither resume the match nor reach the game's mouse handlers. A press that starts here
+    // and ends on the dimmed screen fires its click on the screen (their nearest common ancestor),
+    // so the screen resumes only for a press that started on it.
+    const settings = div(this.pause, "pause-settings");
+    settings.append(sensitivityControl());
+    for (const type of ["click", "mousedown", "pointerdown"]) settings.addEventListener(type, (event) => event.stopPropagation());
+    let pressedOnScreen = false;
+    this.pause.addEventListener("pointerdown", () => (pressedOnScreen = true));
+    settings.addEventListener("pointerdown", () => (pressedOnScreen = false));
+    this.pause.onclick = () => {
+      if (pressedOnScreen) onResume();
+      pressedOnScreen = false;
+    };
 
     this.offer = div(this.root, "augment-offer hidden");
     const panel = div(this.offer, "augment-panel");
@@ -171,12 +251,13 @@ export class Hud {
     this.weaponName.textContent = name;
   }
 
-  /** The 1/2/3 strip above the ammo counter. */
-  setSlots(primary: WeaponKind, sidearm: WeaponKind, active: WeaponKind): void {
+  /** The 1/2/3/4 strip above the ammo counter; the grenade's chip counts them, dimmed with none left. */
+  setSlots(primary: WeaponKind, sidearm: WeaponKind, active: WeaponKind, grenades: number): void {
     this.slotBar.replaceChildren();
-    [primary, sidearm, WeaponKind.KNIFE].forEach((kind, index) => {
-      const chip = div(this.slotBar, kind === active ? "slot-chip on" : "slot-chip");
-      chip.textContent = `${index + 1} ${weaponTypeName(kind)}`;
+    [primary, sidearm, WeaponKind.KNIFE, WeaponKind.GRENADE].forEach((kind, index) => {
+      const spent = kind === WeaponKind.GRENADE && grenades === 0;
+      const chip = div(this.slotBar, kind === active ? "slot-chip on" : spent ? "slot-chip spent" : "slot-chip");
+      chip.textContent = `${index + 1} ${weaponTypeName(kind)}${kind === WeaponKind.GRENADE ? ` ×${grenades}` : ""}`;
     });
   }
 
@@ -231,7 +312,13 @@ export class Hud {
     this.countdown.textContent = text;
   }
 
+  /** Whether this is an augment match, whose Tab board lists the augments in hand. */
+  setAugmentMode(on: boolean): void {
+    this.augmentMode = on;
+  }
+
   setAugmentBadge(augment: Augment, active: Augment[]): void {
+    this.held = { chosen: augment, active };
     const info = AUGMENTS[augment];
     this.badge.classList.toggle("hidden", !info);
     if (!info) return;
@@ -263,11 +350,22 @@ export class Hud {
     this.weaponMenu.classList.add("hidden");
   }
 
+  /**
+   * A free-for-all match: the score bar's sides count my kills and the most any other player has,
+   * the kill feed has no team colours, and the scoreboard is one ranked list.
+   */
+  setFfa(on: boolean): void {
+    this.ffa = on;
+    this.red.className = on ? "score me" : "score red";
+    this.blue.className = on ? "score rival" : "score blue";
+  }
+
   setKillTarget(kills: number): void {
     this.killTarget = kills;
     this.target.textContent = String(kills).padStart(3, "0");
   }
 
+  /** The team scores, or in a free-for-all match my kills and the most any other player has. */
   setScore(red: number, blue: number): void {
     this.red.textContent = pad3(red);
     this.blue.textContent = pad3(blue);
@@ -292,9 +390,10 @@ export class Hud {
     this.lowHp.classList.toggle("on", low);
   }
 
-  setAmmo(magazine: number, reserve: number, reloadRemaining: number, reloadTime: number, melee: boolean, infinite: boolean, lowAt: number): void {
-    if (melee) {
-      this.mag.textContent = "—";
+  /** `thrown`: a grenade in hand, whose magazine is the grenades left, with no reserve or reload. */
+  setAmmo(magazine: number, reserve: number, reloadRemaining: number, reloadTime: number, melee: boolean, infinite: boolean, lowAt: number, thrown = false): void {
+    if (melee || thrown) {
+      this.mag.textContent = melee ? "—" : String(magazine);
       this.reserve.textContent = "—";
       this.mag.classList.remove("low");
       this.hint.textContent = "";
@@ -344,14 +443,52 @@ export class Hud {
   }
 
   addKill(line: KillLine): void {
+    // Free-for-all names share one colour, and mine stands out.
+    const nameClass = (team: Team, me: boolean) =>
+      this.ffa ? (me ? "name ffa me" : "name ffa") : team === Team.RED ? "name red" : "name blue";
     const row = div(this.feed, "kill-row");
     if (line.headshot) div(row, "headshot", "[HEAD SHOT]");
-    div(row, line.killerTeam === Team.RED ? "name red" : "name blue", line.killer);
+    div(row, nameClass(line.killerTeam, line.killerIsMe), line.killer);
     const icon = div(row, "gun-icon");
     icon.innerHTML = GUN_ICONS[line.weapon] ?? GUN_ICONS[WeaponKind.RIFLE];
-    div(row, line.victimTeam === Team.RED ? "name red" : "name blue", line.victim);
+    div(row, nameClass(line.victimTeam, line.victimIsMe), line.victim);
     window.setTimeout(() => row.remove(), 6000);
     while (this.feed.children.length > 6) this.feed.firstElementChild?.remove();
+  }
+
+  /**
+   * The banner for a kill of mine at the top of the screen: KILL, or HEADSHOT for a first kill to
+   * the head; DOUBLE KILL, TRIPLE KILL... for the second, third... in a row, with a cartridge for
+   * each and a HEADSHOT tag when that one was to the head; under it the name of who fell (none
+   * when the roster no longer has them). A new kill restarts it.
+   */
+  showKillBanner(streak: number, headshot: boolean, victim: { name: string; team: Team } | null): void {
+    const run = Math.max(1, streak);
+    const banner = this.killBanner;
+    const lead = run === 1 && headshot;
+    banner.replaceChildren();
+    banner.className = `kill-banner tier-${Math.min(run, 5)}${lead ? " headshot-kill" : ""}`;
+    const emblem = div(banner, "kb-emblem");
+    if (lead) {
+      emblem.innerHTML = SKULL_SVG;
+    } else {
+      const shown = Math.min(run, BANNER_BULLETS);
+      emblem.innerHTML = BULLET_SVG.repeat(shown) + (headshot ? SKULL_SVG : "");
+      // Few cartridges stand big; a long run's row shrinks to fit.
+      emblem.style.setProperty("--bullet-height", `${run <= 2 ? 84 : run === 3 ? 76 : run <= 5 ? 64 : 52}px`);
+    }
+    [...emblem.children].forEach((icon, index) => (icon as SVGElement).style.setProperty("--i", String(index)));
+    div(banner, "kb-title", lead ? "HEADSHOT" : (STREAK_NAMES[run - 1] ?? `${run} KILL STREAK`));
+    if (headshot && !lead) div(banner, "kb-sub", "HEADSHOT");
+    if (victim) {
+      // Who fell this time, coloured as the kill feed colours them: by team, or one colour in a free-for-all.
+      const plate = div(banner, "kb-victim");
+      div(plate, `kb-victim-name ${this.ffa ? "ffa" : victim.team === Team.RED ? "red" : "blue"}`, victim.name);
+      div(plate, "kb-victim-label", "처치");
+    }
+    // Read the layout so the animation starts over even when the banner was already up.
+    void banner.offsetWidth;
+    banner.classList.add("show");
   }
 
   showDeath(killer: string | null, respawnIn: number): void {
@@ -377,10 +514,37 @@ export class Hud {
   ): void {
     this.board.replaceChildren();
     const panel = div(this.board, "board-panel");
-    div(panel, "board-title", banner?.title ?? "TEAM DEATHMATCH");
+    div(panel, "board-title", banner?.title ?? (this.ffa ? "FREE FOR ALL" : "TEAM DEATHMATCH"));
     const subtitle = div(panel, "board-sub", banner?.subtitle ?? `${this.killTarget}킬 선취 승리`);
     if (banner) subtitle.classList.add(banner.victory ? "win" : "lose");
     const columns = div(panel, "board-teams");
+    if (this.ffa) {
+      // One list over both columns. Players level on kills and deaths share a rank.
+      const column = div(columns, "board-team ffa");
+      const head = div(column, "board-row head");
+      div(head, "r", "순위");
+      div(head, "n", "닉네임");
+      div(head, "k", "킬");
+      div(head, "d", "데스");
+      const rows = [...entries].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+      let rank = 0;
+      rows.forEach((entry, index) => {
+        const above = rows[index - 1];
+        if (!above || above.kills !== entry.kills || above.deaths !== entry.deaths) rank = index + 1;
+        const row = div(column, entry.id === myId ? "board-row me" : "board-row");
+        div(row, "r", String(rank));
+        div(row, "n", entry.name);
+        div(row, "k", String(entry.kills));
+        div(row, "d", String(entry.deaths));
+      });
+    } else {
+      this.renderTeams(columns, entries, red, blue, myId);
+    }
+    // On Tab, not on the results screen: the keys, and in an augment match the augments in hand.
+    if (!banner) this.renderHelp(panel);
+  }
+
+  private renderTeams(columns: HTMLElement, entries: ScoreEntry[], red: number, blue: number, myId: number): void {
     for (const [team, label, cls, score] of [
       [Team.RED, "RED TEAM", "red", red],
       [Team.BLUE, "BLUE TEAM", "blue", blue],
@@ -401,6 +565,35 @@ export class Hud {
         div(row, "d", String(entry.deaths));
       }
       div(column, "board-total", `킬수 : ${score}`);
+    }
+  }
+
+  private renderHelp(panel: HTMLElement): void {
+    const help = div(panel, "board-help");
+    const keys = div(help, "board-keys");
+    div(keys, "board-help-title", "조작키");
+    const list = div(keys, "board-key-list");
+    for (const [key, action] of CONTROLS) {
+      div(list, "key", key);
+      div(list, "action", action);
+    }
+    if (!this.augmentMode) return;
+    const augments = div(help, "board-augments");
+    div(augments, "board-help-title", "보유 증강");
+    if (!AUGMENTS[this.held.chosen]) {
+      div(augments, "board-augment-none", "아직 증강을 고르지 않았습니다.");
+      return;
+    }
+    // The card chosen, then what it grants (Double Time's two); any other card stands alone.
+    const shown = [this.held.chosen, ...this.held.active.filter((augment) => augment !== this.held.chosen)];
+    for (const augment of shown) {
+      const info = AUGMENTS[augment];
+      if (!info) continue;
+      const card = div(augments, `board-augment ${GRADE_CLASSES[info.grade]}`);
+      const head = div(card, "board-augment-head");
+      div(head, "board-augment-name", info.name);
+      div(head, "board-augment-grade", GRADE_NAMES[info.grade]);
+      div(card, "board-augment-desc", info.description);
     }
   }
 

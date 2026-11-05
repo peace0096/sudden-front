@@ -30,12 +30,24 @@ enum WeaponKind {
   WEAPON_KIND_MAGNUM = 10;
   WEAPON_KIND_AKIMBO_SMG = 11;
   WEAPON_KIND_TASER = 12;
+  // Slot 4: a hand grenade, thrown, that goes off a fixed time after it leaves the hand.
+  WEAPON_KIND_GRENADE = 13;
 }
 
 enum GameMode {
   GAME_MODE_UNSPECIFIED = 0;
   GAME_MODE_NORMAL = 1;
   GAME_MODE_AUGMENT = 2;
+}
+
+// Who fights whom, alongside the GameMode's rules: two teams, or every player for themselves.
+// The server reads UNSPECIFIED, or a value it does not know, as TEAM_DEATHMATCH.
+enum MatchType {
+  MATCH_TYPE_UNSPECIFIED = 0;
+  MATCH_TYPE_TEAM_DEATHMATCH = 1;
+  // Free-for-all: no teams (every player's team is UNSPECIFIED), the first player to the kill
+  // target wins.
+  MATCH_TYPE_FREE_FOR_ALL = 2;
 }
 
 enum AugmentGrade {
@@ -126,6 +138,9 @@ message ClientMessage {
     RefreshAugments refresh_augments = 11;
     SetKillsToWin set_kills_to_win = 12;
     SetBotSlot set_bot_slot = 13;
+    SetReady set_ready = 14;
+    SetGameMode set_game_mode = 15;
+    SetMap set_map = 16;
   }
 }
 
@@ -136,15 +151,23 @@ message CreateRoom {
   bool fill_bots = 2;
   MapId map = 3;
   GameMode mode = 4;
+  MatchType match_type = 5;
 }
 message SetKillsToWin { uint32 kills = 1; }
+// Host only, in the waiting room: the rules (normal or augment) and the arena of the next match.
+message SetGameMode { GameMode mode = 1; }
+message SetMap { MapId map = 1; }
 // Host only: puts a bot in, or takes it out of, one seat that no player holds.
 message SetBotSlot {
+  // UNSPECIFIED in a free-for-all room.
   Team team = 1;
-  // Seat on the team, 0 to 4.
+  // Seat on the team, 0 to 4; in a free-for-all room, the room's seat, 0 to 9.
   uint32 slot = 2;
   bool bot = 3;
 }
+// A player who is not the host says they are ready, or no longer ready, in the waiting room. The
+// host can start once every other player is ready; everyone is unready again after each match.
+message SetReady { bool ready = 1; }
 message PickAugment { Augment augment = 1; }
 message RefreshAugments { uint32 slot = 1; }
 message SelectWeapon { WeaponKind weapon = 1; }
@@ -171,9 +194,12 @@ message InputCmd {
   uint32 render_tick = 10;
   // Looking through the scope (only meaningful for weapons that have one).
   bool aim = 11;
-  // Weapon slot to switch to first: 1 primary, 2 pistol, 3 knife, 0 no change.
+  // Weapon slot to switch to first: 1 primary, 2 pistol, 3 knife, 4 grenade (while one is left),
+  // 0 no change.
   uint32 slot = 12;
   bool crouch = 13;
+  // Jump, if standing on the floor or on a box top.
+  bool jump = 14;
 }
 
 // ---------------------------------------------------------------- server -> client
@@ -240,6 +266,7 @@ message RoomInfo {
   uint32 kills_to_win = 10;
   // Seats held by bots.
   uint32 bot_count = 11;
+  MatchType match_type = 12;
 }
 
 message RoomList { repeated RoomInfo rooms = 1; }
@@ -247,14 +274,18 @@ message RoomList { repeated RoomInfo rooms = 1; }
 message RoomPlayer {
   uint32 id = 1;
   string name = 2;
+  // UNSPECIFIED in a free-for-all room.
   Team team = 3;
   bool is_host = 4;
   // Weapon picked in the waiting room; picking moved to the in-game B menu.
   reserved 5;
-  // Seat on the team, 0 to 4.
+  // Seat on the team, 0 to 4; in a free-for-all room, the room's seat, 0 to 9.
   uint32 slot = 6;
+  // Pressed ready (SetReady). Always false for the host, who starts the match instead.
+  bool ready = 7;
 }
 
+// A seat held by a bot, addressed as RoomPlayer's is.
 message RoomBot {
   Team team = 1;
   uint32 slot = 2;
@@ -274,6 +305,7 @@ message Pong { double client_time = 1; }
 message RosterEntry {
   uint32 id = 1;
   string name = 2;
+  // UNSPECIFIED in a free-for-all match.
   Team team = 3;
   bool is_bot = 4;
 }
@@ -298,6 +330,9 @@ message MapProp {
   float rotation = 5;
   float width = 6;
   float height = 7;
+  // TILTED_CONTAINER only: radians its length tips up, its +X end rising, about its own depth axis
+  // before `rotation` turns it. Its collision is MapData.boxes slices that follow this lean.
+  float tilt = 8;
 }
 
 message MapData {
@@ -324,6 +359,10 @@ message GameConfig {
   int32 max_hp = 12;
   GameMode mode = 13;
   float start_wait = 14;
+  MatchType match_type = 15;
+  // A jump's take-off speed (m/s up) and the gravity that brings a player down (m/s²).
+  float jump_speed = 16;
+  float gravity = 17;
 }
 
 message MatchStart {
@@ -356,6 +395,10 @@ message PlayerState {
   repeated Augment active = 19;
   // Seconds of paralysis left.
   float stun_left = 20;
+  // Feet height above the floor: a box's top while standing on it, more in the air.
+  float y = 21;
+  // Vertical speed in m/s, up positive; the client replays its own commands from it.
+  float vy = 22;
 }
 
 message ShotEvent {
@@ -393,6 +436,8 @@ message KillEvent {
 
 message ReloadEvent { uint32 player_id = 1; }
 message RespawnEvent { uint32 player_id = 1; }
+// A player threw a grenade; the grenade itself comes with the snapshots (Snapshot.grenades).
+message ThrowEvent { uint32 player_id = 1; }
 message ExplosionEvent {
   float x = 1;
   float y = 2;
@@ -408,6 +453,18 @@ message Missile {
   float vy = 6;
   float vz = 7;
 }
+// A thrown grenade, flying, bouncing or lying still, at this snapshot's moment. When its fuse runs
+// out it goes off where it is: the first snapshot without it carries an ExplosionEvent there.
+message Grenade {
+  uint32 id = 1;
+  float x = 2;
+  float y = 3;
+  float z = 4;
+  // m/s; 0 once it lies still.
+  float vx = 5;
+  float vy = 6;
+  float vz = 7;
+}
 
 message GameEvent {
   oneof event {
@@ -417,6 +474,7 @@ message GameEvent {
     ReloadEvent reload = 4;
     RespawnEvent respawn = 5;
     ExplosionEvent explosion = 6;
+    ThrowEvent grenade_thrown = 7;
   }
 }
 
@@ -427,7 +485,8 @@ message Snapshot {
   uint32 magazine = 3;
   uint32 reserve = 4;
   float reload_remaining = 5;
-  // Shared fields.
+  // Shared fields. The team scores stay 0 in a free-for-all match, where each player's score is
+  // their PlayerState.kills.
   uint32 red_score = 6;
   uint32 blue_score = 7;
   repeated PlayerState players = 8;
@@ -449,11 +508,16 @@ message Snapshot {
   // For each card on offer, whether it can still be swapped.
   repeated bool refreshable = 18;
   repeated Missile missiles = 19;
+  // Shared: every grenade thrown that has not gone off yet.
+  repeated Grenade grenades = 20;
+  // Per-recipient: grenades left to throw in this life (slot 4).
+  uint32 grenades_left = 21;
 }
 
 message ScoreEntry {
   uint32 id = 1;
   string name = 2;
+  // UNSPECIFIED in a free-for-all match.
   Team team = 3;
   uint32 kills = 4;
   uint32 deaths = 5;
@@ -461,9 +525,12 @@ message ScoreEntry {
 }
 
 message MatchEnd {
+  // The winning team; UNSPECIFIED in a free-for-all match, which names its winner in winner_id.
   Team winner = 1;
   uint32 red_score = 2;
   uint32 blue_score = 3;
   repeated ScoreEntry scoreboard = 4;
   float return_in = 5;
+  // The player who won a free-for-all match; 0 in a team match.
+  uint32 winner_id = 6;
 }

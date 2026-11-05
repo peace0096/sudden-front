@@ -30,9 +30,10 @@ const DESCRIPTIONS: Record<number, Description> = {
   [WeaponKind.MISSILE]: { type: "미사일 런처", damage: "매우 높음", speed: "보통", accuracy: "폭발형", fireRate: "빠름" },
   [WeaponKind.TASER]: { type: "테이저건", damage: "없음(마비)", speed: "약간 높음", accuracy: "높음", fireRate: "보통" },
   [WeaponKind.KNIFE]: { type: "나이프", damage: "높음", speed: "높음", accuracy: "근접 전용", fireRate: "-" },
+  [WeaponKind.GRENADE]: { type: "수류탄", damage: "폭발형", speed: "약간 높음", accuracy: "투척", fireRate: "목숨당 1개" },
 };
 
-/** The pistol and knife everyone carries, shown under the primary picker. */
+/** The pistol, knife and grenade everyone carries, shown under the primary picker. */
 export function sidearmNote(): HTMLElement {
   const note = document.createElement("div");
   note.className = "sidearm-note";
@@ -40,6 +41,7 @@ export function sidearmNote(): HTMLElement {
     "1번 주무기: 위에서 선택",
     "2번 권총 (공통): 대미지 낮음 · 연사력 낮음 · 이동속도 약간 높음 · 정확도 높음 · 12/36",
     "3번 나이프 (공통): 대미지 높음 · 이동속도 높음 · 근접 공격 전용",
+    "4번 수류탄 (공통): 목숨당 1개 · 던지고 3초 뒤 폭발 · 반경 5 m · 자신과 아군은 피해 없음",
   ]) {
     const line = document.createElement("div");
     line.textContent = text;

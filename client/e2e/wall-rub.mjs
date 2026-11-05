@@ -32,6 +32,8 @@ await rival.click(".login button");
 await rival.waitForSelector(".room-row button");
 await rival.click(".room-row button");
 await page.waitForFunction(() => document.querySelector(".team.blue")?.textContent.includes("rival"));
+// The rival readies; the host's start waits for it.
+await rival.click(".actions .ready-btn");
 await page.click(".actions .primary");
 await page.waitForFunction(() => window.__game?.hasFirstSnapshot, null, { timeout: 30000 });
 await page.click("#ui-root .pause");

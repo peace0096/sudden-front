@@ -1,7 +1,7 @@
 //! Server-authoritative game rules, run in order every tick.
 
 use super::components::*;
-use super::physics::{line_clear, ray_aabb, ray_world, step_move, view_dir};
+use super::physics::{line_clear, ray_aabb, ray_world, step_move, step_vertical, sweep_ball, view_dir};
 use super::weapons::{self, Stats as WeaponStats};
 use super::*;
 use crate::pb;
@@ -34,6 +34,30 @@ pub const MISSILE_SPEED: f32 = 60.0;
 const MISSILE_LIFE: f32 = 3.0;
 /// How far from a player's body a missile still counts as hitting them.
 const MISSILE_HIT_PAD: f32 = 0.8;
+/// A thrown grenade leaves the hand this fast (m/s), this much (radians) above the aim, which
+/// lofts a level throw a little, from this far (m) in front of the eye.
+pub const THROW_SPEED: f32 = 16.0;
+pub const THROW_LIFT: f32 = 0.1;
+const THROW_REACH: f32 = 0.2;
+/// A grenade falls slower than a player (m/s²), which carries a lob about 21 m.
+pub const GRENADE_GRAVITY: f32 = 12.0;
+/// Seconds from leaving the hand to going off.
+pub const GRENADE_FUSE: f32 = 3.0;
+const FUSE_TICKS: u32 = (GRENADE_FUSE * TICK_RATE as f32) as u32;
+/// The grenade is a ball this big (m) to the world.
+pub const GRENADE_RADIUS: f32 = 0.06;
+/// On touching a surface: the share of the speed into it the grenade bounces back with, and of the
+/// speed along it kept.
+const GRENADE_BOUNCE: f32 = 0.35;
+const GRENADE_FRICTION: f32 = 0.65;
+/// Bouncing up off a floor or box top slower than this (m/s), it stays down and rolls; slower than
+/// GRENADE_REST all told, it lies still.
+const GRENADE_SETTLE: f32 = 1.5;
+const GRENADE_REST: f32 = 0.15;
+/// The most surfaces a grenade touches in one tick; the rest of a busier tick is dropped.
+const GRENADE_CONTACTS: usize = 4;
+/// How far off a surface (m) a touching grenade is put back, so rounding never leaves it inside.
+const GRENADE_STANDOFF: f32 = 1e-3;
 // A shield bearer's shield, in their own frame. The client's copy is in client/src/game/art/hitbox.ts.
 const SHIELD_HALF_WIDTH: f32 = 0.45;
 const SHIELD_NEAR: f32 = 0.55;
@@ -73,8 +97,11 @@ pub fn consume_inputs(
             };
             pose.yaw = yaw;
             pose.pitch = pitch;
-            // Paralysis leaves only the view.
+            let (mut y, mut vy) = (pose.y, pose.vy);
+            // Paralysis leaves only the view, and gravity.
             if vitals.stun_left > 0.0 {
+                step_vertical(&arena.map.boxes, pose.x, pose.z, &mut y, &mut vy, false);
+                (pose.y, pose.vy) = (y, vy);
                 continue;
             }
 
@@ -97,11 +124,14 @@ pub fn consume_inputs(
                 dx *= speed * CMD_DT / len;
                 dz *= speed * CMD_DT / len;
                 let (mut x, mut z) = (pose.x, pose.z);
-                step_move(&arena.map.boxes, &mut x, &mut z, dx, dz);
+                step_move(&arena.map.boxes, &mut x, &mut z, pose.y, dx, dz);
                 pose.x = x;
                 pose.z = z;
                 intent.moving = true;
             }
+            // Up or down after the step, at its new place: over a box top it lands there.
+            step_vertical(&arena.map.boxes, pose.x, pose.z, &mut y, &mut vy, cmd.jump);
+            (pose.y, pose.vy) = (y, vy);
             // The tick's first shot aims where that command aimed; the client's
             // recoil from it only reaches the commands after it.
             if cmd.fire && intent.fire.is_none() {
@@ -146,6 +176,10 @@ pub fn update_weapons(
             weapon.bloom = (weapon.bloom - BLOOM_DECAY * TICK_DT).max(0.0);
         }
         if !vitals.alive || vitals.stun_left > 0.0 {
+            continue;
+        }
+        // Grenades are thrown, not reloaded, Infinite Ammo or not: a life has the ones it starts with.
+        if weapon.kind == pb::WeaponKind::Grenade {
             continue;
         }
 
@@ -194,11 +228,11 @@ pub fn update_weapons(
     }
 }
 
-/// (zone, min, max) of a standing player's hitboxes relative to their feet.
+/// (zone, min, max) of a player's hitboxes, standing on `feet` (their height above the floor).
 /// `pad` widens them, which keeps melee from demanding pixel-perfect aim.
-fn hitboxes(x: f32, z: f32, pad: f32, crouching: bool, head_scale: f32) -> [(pb::HitZone, [f32; 3], [f32; 3]); 3] {
+fn hitboxes(x: f32, feet: f32, z: f32, pad: f32, crouching: bool, head_scale: f32) -> [(pb::HitZone, [f32; 3], [f32; 3]); 3] {
     let boxed = |hw: f32, y0: f32, y1: f32| {
-        ([x - hw - pad, y0, z - hw - pad], [x + hw + pad, y1, z + hw + pad])
+        ([x - hw - pad, feet + y0, z - hw - pad], [x + hw + pad, feet + y1, z + hw + pad])
     };
     let drop = if crouching { CROUCH_DROP } else { 0.0 };
     // A resized head still sits on the same neck.
@@ -212,16 +246,16 @@ fn hitboxes(x: f32, z: f32, pad: f32, crouching: bool, head_scale: f32) -> [(pb:
     ]
 }
 
-/// Distance along a ray to a player's shield, which stands in front of them.
-fn ray_shield(origin: [f32; 3], dir: [f32; 3], x: f32, z: f32, yaw: f32, crouching: bool) -> Option<f32> {
-    // Into the player's frame, where they face -Z.
+/// Distance along a ray to a player's shield, which stands in front of them on `feet`.
+fn ray_shield(origin: [f32; 3], dir: [f32; 3], x: f32, feet: f32, z: f32, yaw: f32, crouching: bool) -> Option<f32> {
+    // Into the player's frame, where they face -Z and stand at height 0.
     let (sin, cos) = yaw.sin_cos();
     let local = |dx: f32, dz: f32| (dx * cos - dz * sin, dx * sin + dz * cos);
     let (ox, oz) = local(origin[0] - x, origin[2] - z);
     let (dx, dz) = local(dir[0], dir[2]);
     let top = SHIELD_TOP - if crouching { CROUCH_DROP } else { 0.0 };
     ray_aabb(
-        [ox, origin[1], oz],
+        [ox, origin[1] - feet, oz],
         [dx, dir[1], dz],
         [-SHIELD_HALF_WIDTH, 0.0, -SHIELD_FAR],
         [SHIELD_HALF_WIDTH, top, -SHIELD_NEAR],
@@ -276,12 +310,36 @@ struct TargetView {
     shielded: bool,
 }
 
-/// Damages every enemy of `owner` the blast at `center` reaches in the open.
-fn blast(boxes: &[pb::MapBox], center: [f32; 3], missile: &Missile, targets: &[TargetView], hits: &mut Vec<Hit>) {
-    let stats = weapons::stats(pb::WeaponKind::Missile);
-    for target in targets.iter().filter(|s| s.hittable && s.team != missile.team) {
-        let (x, z, crouching, yaw) = (target.pose.x, target.pose.z, target.pose.crouching, target.pose.yaw);
-        let torso = [x, if crouching { 0.7 } else { 1.2 }, z];
+/// Who set off a blast (fired the missile, threw the grenade), and with what.
+#[derive(Clone, Copy)]
+struct Blaster {
+    owner: Entity,
+    owner_id: u32,
+    team: pb::Team,
+    weapon: pb::WeaponKind,
+}
+
+/// Whether a missile in flight, or a blast, can touch or hurt `target`. Never its owner: a missile
+/// starts out inside their hit range, nobody is hurt by their own blast, and in a free-for-all
+/// their team is no protection.
+fn blast_target(rules: &Rules, source: &Blaster, target: &TargetView) -> bool {
+    target.hittable && rules.hostile(source.team, target.team) && target.entity != source.owner
+}
+
+/// Damages every enemy of the owner the blast at `center` reaches in the open: the weapon's damage
+/// at the centre, falling off with distance to its splash radius.
+fn blast(
+    boxes: &[pb::MapBox],
+    rules: &Rules,
+    center: [f32; 3],
+    source: &Blaster,
+    targets: &[TargetView],
+    hits: &mut Vec<Hit>,
+) {
+    let stats = weapons::stats(source.weapon);
+    for target in targets.iter().filter(|s| blast_target(rules, source, s)) {
+        let (x, feet, z, crouching, yaw) = (target.pose.x, target.pose.y, target.pose.z, target.pose.crouching, target.pose.yaw);
+        let torso = [x, feet + if crouching { 0.7 } else { 1.2 }, z];
         let d = [torso[0] - center[0], torso[1] - center[1], torso[2] - center[2]];
         let distance = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
         if distance >= stats.splash_radius || !line_clear(boxes, center, torso) {
@@ -289,12 +347,12 @@ fn blast(boxes: &[pb::MapBox], center: [f32; 3], missile: &Missile, targets: &[T
         }
         let falloff = 1.0 - SPLASH_FALLOFF * distance / stats.splash_radius;
         let to_torso = [d[0] / distance.max(1e-4), d[1] / distance.max(1e-4), d[2] / distance.max(1e-4)];
-        let shield = target.shielded && ray_shield(center, to_torso, x, z, yaw, crouching).is_some_and(|t| t < distance);
+        let shield = target.shielded && ray_shield(center, to_torso, x, feet, z, yaw, crouching).is_some_and(|t| t < distance);
         hits.push(Hit {
-            attacker: missile.owner,
-            attacker_id: missile.owner_id,
-            attacker_team: missile.team,
-            weapon: pb::WeaponKind::Missile,
+            attacker: source.owner,
+            attacker_id: source.owner_id,
+            attacker_team: source.team,
+            weapon: source.weapon,
             victim: target.entity,
             zone: pb::HitZone::Body,
             amount: (stats.damage_body as f32 * falloff) as i32,
@@ -307,6 +365,7 @@ fn blast(boxes: &[pb::MapBox], center: [f32; 3], missile: &Missile, targets: &[T
 /// Flies each missile one tick; whatever it touches sets it off.
 fn fly_missiles(
     boxes: &[pb::MapBox],
+    rules: &Rules,
     missiles: &mut Missiles,
     targets: &[TargetView],
     log: &mut EventLog,
@@ -314,6 +373,12 @@ fn fly_missiles(
 ) {
     missiles.live.retain_mut(|missile| {
         let (pos, dir) = (missile.pos, missile.dir);
+        let source = Blaster {
+            owner: missile.owner,
+            owner_id: missile.owner_id,
+            team: missile.team,
+            weapon: pb::WeaponKind::Missile,
+        };
         let step = MISSILE_SPEED * TICK_DT;
         let mut t = step;
         let mut contact = false;
@@ -325,11 +390,11 @@ fn fly_missiles(
             t = pos[1] / -dir[1];
             contact = true;
         }
-        for target in targets.iter().filter(|s| s.hittable && s.team != missile.team) {
-            let (x, z) = (target.pose.x, target.pose.z);
+        for target in targets.iter().filter(|s| blast_target(rules, &source, s)) {
+            let (x, feet, z) = (target.pose.x, target.pose.y, target.pose.z);
             let r = 0.28 + MISSILE_HIT_PAD;
-            let top = PLAYER_HEIGHT + MISSILE_HIT_PAD;
-            if let Some(d) = ray_aabb(pos, dir, [x - r, 0.0, z - r], [x + r, top, z + r]) {
+            let top = feet + PLAYER_HEIGHT + MISSILE_HIT_PAD;
+            if let Some(d) = ray_aabb(pos, dir, [x - r, feet, z - r], [x + r, top, z + r]) {
                 if d < t {
                     t = d;
                     contact = true;
@@ -343,14 +408,111 @@ fn fly_missiles(
         if contact {
             let [x, y, z] = missile.pos;
             log.push(Event::Explosion(pb::ExplosionEvent { x, y, z }));
-            blast(boxes, missile.pos, missile, targets, hits);
+            blast(boxes, rules, missile.pos, &source, targets, hits);
             return false;
         }
         missile.life > 0.0
     });
 }
 
-#[allow(clippy::type_complexity)]
+/// Throws the grenade in hand along `aim`, lofted a little. The last one thrown, the weapon held
+/// before it comes back, drawn by the time the throw's own `fire_interval` is up.
+fn throw_grenade(
+    grenades: &mut Grenades,
+    owner: Entity,
+    player: &Player,
+    pose: &Pose,
+    aim: FireIntent,
+    weapon: &mut Weapon,
+    log: &mut EventLog,
+) {
+    weapon.magazine -= 1;
+    weapon.cooldown += weapons::stats(pb::WeaponKind::Grenade).fire_interval;
+    let eye = if pose.crouching { CROUCH_EYE_HEIGHT } else { EYE_HEIGHT };
+    // Within the thrower's own column, which no box reaches into, so it starts in the open.
+    let (sin, cos) = aim.yaw.sin_cos();
+    let pos = [pose.x - sin * THROW_REACH, pose.y + eye, pose.z - cos * THROW_REACH];
+    let dir = view_dir(aim.yaw, (aim.pitch + THROW_LIFT).min(MAX_PITCH));
+    grenades.next_id += 1;
+    grenades.live.push(Grenade {
+        id: grenades.next_id,
+        owner,
+        owner_id: player.id,
+        team: player.team,
+        pos,
+        vel: dir.map(|d| d * THROW_SPEED),
+        fuse_ticks: FUSE_TICKS,
+    });
+    log.push(Event::GrenadeThrown(pb::ThrowEvent { player_id: player.id }));
+    if weapon.magazine == 0 {
+        weapon.switch_to(weapon.slot_before_grenade());
+    }
+}
+
+/// One tick of a grenade's flight: gravity, then the move, bouncing off whatever it touches. Off a
+/// floor or box top slow enough it stays down and rolls, slowed by every touch, until it lies still.
+pub fn roll_grenade(boxes: &[pb::MapBox], half_x: f32, half_z: f32, pos: &mut [f32; 3], vel: &mut [f32; 3]) {
+    vel[1] -= GRENADE_GRAVITY * TICK_DT;
+    let mut left = TICK_DT;
+    for _ in 0..GRENADE_CONTACTS {
+        let delta = vel.map(|v| v * left);
+        let Some((t, axis, sign)) = sweep_ball(boxes, *pos, delta, GRENADE_RADIUS, half_x, half_z) else {
+            for a in 0..3 {
+                pos[a] += delta[a];
+            }
+            break;
+        };
+        for a in 0..3 {
+            pos[a] += delta[a] * t;
+        }
+        pos[axis] += sign * GRENADE_STANDOFF;
+        left *= 1.0 - t;
+        vel[axis] = -vel[axis] * GRENADE_BOUNCE;
+        for a in (0..3).filter(|&a| a != axis) {
+            vel[a] *= GRENADE_FRICTION;
+        }
+        if axis == 1 && sign > 0.0 && vel[1].abs() < GRENADE_SETTLE {
+            vel[1] = 0.0;
+            if vel.iter().map(|v| v * v).sum::<f32>() < GRENADE_REST * GRENADE_REST {
+                *vel = [0.0; 3];
+            }
+        }
+        if left <= 0.0 {
+            break;
+        }
+    }
+}
+
+/// Moves each grenade a tick; one whose fuse has run out goes off where it is instead.
+fn fly_grenades(
+    arena: &Arena,
+    rules: &Rules,
+    grenades: &mut Grenades,
+    targets: &[TargetView],
+    log: &mut EventLog,
+    hits: &mut Vec<Hit>,
+) {
+    let map = &arena.map;
+    grenades.live.retain_mut(|grenade| {
+        if grenade.fuse_ticks == 0 {
+            let [x, y, z] = grenade.pos;
+            log.push(Event::Explosion(pb::ExplosionEvent { x, y, z }));
+            let source = Blaster {
+                owner: grenade.owner,
+                owner_id: grenade.owner_id,
+                team: grenade.team,
+                weapon: pb::WeaponKind::Grenade,
+            };
+            blast(&map.boxes, rules, grenade.pos, &source, targets, hits);
+            return false;
+        }
+        grenade.fuse_ticks -= 1;
+        roll_grenade(&map.boxes, map.half_x, map.half_z, &mut grenade.pos, &mut grenade.vel);
+        true
+    });
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn fire_weapons(
     arena: Res<Arena>,
     rules: Res<Rules>,
@@ -358,6 +520,7 @@ pub fn fire_weapons(
     mut log: ResMut<EventLog>,
     mut rng: ResMut<GameRng>,
     mut missiles: ResMut<Missiles>,
+    mut grenades: ResMut<Grenades>,
     mut players: Query<(
         Entity,
         &Player,
@@ -404,6 +567,15 @@ pub fn fire_weapons(
             continue;
         }
         if !vitals.alive {
+            continue;
+        }
+        // One throw at a time; like a shot, it ends spawn protection and Rest's quiet.
+        if weapon.kind == pb::WeaponKind::Grenade {
+            if weapon.cooldown <= COOLDOWN_SLACK && weapon.magazine > 0 {
+                throw_grenade(&mut grenades, entity, player, pose, fire, &mut weapon, &mut log);
+                vitals.protect_left = 0.0;
+                perks.idle = 0.0;
+            }
             continue;
         }
         let stats = weapons::stats(weapon.kind);
@@ -458,13 +630,14 @@ pub fn fire_weapons(
             }
 
             let eye = if pose.crouching { CROUCH_EYE_HEIGHT } else { EYE_HEIGHT };
-            let origin = [pose.x, eye, pose.z];
+            let origin = [pose.x, pose.y + eye, pose.z];
             let rewind_tick = fire
                 .render_tick
                 .clamp(current_tick.saturating_sub(MAX_REWIND_TICKS), current_tick);
             let rewound = |target: &TargetView| {
                 target.samples.at(rewind_tick).unwrap_or((
                     target.pose.x,
+                    target.pose.y,
                     target.pose.z,
                     target.pose.crouching,
                     target.pose.yaw,
@@ -510,10 +683,10 @@ pub fn fire_weapons(
                 // Targets are rewound to what this client was rendering when it fired.
                 for target in world_view
                     .iter()
-                    .filter(|s| s.hittable && s.team != player.team && s.entity != entity)
+                    .filter(|s| s.hittable && rules.hostile(player.team, s.team) && s.entity != entity)
                 {
-                    let (x, z, crouching, yaw) = rewound(target);
-                    for (zone, min, max) in hitboxes(x, z, pad, crouching, target.head_scale) {
+                    let (x, feet, z, crouching, yaw) = rewound(target);
+                    for (zone, min, max) in hitboxes(x, feet, z, pad, crouching, target.head_scale) {
                         if let Some(t) = ray_aabb(origin, dir, min, max) {
                             if t < best_t {
                                 best_t = t;
@@ -522,7 +695,7 @@ pub fn fire_weapons(
                         }
                     }
                     if target.shielded {
-                        if let Some(t) = ray_shield(origin, dir, x, z, yaw, crouching) {
+                        if let Some(t) = ray_shield(origin, dir, x, feet, z, yaw, crouching) {
                             if t < best_t {
                                 best_t = t;
                                 hit_player = Some((target.entity, target.id, pb::HitZone::Body, true));
@@ -563,7 +736,8 @@ pub fn fire_weapons(
         }
     }
 
-    fly_missiles(&arena.map.boxes, &mut missiles, &world_view, &mut log, &mut hits);
+    fly_missiles(&arena.map.boxes, &rules, &mut missiles, &world_view, &mut log, &mut hits);
+    fly_grenades(&arena, &rules, &mut grenades, &world_view, &mut log, &mut hits);
 
     for hit in hits {
         if state.winner.is_some() {
@@ -621,7 +795,8 @@ pub fn fire_weapons(
             .filter(|&&e| players.get(e).is_ok_and(|p| p.8.has(pb::Augment::BigHead)))
             .count();
         if let Ok(mut victim) = players.get_mut(hit.victim) {
-            victim.8.head_scale += augments::BIG_HEAD_STEP * holders as f32;
+            let grown = victim.8.head_scale + augments::BIG_HEAD_STEP * holders as f32;
+            victim.8.head_scale = grown.min(augments::BIG_HEAD_MAX);
         }
         log.push(Event::Kill(pb::KillEvent {
             killer_id: hit.attacker_id,
@@ -629,13 +804,19 @@ pub fn fire_weapons(
             headshot: hit.zone == pb::HitZone::Head,
             weapon: hit.weapon as i32,
         }));
-        state.score_kill(hit.attacker_team);
+        if !rules.ffa {
+            state.score_kill(hit.attacker_team);
+        }
+        // A free-for-all kill by a player who has left (with a missile in flight) counts for nobody.
         let Ok((_, _, _, _, mut weapon, mut vitals, mut stats, _, perks, mut loadout)) =
             players.get_mut(hit.attacker)
         else {
             continue;
         };
         stats.kills += 1;
+        if rules.ffa && stats.kills >= state.kills_to_win && state.winner.is_none() {
+            state.winner = Some(Winner::Player(hit.attacker_id));
+        }
         if !vitals.alive {
             continue;
         }
@@ -681,18 +862,24 @@ pub fn choose_spawn(
     rng: &mut GameRng,
 ) -> (f32, f32) {
     let side = if team == pb::Team::Red { 1.0 } else { -1.0 };
+    let points: Vec<(f32, f32)> = spawns.iter().map(|(x, z)| (x * side, z * side)).collect();
+    furthest_spawn(&points, enemies, rng)
+}
+
+/// Of `points`, the one furthest from the nearest of `enemies`, or any when there are none.
+/// A free-for-all chooses from all its points this way, with everyone else as an enemy.
+pub fn furthest_spawn(points: &[(f32, f32)], enemies: &[(f32, f32)], rng: &mut GameRng) -> (f32, f32) {
     if enemies.is_empty() {
-        let (x, z) = spawns[rng.index(spawns.len())];
-        return (x * side, z * side);
+        return points[rng.index(points.len())];
     }
-    let mut best = (spawns[0].0 * side, spawns[0].1 * side);
+    let mut best = points[0];
     let mut best_score = f32::MIN;
-    for (x, z) in spawns.iter().map(|(x, z)| (x * side, z * side)) {
+    for &(x, z) in points {
         let nearest = enemies
             .iter()
             .map(|(ex, ez)| (ex - x).powi(2) + (ez - z).powi(2))
             .fold(f32::MAX, f32::min);
-        // Jitter so one team doesn't reuse a single point.
+        // Jitter so players don't all reuse a single point.
         let score = nearest.sqrt() + rng.range(0.0, 8.0);
         if score > best_score {
             best_score = score;
@@ -700,6 +887,11 @@ pub fn choose_spawn(
         }
     }
     best
+}
+
+/// Yaw that faces the middle of the map from `(x, z)`.
+pub fn ffa_yaw(x: f32, z: f32) -> f32 {
+    x.atan2(z)
 }
 
 /// Yaw that faces the opposing side of the map.
@@ -727,7 +919,7 @@ pub fn respawn_players(
         &mut Perks,
     )>,
 ) {
-    let living: Vec<(pb::Team, f32, f32)> = players
+    let mut living: Vec<(pb::Team, f32, f32)> = players
         .iter()
         .filter(|(_, _, vitals, _, _, _, _)| vitals.alive)
         .map(|(player, pose, _, _, _, _, _)| (player.team, pose.x, pose.z))
@@ -739,22 +931,37 @@ pub fn respawn_players(
             vitals.stun_left = (vitals.stun_left - TICK_DT).max(0.0);
             continue;
         }
+        // A body killed in the air falls to the floor or the box top below it: two command steps a tick.
+        let (mut y, mut vy) = (pose.y, pose.vy);
+        for _ in 0..2 {
+            step_vertical(&arena.map.boxes, pose.x, pose.z, &mut y, &mut vy, false);
+        }
+        (pose.y, pose.vy) = (y, vy);
         vitals.respawn_left -= TICK_DT;
         if vitals.respawn_left > 0.0 {
             continue;
         }
+        // The player is dead, so not among the living: in a free-for-all, everyone there is an enemy.
         let enemies: Vec<(f32, f32)> = living
             .iter()
-            .filter(|(team, _, _)| *team != player.team)
+            .filter(|(team, _, _)| rules.hostile(*team, player.team))
             .map(|(_, x, z)| (*x, *z))
             .collect();
-        let (x, z) = choose_spawn(&arena.spawns, player.team, &enemies, &mut rng);
+        let (x, z, yaw) = if rules.ffa {
+            let (x, z) = furthest_spawn(&arena.ffa_spawns, &enemies, &mut rng);
+            // Anyone else respawning this tick keeps away from here too, rather than sharing the point.
+            living.push((player.team, x, z));
+            (x, z, ffa_yaw(x, z))
+        } else {
+            let (x, z) = choose_spawn(&arena.spawns, player.team, &enemies, &mut rng);
+            (x, z, spawn_yaw(player.team))
+        };
+        // Spawn points are on the floor.
         *pose = Pose {
             x,
             z,
-            yaw: spawn_yaw(player.team),
-            pitch: 0.0,
-            crouching: false,
+            yaw,
+            ..Default::default()
         };
         *vitals = Vitals {
             hp: augments::max_hp(rules.max_hp, &perks.active),
@@ -785,7 +992,7 @@ pub fn respawn_players(
 
 pub fn record_history(state: Res<MatchState>, mut players: Query<(&Pose, &mut History)>) {
     for (pose, mut history) in &mut players {
-        history.samples.push_back((state.tick, pose.x, pose.z, pose.crouching, pose.yaw));
+        history.samples.push_back((state.tick, pose.x, pose.y, pose.z, pose.crouching, pose.yaw));
         while history.samples.len() > (MAX_REWIND_TICKS + 2) as usize {
             history.samples.pop_front();
         }

@@ -499,6 +499,8 @@ export class GameAudio {
   private readonly voices = new Set<Voice>();
   private readonly lastTake = new Map<SoundName, number>();
   private akimboLeft = false;
+  /** Which foot the last step was, so they alternate. */
+  private leftFoot = false;
 
   /** Plays to a new AudioContext unless given a context (an OfflineAudioContext renders the mix). */
   constructor(ctx?: BaseAudioContext) {
@@ -670,6 +672,27 @@ export class GameAudio {
     this.tone(out, "sine", 90, 28, 1.0, 0.7);
   }
 
+  /**
+   * A grenade leaving the hand: the arm's whoosh, and the spoon flying off with a ping. Ours (at
+   * distance 0) starts with the click of the pin coming out.
+   */
+  grenadeThrow(distance: number, pan: number): void {
+    const out = this.output(1 / (1 + (distance / 10) ** 2), pan);
+    if (!out) return;
+    if (distance === 0) this.noiseBurst(out, "highpass", 4200, 0.35, 0.02);
+    this.noiseBurst(out, "bandpass", 850, 0.5, 0.22, 0.03);
+    this.tone(out, "triangle", 3400, 3050, 0.1, 0.09, 0.08);
+  }
+
+  /** A grenade striking the floor or a wall: a metal clink over a dull knock, `strength` 0 to 1. */
+  grenadeBounce(distance: number, pan: number, strength: number): void {
+    const out = this.output((0.4 + 0.6 * strength) / (1 + (distance / 8) ** 2), pan);
+    if (!out) return;
+    this.tone(out, "triangle", 2300, 2050, 0.22, 0.07);
+    this.tone(out, "triangle", 3650, 3400, 0.1, 0.05);
+    this.noiseBurst(out, "lowpass", 650, 0.45, 0.06);
+  }
+
   /** Working the sniper rifle's bolt after a shot. */
   bolt(): void {
     this.play("bolt", 1, 0, 0, 1, 0.3);
@@ -693,6 +716,25 @@ export class GameAudio {
     }
   }
 
+  /**
+   * A kill of mine: a bright run of rising notes, one more for each kill in a row (up to five),
+   * and for a headshot a sharp ping over a low knock.
+   */
+  killStreak(streak: number, headshot: boolean): void {
+    const out = this.output(0.5, 0, this.cues);
+    if (!out) return;
+    const notes = Math.min(Math.max(streak, 1), 5);
+    for (let i = 0; i < notes; i++) {
+      // Up in minor thirds, a run that starts higher the longer the streak.
+      const pitch = 560 * 2 ** ((3 * i + 2 * (streak - notes)) / 12);
+      this.tone(out, "triangle", pitch, pitch * 1.02, 0.22, 0.13, i * 0.065);
+    }
+    if (headshot) {
+      this.tone(out, "square", 2700, 2300, 0.08, 0.09);
+      this.noiseBurst(out, "lowpass", 320, 0.6, 0.12);
+    }
+  }
+
   hitConfirm(headshot: boolean): void {
     const out = this.output(0.42, 0, this.cues);
     if (out) this.tone(out, "square", headshot ? 1650 : 1050, headshot ? 1250 : 850, 0.25, 0.05);
@@ -703,9 +745,32 @@ export class GameAudio {
     if (out) this.noiseBurst(out, "lowpass", 720, 0.9, 0.11);
   }
 
-  footstep(): void {
-    const out = this.output(0.14, 0);
-    if (out) this.noiseBurst(out, "lowpass", 620, 0.6, 0.06);
+  /**
+   * One footfall: a heel's low thump and a short scuff of grit, a little different every step and
+   * alternating feet. `distance` (m) and `pan` place another player's step, which carries only so
+   * far; `level` scales it (a crouch is quieter).
+   */
+  footstep(distance = 0, pan = 0, level = 1): void {
+    const gain = (0.55 * level) / (1 + (distance / 6) ** 2);
+    if (gain < 0.01) return;
+    const out = this.output(gain, pan);
+    if (!out) return;
+    this.leftFoot = !this.leftFoot;
+    const vary = 0.9 + Math.random() * 0.2;
+    // Further off the grit goes first.
+    const grit = 600 + (2400 * vary) / (1 + distance / 15);
+    this.noiseBurst(out, "lowpass", (this.leftFoot ? 380 : 430) * vary, 0.9, 0.09);
+    this.noiseBurst(out, "bandpass", grit, 0.35, 0.05, 0.012);
+  }
+
+  /** Coming down from a jump: a heavier thump, placed like a footstep. */
+  land(distance = 0, pan = 0): void {
+    const gain = 0.8 / (1 + (distance / 6) ** 2);
+    if (gain < 0.01) return;
+    const out = this.output(gain, pan);
+    if (!out) return;
+    this.noiseBurst(out, "lowpass", 300, 1.0, 0.14);
+    this.noiseBurst(out, "bandpass", 1800, 0.3, 0.06, 0.01);
   }
 
   dispose(): void {

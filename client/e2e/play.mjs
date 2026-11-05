@@ -73,6 +73,11 @@ await host.page.screenshot({ path: join(shots, "3-room.png") });
 
 check("guest has no start button", (await guest.page.locator(".actions .primary").count()) === 0);
 check("host has a start button", (await host.page.locator(".actions .primary").count()) === 1);
+// Every player but the host readies first; the host's start waits for it.
+check("the host can't start before the guest is ready", await host.page.locator(".actions .primary").isDisabled());
+await guest.page.click(".actions .ready-btn");
+await host.page.waitForFunction(() => document.querySelector(".team.blue .ready-tag")?.textContent === "READY");
+check("the guest's ready shows on the host's screen", true);
 
 await host.page.click(".actions .primary");
 await host.page.waitForFunction(() => window.__game?.hasFirstSnapshot, null, { timeout: 30000 });
@@ -112,6 +117,48 @@ await host.page.mouse.move(700, 360);
 await host.page.mouse.move(800, 360);
 await host.page.waitForTimeout(100);
 check("mouse moves the view", (await state(host.page)).yaw !== yaw0);
+
+// The sensitivity box on the pause screen sets how far the same 100 px mouse move turns the view.
+const sensitivityBox = "#ui-root .pause .sensitivity input[type=number]";
+// Bots are in the match: a death or respawn in the middle of a move resets the yaw to the spawn
+// facing, so a move is only counted when the player was alive from start to end.
+const lookPer100px = async () => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await host.page.waitForFunction(() => window.__game.alive, null, { timeout: 10000 });
+    await host.page.mouse.move(700, 360);
+    const from = await state(host.page);
+    await host.page.mouse.move(800, 360);
+    await host.page.waitForTimeout(100);
+    const to = await state(host.page);
+    if (from.alive && to.alive) return to.yaw - from.yaw;
+  }
+  throw new Error("the host kept dying while the look rate was measured");
+};
+// The page frees the cursor itself, as the B menu does, instead of pressing Escape: Chrome rejects
+// a lock requested soon after a real Esc, and the click below has to lock again.
+const freeCursor = async () => {
+  await host.page.evaluate(() => document.exitPointerLock());
+  await host.page.waitForFunction(() => !window.__game.locked);
+};
+const lockCursor = async () => {
+  await host.page.click("#ui-root .pause");
+  await host.page.waitForFunction(() => window.__game.locked, null, { timeout: 5000 });
+};
+const normalLook = await lookPer100px();
+await freeCursor();
+await host.page.fill(sensitivityBox, "2");
+// fill fires input only; the box applies its value on change.
+await host.page.dispatchEvent(sensitivityBox, "change");
+await lockCursor();
+const doubledLook = await lookPer100px();
+const lookRatio = doubledLook / normalLook;
+check("pause-screen sensitivity 2 doubles the look rate", Math.abs(lookRatio - 2) <= 0.2, `${normalLook.toFixed(4)} -> ${doubledLook.toFixed(4)} rad per 100 px, x${lookRatio.toFixed(2)}`);
+// Put the default back (not .pause button: that is the leave button) so the rest runs as before.
+await freeCursor();
+await host.page.click("#ui-root .pause .sensitivity button");
+await lockCursor();
+const restoredLook = await lookPer100px();
+check("the default button restores the look rate", Math.abs(restoredLook / normalLook - 1) <= 0.1, `${restoredLook.toFixed(4)} rad per 100 px`);
 
 await host.page.waitForFunction(() => window.__game.alive, null, { timeout: 10000 });
 const mag0 = (await state(host.page)).magazine;

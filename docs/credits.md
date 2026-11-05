@@ -32,6 +32,19 @@ CC0 팩은 표기 의무가 없지만, 저작자에게 감사하는 뜻으로 �
   - 삼각형 7752개를 4790개로 감량 (면별 법선을 지우고 용접, 평면 셰이딩 유지)
   - 재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침, 키프레임 정리(resample), meshopt 압축
 
+### `characters/swat-neutral.glb`
+
+- 팩: Ultimate Modular Men Pack (Quaternius, CC0-1.0)
+- 원본: `swat-Btfn3G5Xv4.glb`
+- 바꾼 점:
+  - 클립 24개 중 9개만 남기고 이름 변경 (Idle→idle, Run→run, Run_Back→runBack, Run_Left→strafeL, Run_Right→strafeR, Walk→walk, Death→death, Idle_Gun_Pointing→holdRifle, Gun_Shoot→shoot)
+  - 부위 메시 4개를 스킨 메시 하나로 합침
+  - Swat 재질에 팀 색 #6f757b을 70% 섞음
+  - 미터 단위로 정규화: 머리 뼈 1.5 m, 발 y = 0, 아마추어의 회전·100배 배율을 뼈에 합침 (×0.9632)
+  - 뼈 이름을 게임 표준 이름으로 바꿈 (hips·spine·chest·neck·head·clavicle/upperArm/foreArm/hand·thigh/shin/foot + L/R)
+  - 삼각형 7752개를 4790개로 감량 (면별 법선을 지우고 용접, 평면 셰이딩 유지)
+  - 재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침, 키프레임 정리(resample), meshopt 압축
+
 ### `characters/swat-red.glb`
 
 - 팩: Ultimate Modular Men Pack (Quaternius, CC0-1.0)
@@ -108,14 +121,23 @@ CC0 팩은 표기 의무가 없지만, 저작자에게 감사하는 뜻으로 �
   - 스크립트로 만든 모델: 몸통(반지름 0.11 m, 길이 0.65 m)·빨간 탄두(0.2 m)는 지금의 game.ts 미사일과 같은 크기, 날개 4장과 노즐을 더함
   - +Z를 향함, 재질 색을 팔레트 텍스처 하나로 모아 primitive 하나로 합침, meshopt 압축
 
+### `weapons/grenade.glb`
+
+- 팩: Sudden Front procedural models (Sudden Front, CC0-1.0)
+- 원본: `tools/art/recipes/weapons/grenade.mjs`
+- 바꾼 점:
+  - 스크립트로 만든 모델: 지름 6.6 cm 몸통(어두운 띠 하나), 신관, 안전손잡이, 안전핀 고리
+  - 몸통 가운데를 원점에, 축을 주먹이 쥐는 손잡이 축(앞으로 28.9°, 오른쪽으로 4.9°)에 맞춤, 신관 끝에 muzzle 노드 추가
+  - 재질 색을 팔레트 텍스처 하나로 모아 primitive 하나로 합침, meshopt 압축
+
 ### `weapons/knife.glb`
 
 - 팩: Toon Shooter Game Kit (Quaternius, CC0-1.0)
 - 원본: `knife-YnC9RcBOWs.glb`
 - 바꾼 점:
-  - 총구가 −Z를 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.3 m로 배율 조정 (×0.213)
+  - 끝이 (0.075, 0.873, -0.482) 방향(주먹이 쥐는 손잡이 축)을 향하고 손잡이가 원점에 오도록 돌리고 옮김, 길이 0.3 m로 배율 조정 (×0.213)
   - 재질 색을 팔레트 텍스처 하나로 모으고 primitive 하나로 합침
-  - 총구 끝에 muzzle 노드 추가, meshopt 압축
+  - 그 방향의 끝에 muzzle 노드 추가, meshopt 압축
 
 ### `weapons/machine_gun.glb`
 

@@ -17,8 +17,10 @@ pub const SHIELD_HP: i32 = 1200;
 pub const REST_DELAY: f32 = 4.0;
 pub const REST_HEAL_PER_SECOND: f32 = 15.0;
 pub const POSSESSION_HP: i32 = 150;
-/// Added to a victim's head size per Big Head holder who helped kill them.
-pub const BIG_HEAD_STEP: f32 = 0.1;
+/// Added to a victim's head size per Big Head holder who helped kill them, up to BIG_HEAD_MAX
+/// (client/src/game/art/hitbox.ts HEAD_SCALE_MAX keeps a copy for the character's bounds).
+pub const BIG_HEAD_STEP: f32 = 0.25;
+pub const BIG_HEAD_MAX: f32 = 3.0;
 
 const SILVER: [Augment; 6] = [
     Augment::InfiniteAmmo,

@@ -11,10 +11,14 @@ pub struct Player {
     pub is_bot: bool,
 }
 
-#[derive(Component, Clone, Copy)]
+#[derive(Component, Clone, Copy, Default)]
 pub struct Pose {
     pub x: f32,
+    /// Feet height above the floor: a box's top while standing on it, more in the air.
+    pub y: f32,
     pub z: f32,
+    /// Vertical speed, m/s up; 0 while standing.
+    pub vy: f32,
     pub yaw: f32,
     pub pitch: f32,
     pub crouching: bool,
@@ -38,9 +42,12 @@ pub struct Weapon {
     pub primary: pb::WeaponKind,
     /// What slot 2 holds.
     pub sidearm: pb::WeaponKind,
-    /// Index of the slot in hand, and the ammo left in the holstered ones.
+    /// Index of the slot in hand, and the ammo left in the holstered ones. Slot 4's (index 3)
+    /// magazine is the grenades left.
     pub active_slot: usize,
-    pub holstered: [(u32, u32); 3],
+    pub holstered: [(u32, u32); 4],
+    /// Index of the slot in hand before the grenade was drawn: a throw goes back to it.
+    pub last_slot: usize,
     /// Seconds the scope has been steady; see `SCOPE_READY_TIME`.
     pub aim_time: f32,
     pub magazine: u32,
@@ -71,6 +78,7 @@ impl Weapon {
         let stats = super::weapons::stats(kind);
         let sidearm = super::weapons::sidearm_for(active);
         let side = super::weapons::stats(sidearm);
+        let grenades = super::weapons::stats(pb::WeaponKind::Grenade).magazine;
         Self {
             kind,
             primary: kind,
@@ -80,7 +88,9 @@ impl Weapon {
                 (stats.magazine, stats.reserve),
                 (side.magazine, side.reserve),
                 (0, 0),
+                (grenades, 0),
             ],
+            last_slot: 0,
             aim_time: 0.0,
             magazine: stats.magazine,
             reserve: stats.reserve,
@@ -112,17 +122,22 @@ impl Weapon {
         }
     }
 
-    /// Takes a slot (1 primary, 2 pistol, 3 knife) in hand. Ammo stays with each
-    /// weapon, a reload in progress is abandoned, and the new weapon must be drawn.
+    /// Takes a slot (1 primary, 2 pistol, 3 knife, 4 grenade) in hand. Ammo stays with each
+    /// weapon, a reload in progress is abandoned, and the new weapon must be drawn. The grenade
+    /// only comes out while one is left.
     pub fn switch_to(&mut self, slot: u32) {
         let (index, kind) = match slot {
             1 => (0, self.primary),
             2 => (1, self.sidearm),
             3 => (2, pb::WeaponKind::Knife),
+            4 if self.grenades() > 0 => (GRENADE_SLOT, pb::WeaponKind::Grenade),
             _ => return,
         };
         if index == self.active_slot {
             return;
+        }
+        if index == GRENADE_SLOT {
+            self.last_slot = self.active_slot;
         }
         self.holstered[self.active_slot] = (self.magazine, self.reserve);
         (self.magazine, self.reserve) = self.holstered[index];
@@ -139,7 +154,24 @@ impl Weapon {
     pub fn reloading(&self) -> bool {
         self.reload_left > 0.0
     }
+
+    /// Grenades left to throw, in hand or not.
+    pub fn grenades(&self) -> u32 {
+        if self.active_slot == GRENADE_SLOT {
+            self.magazine
+        } else {
+            self.holstered[GRENADE_SLOT].0
+        }
+    }
+
+    /// The slot (1 to 3) a throw goes back to.
+    pub fn slot_before_grenade(&self) -> u32 {
+        self.last_slot as u32 + 1
+    }
 }
+
+/// Index of the grenade's slot (4) in `Weapon::holstered`.
+pub const GRENADE_SLOT: usize = 3;
 
 /// The chosen augment and the state it keeps across a match.
 #[derive(Component, Default)]
@@ -206,17 +238,18 @@ pub struct Stats {
 /// Recent positions for rewinding targets under lag compensation.
 #[derive(Component, Default)]
 pub struct History {
-    pub samples: VecDeque<(u32, f32, f32, bool, f32)>,
+    /// (tick, x, feet height, z, crouching, yaw).
+    pub samples: VecDeque<(u32, f32, f32, f32, bool, f32)>,
 }
 
 impl History {
-    /// (x, z, crouching, yaw) as of `tick`.
-    pub fn at(&self, tick: u32) -> Option<(f32, f32, bool, f32)> {
+    /// (x, feet height, z, crouching, yaw) as of `tick`.
+    pub fn at(&self, tick: u32) -> Option<(f32, f32, f32, bool, f32)> {
         self.samples
             .iter()
             .rev()
-            .find(|(t, _, _, _, _)| *t <= tick)
-            .map(|(_, x, z, crouching, yaw)| (*x, *z, *crouching, *yaw))
+            .find(|(t, ..)| *t <= tick)
+            .map(|(_, x, y, z, crouching, yaw)| (*x, *y, *z, *crouching, *yaw))
     }
 }
 
@@ -236,6 +269,8 @@ pub struct BotBrain {
     pub stuck_time: f32,
     pub last_x: f32,
     pub last_z: f32,
+    /// Taking out the grenade to throw it at the target, or about to.
+    pub throwing: bool,
 }
 
 #[derive(Resource)]
@@ -243,14 +278,34 @@ pub struct Arena {
     pub map: pb::MapData,
     pub nav: NavGrid,
     pub spawns: Vec<(f32, f32)>,
+    /// Where anyone may spawn in a free-for-all, in world coordinates.
+    pub ffa_spawns: Vec<(f32, f32)>,
     pub lanes: Vec<(f32, f32)>,
 }
 
-/// What differs between game modes.
+/// What differs between game modes and match types.
 #[derive(Resource)]
 pub struct Rules {
     pub mode: pb::GameMode,
     pub max_hp: i32,
+    /// Free-for-all: every player's team is `Unspecified` and everyone fights everyone.
+    pub ffa: bool,
+}
+
+impl Rules {
+    /// Whether players on these teams can hurt each other. Callers still rule out hurting
+    /// yourself: in a free-for-all everyone is on the same (no) team.
+    pub fn hostile(&self, a: pb::Team, b: pb::Team) -> bool {
+        self.ffa || a != b
+    }
+}
+
+/// Who won a match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Winner {
+    Team(pb::Team),
+    /// The id of the player who won a free-for-all.
+    Player(u32),
 }
 
 #[derive(Resource, Default)]
@@ -258,7 +313,7 @@ pub struct MatchState {
     pub tick: u32,
     pub red_score: u32,
     pub blue_score: u32,
-    pub winner: Option<pb::Team>,
+    pub winner: Option<Winner>,
     pub kills_to_win: u32,
     /// Seconds left to choose a card, during which `freeze_left` waits.
     pub pick_left: f32,
@@ -269,7 +324,8 @@ pub struct MatchState {
 }
 
 impl MatchState {
-    /// Adds a kill and ends the match when the team reaches the target.
+    /// Adds a kill to a team's score and ends the match when the team reaches the target. Team
+    /// matches only: a free-for-all keeps no team score.
     pub fn score_kill(&mut self, team: pb::Team) {
         let score = if team == pb::Team::Red {
             &mut self.red_score
@@ -278,7 +334,7 @@ impl MatchState {
         };
         *score += 1;
         if *score >= self.kills_to_win && self.winner.is_none() {
-            self.winner = Some(team);
+            self.winner = Some(Winner::Team(team));
         }
     }
 }
@@ -298,6 +354,26 @@ pub struct Missile {
 pub struct Missiles {
     pub next_id: u32,
     pub live: Vec<Missile>,
+}
+
+/// A thrown grenade: flying, bouncing, rolling or lying still until its fuse runs out.
+pub struct Grenade {
+    pub id: u32,
+    pub owner: Entity,
+    pub owner_id: u32,
+    pub team: pb::Team,
+    /// The centre of the grenade, which keeps `GRENADE_RADIUS` off every surface.
+    pub pos: [f32; 3],
+    /// m/s; all 0 once it lies still.
+    pub vel: [f32; 3],
+    /// Ticks until it goes off: whole ticks, so the fuse is exact.
+    pub fuse_ticks: u32,
+}
+
+#[derive(Resource, Default)]
+pub struct Grenades {
+    pub next_id: u32,
+    pub live: Vec<Grenade>,
 }
 
 #[derive(Resource, Default)]

@@ -30,6 +30,8 @@ const rival = await open("rival");
 await rival.waitForSelector(".room-row button");
 await rival.click(".room-row button");
 await page.waitForFunction(() => document.querySelector(".team.blue")?.textContent.includes("rival"));
+// The rival readies; the host's start waits for it.
+await rival.click(".actions .ready-btn");
 await page.click(".actions .primary");
 // The rival stays connected: with nobody left on blue, the match would end at once by forfeit.
 await page.waitForFunction(() => window.__game?.hasFirstSnapshot, null, { timeout: 30000 });
@@ -93,12 +95,16 @@ const climb = mean(late.map((s) => s.pitch)) - mean(early.map((s) => s.pitch));
 check("real shots climb", climb > 0.02, `${climb.toFixed(4)} rad`);
 const offset = Math.abs(mean(late.map((s) => s.pitch - s.camera)));
 check("shots stay centred on the crosshair", offset < 0.015, `${offset.toFixed(4)} rad`);
-check("real shots scatter late in the burst", scatter(late) > 0.004, `yaw scatter ${scatter(early).toFixed(4)} -> ${scatter(late).toFixed(4)} rad`);
+// The rifle's late cone (still spread and full bloom) is about 0.015 rad, its shots off by about
+// 0.006 rad sideways on average; this asks for well under that.
+check("real shots scatter late in the burst", scatter(late) > 0.0025, `yaw scatter ${scatter(early).toFixed(4)} -> ${scatter(late).toFixed(4)} rad`);
 const lateGap = mean(r.gaps.slice(-8));
 const jumps = r.aims.slice(1).map((a, i) => Math.hypot(a[0] - r.aims[i][0], a[1] - r.aims[i][1]));
 const jumpPx = (rad) => rad * 495;
-check("the aim visibly jumps on the first shots", mean(jumps.slice(0, 5)) * 495 > 4, `${jumpPx(mean(jumps.slice(0, 5))).toFixed(1)} px per shot`);
-check("the aim keeps jumping late in the magazine", mean(jumps.slice(-8)) * 495 > 4, `${jumpPx(mean(jumps.slice(-8))).toFixed(1)} px per shot`);
-check("the crosshair opens", lateGap > r.gapBefore + 8, `${r.gapBefore.toFixed(1)} -> ${lateGap.toFixed(1)} px`);
+// The rifle kicks about 0.0075 rad a shot (about 3.7 px) and its full bloom opens the crosshair
+// about 6.7 px: the checks ask for clearly less, to see the kick and the bloom at all.
+check("the aim visibly jumps on the first shots", mean(jumps.slice(0, 5)) * 495 > 2.5, `${jumpPx(mean(jumps.slice(0, 5))).toFixed(1)} px per shot`);
+check("the aim keeps jumping late in the magazine", mean(jumps.slice(-8)) * 495 > 2.5, `${jumpPx(mean(jumps.slice(-8))).toFixed(1)} px per shot`);
+check("the crosshair opens", lateGap > r.gapBefore + 4, `${r.gapBefore.toFixed(1)} -> ${lateGap.toFixed(1)} px`);
 check("everything settles after release", r.recoil < 0.01 && r.gapAfter < r.gapBefore + 3, `recoil ${r.recoil.toFixed(4)}, gap ${r.gapAfter.toFixed(1)} px`);
 process.exit(results.every(Boolean) ? 0 : 1);

@@ -49,10 +49,10 @@ const RIFLE: Stats = Stats {
     damage_head: 100,
     damage_body: 34,
     damage_legs: 25,
-    spread_still: 0.002 * SPREAD_SCALE,
-    spread_moving: 0.014 * SPREAD_SCALE,
-    bloom_per_shot: 0.0035 * SPREAD_SCALE,
-    bloom_max: 0.03 * SPREAD_SCALE,
+    spread_still: 0.0016 * SPREAD_SCALE,
+    spread_moving: 0.009 * SPREAD_SCALE,
+    bloom_per_shot: 0.0022 * SPREAD_SCALE,
+    bloom_max: 0.018 * SPREAD_SCALE,
     has_scope: false,
     scoped_spread_still: 0.0,
     scoped_spread_moving: 0.0,
@@ -122,10 +122,11 @@ const SMG: Stats = Stats {
     damage_head: 72,
     damage_body: 24,
     damage_legs: 18,
-    spread_still: 0.0015 * SPREAD_SCALE,
-    spread_moving: 0.009 * SPREAD_SCALE,
-    bloom_per_shot: 0.0025 * SPREAD_SCALE,
-    bloom_max: 0.022 * SPREAD_SCALE,
+    // Still just above the pistol's, which stays the more accurate gun at rest.
+    spread_still: 0.0013 * SPREAD_SCALE,
+    spread_moving: 0.006 * SPREAD_SCALE,
+    bloom_per_shot: 0.0016 * SPREAD_SCALE,
+    bloom_max: 0.013 * SPREAD_SCALE,
     has_scope: false,
     scoped_spread_still: 0.0,
     scoped_spread_moving: 0.0,
@@ -287,6 +288,33 @@ const AKIMBO_SMG: Stats = Stats {
     ..SMG
 };
 
+/// Slot 4. `magazine` is how many a life starts with; there is no reserve and no reload. The
+/// damage is the blast's at its centre, falling off with distance (systems.rs `blast`).
+const GRENADE: Stats = Stats {
+    name: "HG-3",
+    magazine: 1,
+    reserve: 0,
+    // After a throw: until the next one, or until the weapon the last one goes back to is drawn.
+    fire_interval: 0.6,
+    reload_time: 0.0,
+    move_speed: 5.6 * SPEED_SCALE,
+    damage_head: 110,
+    damage_body: 110,
+    damage_legs: 110,
+    spread_still: 0.0,
+    spread_moving: 0.0,
+    bloom_per_shot: 0.0,
+    bloom_max: 0.0,
+    has_scope: false,
+    scoped_spread_still: 0.0,
+    scoped_spread_moving: 0.0,
+    melee_range: 0.0,
+    pellets: 0,
+    shell_reload: false,
+    splash_radius: 5.0,
+    stun: 0.0,
+};
+
 /// Time between rounds of the upgraded pistol's burst, and between bursts.
 pub const BURST_GAP: f32 = 0.07;
 pub const BURST_RECOVERY: f32 = 0.2;
@@ -326,6 +354,7 @@ pub fn stats(kind: WeaponKind) -> &'static Stats {
         WeaponKind::PistolPlus => &PISTOL_PLUS,
         WeaponKind::Magnum => &MAGNUM,
         WeaponKind::AkimboSmg => &AKIMBO_SMG,
+        WeaponKind::Grenade => &GRENADE,
         WeaponKind::Knife => &KNIFE,
         WeaponKind::Sniper => &SNIPER,
         WeaponKind::MachineGun => &MACHINE_GUN,
@@ -342,7 +371,7 @@ pub const PRIMARIES: [WeaponKind; 4] = [
     WeaponKind::Smg,
 ];
 
-pub const ALL: [WeaponKind; 12] = [
+pub const ALL: [WeaponKind; 13] = [
     WeaponKind::Rifle,
     WeaponKind::Sniper,
     WeaponKind::MachineGun,
@@ -355,6 +384,7 @@ pub const ALL: [WeaponKind; 12] = [
     WeaponKind::PistolPlus,
     WeaponKind::Magnum,
     WeaponKind::AkimboSmg,
+    WeaponKind::Grenade,
 ];
 
 /// What slot 2 holds for a player with these augments.

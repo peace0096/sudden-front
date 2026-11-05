@@ -36,6 +36,8 @@ const room = await host.evaluate(() => ({
   header: document.querySelector(".panel-head").textContent,
   open: [...document.querySelectorAll(".slot.open .muted")].map((e) => e.textContent),
 }));
+// The rival readies; the host's start waits for it.
+await rival.click(".actions .ready-btn");
 await host.click(".actions .primary");
 for (const page of [host, rival]) {
   await page.waitForFunction(() => window.__game?.hasFirstSnapshot, null, { timeout: 30000 });
