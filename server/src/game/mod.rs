@@ -21,6 +21,26 @@ use std::collections::HashMap;
 
 pub const TICK_RATE: u32 = 30;
 pub const TICK_DT: f32 = 1.0 / TICK_RATE as f32;
+
+/// A timer in seconds after one more tick: down by TICK_DT, stopping at zero.
+pub fn count_down(seconds: f32) -> f32 {
+    (seconds - TICK_DT).max(0.0)
+}
+
+/// One frozen tick of the augment pick and the wait after it, as `(pick_left, freeze_left,
+/// time_up)`. The pick counts down first, and ends early once nobody is `undecided`; `time_up`
+/// when it has just ended, and whoever hasn't chosen is dealt a card. Then the wait counts down.
+fn freeze_step(pick_left: f32, freeze_left: f32, undecided: bool) -> (f32, f32, bool) {
+    if pick_left <= 0.0 {
+        return (pick_left, count_down(freeze_left), false);
+    }
+    let pick_left = if undecided {
+        count_down(pick_left)
+    } else {
+        0.0
+    };
+    (pick_left, freeze_left, pick_left <= 0.0)
+}
 pub const CMD_DT: f32 = 1.0 / 60.0;
 
 pub const KILLS_TO_WIN: u32 = 30;
@@ -341,12 +361,8 @@ impl Match {
         for (mut pose, mut inputs) in query.iter_mut(&mut self.world) {
             while let Some(cmd) = inputs.queue.pop_front() {
                 inputs.last_seq = cmd.seq;
-                if cmd.yaw.is_finite() {
-                    pose.yaw = cmd.yaw;
-                }
-                if cmd.pitch.is_finite() {
-                    pose.pitch = cmd.pitch.clamp(-MAX_PITCH, MAX_PITCH);
-                }
+                (pose.yaw, pose.pitch) =
+                    systems::input::view_angles(cmd.yaw, cmd.pitch, pose.yaw, pose.pitch);
             }
         }
         let undecided = self
@@ -357,15 +373,10 @@ impl Match {
         let mut state = self.world.resource_mut::<MatchState>();
         state.tick = state.tick.saturating_add(1);
         state.frozen_ticks = state.frozen_ticks.saturating_add(1);
-        if state.pick_left <= 0.0 {
-            state.freeze_left = (state.freeze_left - TICK_DT).max(0.0);
-            return;
-        }
-        state.pick_left = (state.pick_left - TICK_DT).max(0.0);
-        if !undecided {
-            state.pick_left = 0.0;
-        }
-        if state.pick_left > 0.0 {
+        let (pick_left, freeze_left, time_up) =
+            freeze_step(state.pick_left, state.freeze_left, undecided);
+        (state.pick_left, state.freeze_left) = (pick_left, freeze_left);
+        if !time_up {
             return;
         }
         // Time's up: whoever hasn't chosen gets a card at random.
@@ -604,6 +615,30 @@ impl Match {
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn a_timer_counts_down_a_tick_at_a_time_and_stops_at_zero() {
+        assert_eq!(count_down(1.0), 1.0 - TICK_DT);
+        assert_eq!(count_down(TICK_DT / 2.0), 0.0);
+        assert_eq!(count_down(0.0), 0.0);
+    }
+
+    #[test]
+    fn the_pick_counts_down_and_its_end_deals_the_undecided_a_card() {
+        assert_eq!(freeze_step(1.0, 5.0, true), (1.0 - TICK_DT, 5.0, false));
+        assert_eq!(freeze_step(TICK_DT, 5.0, true), (0.0, 5.0, true));
+    }
+
+    #[test]
+    fn the_pick_ends_early_once_everyone_has_chosen() {
+        assert_eq!(freeze_step(10.0, 5.0, false), (0.0, 5.0, true));
+    }
+
+    #[test]
+    fn the_wait_counts_down_only_after_the_pick() {
+        assert_eq!(freeze_step(0.0, 5.0, false), (0.0, 5.0 - TICK_DT, false));
+        assert_eq!(freeze_step(0.0, 0.0, false), (0.0, 0.0, false));
+    }
 
     #[test]
     fn a_chosen_kill_target_ends_the_match_there_and_reaches_the_client() {

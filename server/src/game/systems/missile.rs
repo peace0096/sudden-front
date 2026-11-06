@@ -2,6 +2,7 @@
 
 use super::blast::{blast, blast_target, Blaster};
 use super::fire::{Hit, TargetView};
+use crate::game::components::Pose;
 use crate::game::physics::{ray_aabb, ray_world};
 use crate::game::resources::*;
 use crate::game::*;
@@ -14,6 +15,57 @@ pub(super) const MISSILE_LIFE: f32 = 3.0;
 
 /// How far from a player's body a missile still counts as hitting them.
 const MISSILE_HIT_PAD: f32 = 0.8;
+
+/// How far along `dir` a missile at `pos` reaches the floor, when it is heading down.
+fn floor_hit(pos: [f32; 3], dir: [f32; 3]) -> Option<f32> {
+    (dir[1] < 0.0).then(|| pos[1] / -dir[1])
+}
+
+/// The box around a body that a missile sets off on touching: the body, padded by MISSILE_HIT_PAD.
+fn reach_box(pose: &Pose) -> ([f32; 3], [f32; 3]) {
+    let (x, feet, z) = (pose.x, pose.y, pose.z);
+    let r = 0.28 + MISSILE_HIT_PAD;
+    let top = feet + PLAYER_HEIGHT + MISSILE_HIT_PAD;
+    ([x - r, feet, z - r], [x + r, top, z + r])
+}
+
+/// How far a missile at `pos` flying along `dir` gets in a `step`, and whether it touches something
+/// on the way: the first of a wall (`wall`, its distance), the floor, or one of `bodies`.
+fn flight(
+    pos: [f32; 3],
+    dir: [f32; 3],
+    step: f32,
+    wall: Option<f32>,
+    bodies: impl Iterator<Item = ([f32; 3], [f32; 3])>,
+) -> (f32, bool) {
+    let mut t = step;
+    let mut contact = false;
+    if let Some(wall) = wall {
+        t = wall;
+        contact = true;
+    }
+    if let Some(floor) = floor_hit(pos, dir) {
+        if floor < t {
+            t = floor;
+            contact = true;
+        }
+    }
+    for (min, max) in bodies {
+        if let Some(d) = ray_aabb(pos, dir, min, max) {
+            if d < t {
+                t = d;
+                contact = true;
+            }
+        }
+    }
+    (t, contact)
+}
+
+/// Where a missile that touched something at `t` goes off: just short of the surface, so the blast
+/// isn't on its far side.
+fn short_of(t: f32) -> f32 {
+    (t - 0.05).max(0.0)
+}
 
 /// Flies each missile one tick; whatever it touches sets it off.
 pub(super) fn fly_missiles(
@@ -33,29 +85,13 @@ pub(super) fn fly_missiles(
             weapon: pb::WeaponKind::Missile,
         };
         let step = MISSILE_SPEED * TICK_DT;
-        let mut t = step;
-        let mut contact = false;
-        if let Some(wall) = ray_world(boxes, pos, dir, step) {
-            t = wall;
-            contact = true;
-        }
-        if dir[1] < 0.0 && pos[1] / -dir[1] < t {
-            t = pos[1] / -dir[1];
-            contact = true;
-        }
-        for target in targets.iter().filter(|s| blast_target(rules, &source, s)) {
-            let (x, feet, z) = (target.pose.x, target.pose.y, target.pose.z);
-            let r = 0.28 + MISSILE_HIT_PAD;
-            let top = feet + PLAYER_HEIGHT + MISSILE_HIT_PAD;
-            if let Some(d) = ray_aabb(pos, dir, [x - r, feet, z - r], [x + r, top, z + r]) {
-                if d < t {
-                    t = d;
-                    contact = true;
-                }
-            }
-        }
-        // Just short of the surface, so the blast isn't on its far side.
-        let t = if contact { (t - 0.05).max(0.0) } else { t };
+        let bodies = targets
+            .iter()
+            .filter(|s| blast_target(rules, &source, s))
+            .map(|s| reach_box(&s.pose));
+        let wall = ray_world(boxes, pos, dir, step);
+        let (t, contact) = flight(pos, dir, step, wall, bodies);
+        let t = if contact { short_of(t) } else { t };
         missile.pos = [
             pos[0] + dir[0] * t,
             pos[1] + dir[1] * t,
@@ -76,6 +112,64 @@ pub(super) fn fly_missiles(
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn a_missile_heading_down_meets_the_floor_and_a_level_one_never_does() {
+        assert_eq!(floor_hit([0.0, 2.0, 0.0], [0.0, -1.0, 0.0]), Some(2.0));
+        assert_eq!(floor_hit([0.0, 2.0, 0.0], [0.6, -0.8, 0.0]), Some(2.5));
+        assert_eq!(floor_hit([0.0, 2.0, 0.0], [1.0, 0.0, 0.0]), None);
+        assert_eq!(floor_hit([0.0, 2.0, 0.0], [0.0, 1.0, 0.0]), None);
+    }
+
+    #[test]
+    fn a_body_is_reached_from_a_padded_box_around_it() {
+        let pose = Pose {
+            x: 3.0,
+            y: 1.0,
+            z: -2.0,
+            ..Default::default()
+        };
+        let (min, max) = reach_box(&pose);
+        assert_eq!(min[1], 1.0);
+        assert_eq!(max[1], 1.0 + PLAYER_HEIGHT + MISSILE_HIT_PAD);
+        assert!((max[0] - 3.0 - (0.28 + MISSILE_HIT_PAD)).abs() < 1e-6);
+        assert!((3.0 - min[0] - (0.28 + MISSILE_HIT_PAD)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_missile_in_the_open_flies_its_full_step() {
+        let level = [0.0, 0.0, -1.0];
+        assert_eq!(
+            flight([0.0, 2.0, 0.0], level, 2.0, None, std::iter::empty()),
+            (2.0, false)
+        );
+    }
+
+    #[test]
+    fn a_missile_stops_at_the_first_thing_it_touches() {
+        let level = [0.0, 0.0, -1.0];
+        let body = ([-1.0, 0.0, -1.5], [1.0, 3.0, -1.0]);
+        let pos = [0.0, 2.0, 0.0];
+        assert_eq!(
+            flight(pos, level, 2.0, Some(1.8), [body].into_iter()),
+            (1.0, true)
+        );
+        assert_eq!(
+            flight(pos, level, 2.0, Some(0.5), [body].into_iter()),
+            (0.5, true)
+        );
+        let down = [0.0, -1.0, 0.0];
+        assert_eq!(
+            flight([0.0, 0.5, 0.0], down, 2.0, None, std::iter::empty()),
+            (0.5, true)
+        );
+    }
+
+    #[test]
+    fn a_missile_goes_off_just_short_of_what_it_touched_never_behind_its_start() {
+        assert!((short_of(1.0) - 0.95).abs() < 1e-6);
+        assert_eq!(short_of(0.01), 0.0);
+    }
 
     #[test]
     fn missiles_fly_then_blast_without_hurting_the_shooter() {

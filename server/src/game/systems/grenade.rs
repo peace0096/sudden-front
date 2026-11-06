@@ -47,6 +47,17 @@ const GRENADE_CONTACTS: usize = 4;
 /// How far off a surface (m) a touching grenade is put back, so rounding never leaves it inside.
 const GRENADE_STANDOFF: f32 = 1e-3;
 
+/// Where a thrown grenade leaves the hand, and its velocity: just in front of the thrower's eyes,
+/// within their own column (which no box reaches into, so it starts in the open), along the aim
+/// lofted by THROW_LIFT, at THROW_SPEED.
+fn throw_start(pose: &Pose, aim: FireIntent) -> ([f32; 3], [f32; 3]) {
+    let [x, y, z] = pose.eye();
+    let (sin, cos) = aim.yaw.sin_cos();
+    let pos = [x - sin * THROW_REACH, y, z - cos * THROW_REACH];
+    let dir = view_dir(aim.yaw, (aim.pitch + THROW_LIFT).min(MAX_PITCH));
+    (pos, dir.map(|d| d * THROW_SPEED))
+}
+
 /// Throws the grenade in hand along `aim`, lofted a little. The last one thrown, the weapon held
 /// before it comes back, drawn by the time the throw's own `fire_interval` is up.
 pub(super) fn throw_grenade(
@@ -60,19 +71,7 @@ pub(super) fn throw_grenade(
 ) {
     weapon.magazine = weapon.magazine.saturating_sub(1);
     weapon.cooldown += weapons::stats(pb::WeaponKind::Grenade).fire_interval;
-    let eye = if pose.crouching {
-        CROUCH_EYE_HEIGHT
-    } else {
-        EYE_HEIGHT
-    };
-    // Within the thrower's own column, which no box reaches into, so it starts in the open.
-    let (sin, cos) = aim.yaw.sin_cos();
-    let pos = [
-        pose.x - sin * THROW_REACH,
-        pose.y + eye,
-        pose.z - cos * THROW_REACH,
-    ];
-    let dir = view_dir(aim.yaw, (aim.pitch + THROW_LIFT).min(MAX_PITCH));
+    let (pos, vel) = throw_start(pose, aim);
     grenades.next_id = grenades.next_id.wrapping_add(1);
     grenades.live.push(Grenade {
         id: grenades.next_id,
@@ -80,7 +79,7 @@ pub(super) fn throw_grenade(
         owner_id: player.id,
         team: player.team,
         pos,
-        vel: dir.map(|d| d * THROW_SPEED),
+        vel,
         fuse_ticks: FUSE_TICKS,
     });
     log.push(Event::GrenadeThrown(pb::ThrowEvent {
@@ -171,6 +170,59 @@ pub(super) fn fly_grenades(
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    fn aim(yaw: f32, pitch: f32) -> FireIntent {
+        FireIntent {
+            yaw,
+            pitch,
+            render_tick: 0,
+        }
+    }
+
+    #[test]
+    fn a_grenade_leaves_the_hand_in_front_of_the_eyes_at_throwing_speed() {
+        let pose = Pose {
+            x: 4.0,
+            z: 6.0,
+            ..Default::default()
+        };
+        let (pos, vel) = throw_start(&pose, aim(0.0, 0.0));
+        let eye = pose.eye();
+        assert_eq!(pos[1], eye[1]);
+        assert!((pos[2] - (eye[2] - THROW_REACH)).abs() < 1e-6);
+        let speed = vel.iter().map(|v| v * v).sum::<f32>().sqrt();
+        assert!((speed - THROW_SPEED).abs() < 1e-3);
+        assert!(vel[1] > 0.0, "a level throw is lofted a little");
+    }
+
+    #[test]
+    fn a_throw_is_never_lofted_past_the_highest_aim() {
+        let (_, steep) = throw_start(&Pose::default(), aim(0.0, MAX_PITCH));
+        let (_, steepest) = throw_start(&Pose::default(), aim(0.0, MAX_PITCH - THROW_LIFT / 2.0));
+        assert_eq!(steep, steepest);
+    }
+
+    #[test]
+    fn a_grenade_in_the_air_falls_under_its_own_gravity() {
+        let mut pos = [0.0, 5.0, 0.0];
+        let mut vel = [0.0; 3];
+        roll_grenade(&[], 50.0, 50.0, &mut pos, &mut vel);
+        assert!((vel[1] + GRENADE_GRAVITY * TICK_DT).abs() < 1e-6);
+        assert!((pos[1] - (5.0 + vel[1] * TICK_DT)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_fast_grenade_bounces_off_the_floor_and_a_slow_one_settles_and_stops() {
+        let mut pos = [0.0, 0.2, 0.0];
+        let mut vel = [0.0, -10.0, 0.0];
+        roll_grenade(&[], 50.0, 50.0, &mut pos, &mut vel);
+        assert!(vel[1] > 0.0, "bounced back up");
+        assert!(pos[1] >= GRENADE_RADIUS);
+        let mut pos = [0.0, GRENADE_RADIUS + GRENADE_STANDOFF, 0.0];
+        let mut vel = [0.1, 0.0, 0.0];
+        roll_grenade(&[], 50.0, 50.0, &mut pos, &mut vel);
+        assert_eq!(vel, [0.0; 3]);
+    }
 
     #[test]
     fn slot_4_holds_one_grenade_a_life_and_a_throw_goes_back_to_the_gun() {

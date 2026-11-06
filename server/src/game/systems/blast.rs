@@ -1,6 +1,7 @@
 //! Blasts: a missile or grenade going off hurts every enemy it reaches in the open.
 
 use super::fire::{ray_shield, Hit, TargetView};
+use crate::game::components::Pose;
 use crate::game::physics::line_clear;
 use crate::game::resources::*;
 use crate::game::*;
@@ -17,6 +18,22 @@ pub(super) struct Blaster {
     pub(super) owner_id: u32,
     pub(super) team: pb::Team,
     pub(super) weapon: pb::WeaponKind,
+}
+
+/// The point of a body a blast aims at: the middle of the torso, lower when crouched.
+fn torso(pose: &Pose) -> [f32; 3] {
+    let height = if pose.crouching { 0.7 } else { 1.2 };
+    [pose.x, pose.y + height, pose.z]
+}
+
+/// A blast's damage at `distance` from its centre: `damage` there, falling off by SPLASH_FALLOFF
+/// towards the edge of `radius`. `None` at the edge and beyond.
+fn splash_damage(damage: i32, distance: f32, radius: f32) -> Option<i32> {
+    if distance >= radius {
+        return None;
+    }
+    let falloff = 1.0 - SPLASH_FALLOFF * distance / radius;
+    Some((damage as f32 * falloff) as i32)
 }
 
 /// Whether a missile in flight, or a blast, can touch or hurt `target`. Never its owner: a missile
@@ -45,17 +62,19 @@ pub(super) fn blast(
             target.pose.crouching,
             target.pose.yaw,
         );
-        let torso = [x, feet + if crouching { 0.7 } else { 1.2 }, z];
+        let torso = torso(&target.pose);
         let d = [
             torso[0] - center[0],
             torso[1] - center[1],
             torso[2] - center[2],
         ];
         let distance = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-        if distance >= stats.splash_radius || !line_clear(boxes, center, torso) {
+        let Some(amount) = splash_damage(stats.damage_body, distance, stats.splash_radius) else {
+            continue;
+        };
+        if !line_clear(boxes, center, torso) {
             continue;
         }
-        let falloff = 1.0 - SPLASH_FALLOFF * distance / stats.splash_radius;
         let to_torso = [
             d[0] / distance.max(1e-4),
             d[1] / distance.max(1e-4),
@@ -71,7 +90,7 @@ pub(super) fn blast(
             weapon: source.weapon,
             victim: target.entity,
             zone: pb::HitZone::Body,
-            amount: (stats.damage_body as f32 * falloff) as i32,
+            amount,
             shield,
             stun: 0.0,
         });
@@ -82,6 +101,128 @@ pub(super) fn blast(
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    fn view(entity: Entity, team: pb::Team, x: f32, z: f32) -> TargetView {
+        TargetView {
+            entity,
+            id: 9,
+            team,
+            pose: Pose {
+                x,
+                z,
+                ..Default::default()
+            },
+            samples: History::default(),
+            hittable: true,
+            head_scale: 1.0,
+            shielded: false,
+        }
+    }
+
+    fn entities<const N: usize>() -> [Entity; N] {
+        let mut world = World::new();
+        std::array::from_fn(|_| world.spawn_empty().id())
+    }
+
+    fn rules(ffa: bool) -> Rules {
+        Rules {
+            mode: pb::GameMode::Normal,
+            max_hp: MAX_HP,
+            ffa,
+            big_head: false,
+        }
+    }
+
+    #[test]
+    fn a_blast_aims_at_the_middle_of_the_torso_lower_when_crouched() {
+        let mut pose = Pose {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+            ..Default::default()
+        };
+        assert_eq!(torso(&pose), [1.0, 3.2, 3.0]);
+        pose.crouching = true;
+        assert_eq!(torso(&pose), [1.0, 2.7, 3.0]);
+    }
+
+    #[test]
+    fn splash_damage_falls_off_towards_the_edge_and_stops_there() {
+        assert_eq!(splash_damage(100, 0.0, 5.0), Some(100));
+        assert_eq!(splash_damage(100, 2.5, 5.0), Some(65));
+        assert_eq!(splash_damage(100, 5.0, 5.0), None);
+        assert_eq!(splash_damage(100, 9.0, 5.0), None);
+    }
+
+    #[test]
+    fn a_blast_spares_its_owner_teammates_and_the_unhittable_but_not_a_free_for_all() {
+        let [owner, mate, enemy] = entities();
+        let source = Blaster {
+            owner,
+            owner_id: 1,
+            team: pb::Team::Red,
+            weapon: Kind::Grenade,
+        };
+        let team = rules(false);
+        assert!(!blast_target(
+            &team,
+            &source,
+            &view(owner, pb::Team::Red, 0.0, 0.0)
+        ));
+        assert!(!blast_target(
+            &team,
+            &source,
+            &view(mate, pb::Team::Red, 0.0, 0.0)
+        ));
+        assert!(blast_target(
+            &team,
+            &source,
+            &view(enemy, pb::Team::Blue, 0.0, 0.0)
+        ));
+        let mut protected = view(enemy, pb::Team::Blue, 0.0, 0.0);
+        protected.hittable = false;
+        assert!(!blast_target(&team, &source, &protected));
+        let ffa = rules(true);
+        let loner = Blaster {
+            team: pb::Team::Unspecified,
+            ..source
+        };
+        let other = view(mate, pb::Team::Unspecified, 0.0, 0.0);
+        assert!(blast_target(&ffa, &loner, &other));
+        let own = view(owner, pb::Team::Unspecified, 0.0, 0.0);
+        assert!(!blast_target(&ffa, &loner, &own));
+    }
+
+    #[test]
+    fn a_blast_in_the_open_hurts_enemies_inside_its_radius_by_their_distance() {
+        let [owner, near, far] = entities();
+        let source = Blaster {
+            owner,
+            owner_id: 1,
+            team: pb::Team::Red,
+            weapon: Kind::Grenade,
+        };
+        let stats = weapons::stats(Kind::Grenade);
+        let targets = [
+            view(near, pb::Team::Blue, 1.0, 0.0),
+            view(far, pb::Team::Blue, stats.splash_radius + 1.0, 0.0),
+        ];
+        let mut hits = Vec::new();
+        blast(
+            &[],
+            &rules(false),
+            [0.0, 1.2, 0.0],
+            &source,
+            &targets,
+            &mut hits,
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].victim, near);
+        assert_eq!(
+            Some(hits[0].amount),
+            splash_damage(stats.damage_body, 1.0, stats.splash_radius)
+        );
+    }
 
     #[test]
     fn a_missile_blast_catches_people_beside_it_but_not_behind_walls() {

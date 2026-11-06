@@ -21,7 +21,7 @@ fn refill(budget: u32) -> u32 {
 
 /// The view a command asks for, `(yaw, pitch)`. An angle that isn't a finite number keeps the
 /// current one, and pitch is clamped to what a neck allows.
-fn view_angles(cmd_yaw: f32, cmd_pitch: f32, yaw: f32, pitch: f32) -> (f32, f32) {
+pub(crate) fn view_angles(cmd_yaw: f32, cmd_pitch: f32, yaw: f32, pitch: f32) -> (f32, f32) {
     let yaw = if cmd_yaw.is_finite() { cmd_yaw } else { yaw };
     let pitch = if cmd_pitch.is_finite() {
         cmd_pitch.clamp(-MAX_PITCH, MAX_PITCH)

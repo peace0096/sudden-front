@@ -6,6 +6,20 @@ use crate::game::resources::*;
 use crate::game::*;
 use bevy_ecs::prelude::*;
 
+/// One tick of a King's reign; `true` when it has just ended, and the player is back at
+/// big_head::KING_END_LEVEL. Anyone who isn't the King is left alone.
+fn reign(perks: &mut Perks) -> bool {
+    if !perks.king() {
+        return false;
+    }
+    perks.king_ticks = perks.king_ticks.saturating_sub(1);
+    if perks.king() {
+        return false;
+    }
+    perks.set_level(big_head::KING_END_LEVEL);
+    true
+}
+
 /// Big Head mode: runs each King's reign down a tick. When it is over the player is back at
 /// big_head::KING_END_LEVEL, the hammer gone, with a fresh set of their own weapons (full
 /// ammunition, the primary in hand, as at a respawn).
@@ -17,15 +31,9 @@ pub fn update_kings(
         return;
     }
     for (player, mut perks, mut weapon, loadout) in &mut players {
-        if !perks.king() {
-            continue;
+        if reign(&mut perks) {
+            *weapon = issue_weapons(loadout.0, &perks.active, player.is_bot);
         }
-        perks.king_ticks = perks.king_ticks.saturating_sub(1);
-        if perks.king() {
-            continue;
-        }
-        perks.set_level(big_head::KING_END_LEVEL);
-        *weapon = issue_weapons(loadout.0, &perks.active, player.is_bot);
     }
 }
 
@@ -33,6 +41,32 @@ pub fn update_kings(
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn only_a_king_has_a_reign_to_run_down() {
+        let mut perks = Perks::default();
+        perks.set_level(2);
+        assert!(!reign(&mut perks));
+        assert_eq!(perks.level, 2);
+    }
+
+    #[test]
+    fn a_reign_ends_on_its_last_tick_back_at_the_end_level() {
+        let mut perks = Perks {
+            king_ticks: 2,
+            ..Default::default()
+        };
+        perks.set_level(big_head::MAX_LEVEL);
+        assert!(!reign(&mut perks));
+        assert!(perks.king());
+        assert!(reign(&mut perks));
+        assert!(!perks.king());
+        assert_eq!(perks.level, big_head::KING_END_LEVEL);
+        assert_eq!(
+            perks.head_scale,
+            big_head::head_scale(big_head::KING_END_LEVEL)
+        );
+    }
 
     #[test]
     fn the_third_level_crowns_a_king_who_holds_only_the_hammer() {

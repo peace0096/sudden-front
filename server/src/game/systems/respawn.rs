@@ -62,7 +62,45 @@ pub fn spawn_yaw(team: pb::Team) -> f32 {
     }
 }
 
-#[allow(clippy::type_complexity)]
+/// Whether a respawning player keeps their primary: an augment's own (Missile, Uzi Akimbo), or one
+/// taken by Possession. Otherwise a bot draws a new one.
+fn keeps_primary(active: &[pb::Augment]) -> bool {
+    forced_primary(active).is_some()
+        || active.contains(&pb::Augment::Possession)
+        || active.contains(&pb::Augment::Akimbo)
+}
+
+/// A living player's timers after a tick: spawn protection and paralysis wear off.
+fn wear_off(vitals: &mut Vitals) {
+    vitals.protect_left = count_down(vitals.protect_left);
+    vitals.stun_left = count_down(vitals.stun_left);
+}
+
+/// A respawned player's health: full, alive, and protected for SPAWN_PROTECTION.
+fn revived(hp: i32) -> Vitals {
+    Vitals {
+        hp,
+        alive: true,
+        respawn_left: 0.0,
+        protect_left: SPAWN_PROTECTION,
+        stun_left: 0.0,
+    }
+}
+
+/// What a new life clears: the attackers of the last one, Rest's clock and fraction, and the
+/// shield, which comes back whole for a Shield bearer. The augment, the head and the Big Head
+/// level carry over.
+fn fresh_life(perks: &mut Perks) {
+    perks.damaged_by.clear();
+    perks.idle = 0.0;
+    perks.regen = 0.0;
+    perks.shield_hp = if perks.has(pb::Augment::Shield) {
+        augments::SHIELD_HP
+    } else {
+        0
+    };
+}
+
 pub fn respawn_players(
     arena: Res<Arena>,
     rules: Res<Rules>,
@@ -88,8 +126,7 @@ pub fn respawn_players(
         &mut players
     {
         if vitals.alive {
-            vitals.protect_left = (vitals.protect_left - TICK_DT).max(0.0);
-            vitals.stun_left = (vitals.stun_left - TICK_DT).max(0.0);
+            wear_off(&mut vitals);
             continue;
         }
         // A body killed in the air falls to the floor or the box top below it: two command steps a tick.
@@ -124,29 +161,12 @@ pub fn respawn_players(
             yaw,
             ..Default::default()
         };
-        *vitals = Vitals {
-            hp: augments::max_hp(rules.max_hp, &perks.active),
-            alive: true,
-            respawn_left: 0.0,
-            protect_left: SPAWN_PROTECTION,
-            stun_left: 0.0,
-        };
-        // Kept weapons: an augment's own, or one taken by Possession.
-        let keeps_primary = forced_primary(&perks.active).is_some()
-            || perks.has(pb::Augment::Possession)
-            || perks.has(pb::Augment::Akimbo);
-        if player.is_bot && !keeps_primary {
+        *vitals = revived(augments::max_hp(rules.max_hp, &perks.active));
+        if player.is_bot && !keeps_primary(&perks.active) {
             loadout.0 = weapons::random_for_bot(&mut rng);
         }
         *weapon = issue_weapons(loadout.0, &perks.active, player.is_bot);
-        perks.damaged_by.clear();
-        perks.idle = 0.0;
-        perks.regen = 0.0;
-        perks.shield_hp = if perks.has(pb::Augment::Shield) {
-            augments::SHIELD_HP
-        } else {
-            0
-        };
+        fresh_life(&mut perks);
         // Big Head mode: a player who reached the top level while down is crowned as they come back.
         if rules.big_head && perks.level >= big_head::MAX_LEVEL && !perks.king() {
             big_head::crown(&mut perks, &mut vitals, &mut weapon, rules.max_hp);
@@ -163,6 +183,97 @@ pub fn respawn_players(
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn the_spawn_furthest_from_the_nearest_enemy_wins_despite_the_jitter() {
+        let mut rng = GameRng(7);
+        let points = [(0.0, 0.0), (100.0, 0.0)];
+        assert_eq!(
+            furthest_spawn(&points, &[(1.0, 0.0)], &mut rng),
+            (100.0, 0.0)
+        );
+        assert_eq!(
+            furthest_spawn(&points, &[(99.0, 0.0)], &mut rng),
+            (0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn with_no_enemy_about_any_spawn_will_do() {
+        let mut rng = GameRng(7);
+        let points = [(1.0, 2.0), (3.0, 4.0)];
+        for _ in 0..20 {
+            assert!(points.contains(&furthest_spawn(&points, &[], &mut rng)));
+        }
+    }
+
+    #[test]
+    fn blue_spawns_on_the_mirror_image_of_reds_points() {
+        let spawns = [(10.0, 5.0)];
+        let mut rng = GameRng(7);
+        assert_eq!(
+            choose_spawn(&spawns, pb::Team::Red, &[], &mut rng),
+            (10.0, 5.0)
+        );
+        assert_eq!(
+            choose_spawn(&spawns, pb::Team::Blue, &[], &mut rng),
+            (-10.0, -5.0)
+        );
+    }
+
+    #[test]
+    fn spawns_face_the_other_side_or_in_a_free_for_all_the_middle() {
+        assert_eq!(spawn_yaw(pb::Team::Red), -spawn_yaw(pb::Team::Blue));
+        // Facing yaw y looks along (-sin y, -cos y): from (10, 0) that is back towards the origin.
+        let yaw = ffa_yaw(10.0, 0.0);
+        assert!((-yaw.sin() + 1.0).abs() < 1e-6 && yaw.cos().abs() < 1e-6);
+    }
+
+    #[test]
+    fn protection_and_paralysis_wear_off_a_tick_at_a_time() {
+        let mut vitals = revived(MAX_HP);
+        vitals.stun_left = TICK_DT / 2.0;
+        wear_off(&mut vitals);
+        assert_eq!(vitals.protect_left, SPAWN_PROTECTION - TICK_DT);
+        assert_eq!(vitals.stun_left, 0.0);
+    }
+
+    #[test]
+    fn a_new_life_starts_whole_and_protected() {
+        let vitals = revived(150);
+        assert_eq!((vitals.hp, vitals.alive), (150, true));
+        assert_eq!(vitals.protect_left, SPAWN_PROTECTION);
+    }
+
+    #[test]
+    fn augment_weapons_and_possessed_ones_are_kept_through_a_respawn() {
+        assert!(keeps_primary(&[Aug::Missile]));
+        assert!(keeps_primary(&[Aug::Possession]));
+        assert!(keeps_primary(&[Aug::Akimbo]));
+        assert!(!keeps_primary(&[Aug::Vest]));
+    }
+
+    #[test]
+    fn a_new_life_clears_the_old_ones_attackers_and_restores_a_shield() {
+        let mut world = World::new();
+        let attacker = world.spawn_empty().id();
+        let mut perks = Perks {
+            active: vec![Aug::Shield],
+            damaged_by: vec![attacker],
+            idle: 3.0,
+            regen: 0.5,
+            level: 2,
+            ..Default::default()
+        };
+        fresh_life(&mut perks);
+        assert!(perks.damaged_by.is_empty());
+        assert_eq!((perks.idle, perks.regen), (0.0, 0.0));
+        assert_eq!(perks.shield_hp, augments::SHIELD_HP);
+        assert_eq!(perks.level, 2);
+        let mut plain = Perks::default();
+        fresh_life(&mut plain);
+        assert_eq!(plain.shield_hp, 0);
+    }
 
     #[test]
     fn dead_player_respawns_with_full_ammo() {
