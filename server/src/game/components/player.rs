@@ -1,5 +1,6 @@
 //! Who a player is and their body: identity, pose, health, loadout and score.
 
+use crate::game::{CROUCH_EYE_HEIGHT, EYE_HEIGHT};
 use crate::pb;
 use bevy_ecs::prelude::*;
 
@@ -24,6 +25,18 @@ pub struct Pose {
     pub crouching: bool,
 }
 
+impl Pose {
+    /// Where the player's eyes are: their eye height, standing or crouched, above their feet.
+    pub fn eye(&self) -> [f32; 3] {
+        let height = if self.crouching {
+            CROUCH_EYE_HEIGHT
+        } else {
+            EYE_HEIGHT
+        };
+        [self.x, self.y + height, self.z]
+    }
+}
+
 #[derive(Component)]
 pub struct Vitals {
     pub hp: i32,
@@ -42,4 +55,22 @@ pub struct Loadout(pub pb::WeaponKind);
 pub struct Stats {
     pub kills: u32,
     pub deaths: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_eyes_sit_at_eye_height_above_the_feet_and_lower_when_crouched() {
+        let mut pose = Pose {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+            ..Default::default()
+        };
+        assert_eq!(pose.eye(), [1.0, 2.0 + EYE_HEIGHT, 3.0]);
+        pose.crouching = true;
+        assert_eq!(pose.eye(), [1.0, 2.0 + CROUCH_EYE_HEIGHT, 3.0]);
+    }
 }

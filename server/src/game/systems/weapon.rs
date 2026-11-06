@@ -21,26 +21,87 @@ fn load_rounds(weapon: &mut Weapon, wanted: u32, infinite: bool) {
     }
 }
 
+/// One tick of a weapon settling: the cooldown runs down, and the bloom recovers once its hold is
+/// over. While the trigger is held, or a burst goes on, the cooldown may go slightly negative,
+/// which carries the remainder into the next shot. That is what lets fire intervals that aren't a
+/// multiple of the tick length average correctly.
+fn settle(weapon: &mut Weapon, trigger_held: bool) {
+    if weapon.cooldown > 0.0 {
+        weapon.cooldown -= TICK_DT;
+    }
+    if !trigger_held && weapon.burst_left == 0 {
+        weapon.cooldown = weapon.cooldown.max(0.0);
+    }
+    if weapon.bloom_hold > 0.0 {
+        weapon.bloom_hold -= TICK_DT;
+    } else {
+        weapon.bloom = (weapon.bloom - BLOOM_DECAY * TICK_DT).max(0.0);
+    }
+}
+
+/// Whether there is anything to reload: room in the magazine, and rounds to fill it with.
+fn can_reload(weapon: &Weapon, stats: &weapons::Stats, infinite: bool) -> bool {
+    weapon.magazine < stats.magazine && (infinite || weapon.reserve > 0)
+}
+
+/// One tick of reloading. A running reload counts down and fills the magazine when it is done; a
+/// shotgun loads one shell, and goes on to the next while there is room. Otherwise an empty
+/// magazine, or `asked` (R), starts a reload. `true` when a reload starts, which players hear.
+fn reload(
+    weapon: &mut Weapon,
+    stats: &weapons::Stats,
+    reload_time: f32,
+    infinite: bool,
+    asked: bool,
+) -> bool {
+    if weapon.reloading() {
+        weapon.reload_left -= TICK_DT;
+        if weapon.reload_left <= 0.0 {
+            weapon.reload_left = 0.0;
+            if stats.shell_reload {
+                load_rounds(weapon, 1, infinite);
+                if can_reload(weapon, stats, infinite) {
+                    weapon.reload_left = reload_time;
+                    return true;
+                }
+            } else {
+                let wanted = stats.magazine.saturating_sub(weapon.magazine);
+                load_rounds(weapon, wanted, infinite);
+            }
+        }
+        return false;
+    }
+    // An empty magazine reloads by itself; R reloads early.
+    if !(asked || weapon.magazine == 0) || !can_reload(weapon, stats, infinite) {
+        return false;
+    }
+    if reload_time <= 0.0 {
+        let wanted = stats.magazine.saturating_sub(weapon.magazine);
+        load_rounds(weapon, wanted, infinite);
+    } else {
+        weapon.reload_left = reload_time;
+        weapon.cooldown = weapon.cooldown.max(0.0);
+    }
+    true
+}
+
+/// How long the scope has been held, after this tick. It drops out while the bolt cycles and
+/// during a reload.
+fn scope_time(weapon: &Weapon, has_scope: bool, aiming: bool) -> f32 {
+    if has_scope && aiming && !weapon.reloading() && weapon.cooldown <= 0.0 {
+        weapon.aim_time + TICK_DT
+    } else {
+        0.0
+    }
+}
+
 pub fn update_weapons(
     mut log: ResMut<EventLog>,
     mut players: Query<(&Player, &mut Weapon, &Intent, &Vitals, &Perks)>,
 ) {
     for (player, mut weapon, intent, vitals, perks) in &mut players {
         let stats = weapons::stats(weapon.kind);
-        // While the trigger is held the cooldown may go slightly negative, which
-        // carries the remainder into the next shot. That is what lets fire
-        // intervals that aren't a multiple of the tick length average correctly.
-        if weapon.cooldown > 0.0 {
-            weapon.cooldown -= TICK_DT;
-        }
-        if intent.fire.is_none() && weapon.burst_left == 0 {
-            weapon.cooldown = weapon.cooldown.max(0.0);
-        }
-        if weapon.bloom_hold > 0.0 {
-            weapon.bloom_hold -= TICK_DT;
-        } else {
-            weapon.bloom = (weapon.bloom - BLOOM_DECAY * TICK_DT).max(0.0);
-        }
+        settle(&mut weapon, intent.fire.is_some());
         if !vitals.alive || vitals.stun_left > 0.0 {
             continue;
         }
@@ -48,50 +109,14 @@ pub fn update_weapons(
         if weapon.kind == pb::WeaponKind::Grenade {
             continue;
         }
-
         let infinite = perks.has(pb::Augment::InfiniteAmmo);
         let reload_time = weapons::reload_time(stats, &perks.active);
-        if weapon.reloading() {
-            weapon.reload_left -= TICK_DT;
-            if weapon.reload_left <= 0.0 {
-                weapon.reload_left = 0.0;
-                if stats.shell_reload {
-                    load_rounds(&mut weapon, 1, infinite);
-                    if weapon.magazine < stats.magazine && (infinite || weapon.reserve > 0) {
-                        weapon.reload_left = reload_time;
-                        log.push(Event::Reload(pb::ReloadEvent {
-                            player_id: player.id,
-                        }));
-                    }
-                } else {
-                    let wanted = stats.magazine.saturating_sub(weapon.magazine);
-                    load_rounds(&mut weapon, wanted, infinite);
-                }
-            }
-        } else {
-            // An empty magazine reloads by itself; R reloads early.
-            let wants_reload = intent.reload || weapon.magazine == 0;
-            if wants_reload && weapon.magazine < stats.magazine && (infinite || weapon.reserve > 0)
-            {
-                log.push(Event::Reload(pb::ReloadEvent {
-                    player_id: player.id,
-                }));
-                if reload_time <= 0.0 {
-                    let wanted = stats.magazine.saturating_sub(weapon.magazine);
-                    load_rounds(&mut weapon, wanted, infinite);
-                } else {
-                    weapon.reload_left = reload_time;
-                    weapon.cooldown = weapon.cooldown.max(0.0);
-                }
-            }
+        if reload(&mut weapon, stats, reload_time, infinite, intent.reload) {
+            log.push(Event::Reload(pb::ReloadEvent {
+                player_id: player.id,
+            }));
         }
-
-        // The scope drops out while the bolt cycles and during a reload.
-        if stats.has_scope && intent.aim && !weapon.reloading() && weapon.cooldown <= 0.0 {
-            weapon.aim_time += TICK_DT;
-        } else {
-            weapon.aim_time = 0.0;
-        }
+        weapon.aim_time = scope_time(&weapon, stats.has_scope, intent.aim);
     }
 }
 
@@ -118,6 +143,131 @@ pub fn issue_weapons(primary: pb::WeaponKind, active: &[pb::Augment], is_bot: bo
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn loading_takes_rounds_from_the_reserve_unless_ammo_is_infinite() {
+        let mut weapon = Weapon::new(Kind::Rifle);
+        weapon.magazine = 0;
+        weapon.reserve = 10;
+        load_rounds(&mut weapon, 30, false);
+        assert_eq!((weapon.magazine, weapon.reserve), (10, 0));
+        load_rounds(&mut weapon, 5, true);
+        assert_eq!((weapon.magazine, weapon.reserve), (15, 0));
+    }
+
+    #[test]
+    fn the_cooldown_carries_its_remainder_only_while_the_trigger_is_held() {
+        let mut weapon = Weapon::new(Kind::Rifle);
+        weapon.cooldown = 0.01;
+        settle(&mut weapon, true);
+        assert!(weapon.cooldown < 0.0);
+        weapon.cooldown = 0.01;
+        settle(&mut weapon, false);
+        assert_eq!(weapon.cooldown, 0.0);
+    }
+
+    #[test]
+    fn bloom_recovers_only_once_its_hold_is_over_and_never_below_zero() {
+        let mut weapon = Weapon::new(Kind::Rifle);
+        weapon.bloom = 0.05;
+        weapon.bloom_hold = 0.5;
+        settle(&mut weapon, false);
+        assert_eq!(weapon.bloom, 0.05);
+        weapon.bloom_hold = 0.0;
+        settle(&mut weapon, false);
+        assert!(weapon.bloom < 0.05);
+        weapon.bloom = 0.0;
+        settle(&mut weapon, false);
+        assert_eq!(weapon.bloom, 0.0);
+    }
+
+    #[test]
+    fn an_empty_magazine_starts_a_reload_by_itself_and_a_full_one_never_does() {
+        let stats = weapons::stats(Kind::Rifle);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        assert!(!reload(&mut weapon, stats, 1.0, false, true));
+        weapon.magazine = 0;
+        assert!(reload(&mut weapon, stats, 1.0, false, false));
+        assert!(weapon.reloading());
+    }
+
+    #[test]
+    fn a_reload_fills_the_magazine_from_the_reserve_when_its_time_is_up() {
+        let stats = weapons::stats(Kind::Rifle);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        let reserve = weapon.reserve;
+        weapon.magazine = 5;
+        assert!(reload(&mut weapon, stats, 2.0 * TICK_DT, false, true));
+        assert!(!reload(&mut weapon, stats, 2.0 * TICK_DT, false, false));
+        assert_eq!(weapon.magazine, 5);
+        assert!(!reload(&mut weapon, stats, 2.0 * TICK_DT, false, false));
+        assert_eq!(weapon.magazine, stats.magazine);
+        let used = stats.magazine.saturating_sub(5);
+        assert_eq!(weapon.reserve, reserve.saturating_sub(used));
+        assert!(!weapon.reloading());
+    }
+
+    #[test]
+    fn without_a_reserve_only_infinite_ammo_reloads() {
+        let stats = weapons::stats(Kind::Rifle);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        weapon.magazine = 0;
+        weapon.reserve = 0;
+        assert!(!reload(&mut weapon, stats, 1.0, false, true));
+        assert!(reload(&mut weapon, stats, 1.0, true, true));
+    }
+
+    #[test]
+    fn an_instant_reload_fills_the_magazine_at_once() {
+        let stats = weapons::stats(Kind::Rifle);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        weapon.magazine = 0;
+        assert!(reload(&mut weapon, stats, 0.0, false, false));
+        assert_eq!(weapon.magazine, stats.magazine);
+        assert!(!weapon.reloading());
+    }
+
+    #[test]
+    fn a_shotgun_loads_a_shell_per_reload_and_goes_on_while_there_is_room() {
+        let stats = weapons::stats(Kind::Shotgun);
+        assert!(stats.shell_reload);
+        let mut weapon = Weapon::new(Kind::Shotgun);
+        weapon.magazine = 0;
+        assert!(reload(&mut weapon, stats, TICK_DT, false, false));
+        assert!(reload(&mut weapon, stats, TICK_DT, false, false));
+        assert_eq!(weapon.magazine, 1);
+        assert!(weapon.reloading());
+    }
+
+    #[test]
+    fn the_scope_counts_only_while_aiming_a_ready_scoped_weapon() {
+        let mut weapon = Weapon::new(Kind::Sniper);
+        weapon.aim_time = 0.1;
+        assert_eq!(scope_time(&weapon, true, true), 0.1 + TICK_DT);
+        assert_eq!(scope_time(&weapon, false, true), 0.0);
+        assert_eq!(scope_time(&weapon, true, false), 0.0);
+        weapon.cooldown = 0.5;
+        assert_eq!(scope_time(&weapon, true, true), 0.0);
+    }
+
+    #[test]
+    fn only_the_missile_augment_forces_a_primary() {
+        assert_eq!(forced_primary(&[Aug::Missile]), Some(Kind::Missile));
+        assert_eq!(forced_primary(&[Aug::Taser, Aug::Vest]), None);
+    }
+
+    #[test]
+    fn a_human_starts_with_the_primary_in_hand_and_a_bot_with_its_slot_two_augment() {
+        assert_eq!(
+            issue_weapons(Kind::Rifle, &[Aug::Taser], false).kind,
+            Kind::Rifle
+        );
+        assert_eq!(
+            issue_weapons(Kind::Rifle, &[Aug::Taser], true).kind,
+            Kind::Taser
+        );
+        assert_eq!(issue_weapons(Kind::Rifle, &[], true).kind, Kind::Rifle);
+    }
 
     #[test]
     fn empty_magazine_reloads_automatically() {

@@ -14,6 +14,23 @@ const CMD_BUDGET_CAP: u32 = 8;
 
 const MAX_QUEUED_CMDS: usize = 32;
 
+/// The budget after a tick's refill: two more commands, never more than the cap.
+fn refill(budget: u32) -> u32 {
+    budget.saturating_add(CMDS_PER_TICK).min(CMD_BUDGET_CAP)
+}
+
+/// The view a command asks for, `(yaw, pitch)`. An angle that isn't a finite number keeps the
+/// current one, and pitch is clamped to what a neck allows.
+fn view_angles(cmd_yaw: f32, cmd_pitch: f32, yaw: f32, pitch: f32) -> (f32, f32) {
+    let yaw = if cmd_yaw.is_finite() { cmd_yaw } else { yaw };
+    let pitch = if cmd_pitch.is_finite() {
+        cmd_pitch.clamp(-MAX_PITCH, MAX_PITCH)
+    } else {
+        pitch
+    };
+    (yaw, pitch)
+}
+
 /// -1, 0 or 1 along an axis whose keys are `plus` and `minus`; both held cancel out.
 fn axis(plus: bool, minus: bool) -> i32 {
     match (plus, minus) {
@@ -23,16 +40,35 @@ fn axis(plus: bool, minus: bool) -> i32 {
     }
 }
 
+/// Walking speed (m/s) with `kind` in hand, crouched or not.
+fn walk_speed(kind: pb::WeaponKind, crouching: bool) -> f32 {
+    let stance = if crouching { CROUCH_SPEED_FACTOR } else { 1.0 };
+    weapons::stats(kind).move_speed * stance
+}
+
+/// The step `(dx, dz)` one command walks facing `yaw`, `forward` and `right` each -1, 0 or 1, at
+/// `speed`: a diagonal is no faster than a straight line. `None` when no key moves the player.
+fn walk_step(yaw: f32, forward: i32, right: i32, speed: f32) -> Option<(f32, f32)> {
+    if forward == 0 && right == 0 {
+        return None;
+    }
+    let (sin, cos) = yaw.sin_cos();
+    let (fx, fz) = (-sin, -cos);
+    let (rx, rz) = (cos, -sin);
+    let dx = fx * forward as f32 + rx * right as f32;
+    let dz = fz * forward as f32 + rz * right as f32;
+    let len = (dx * dx + dz * dz).sqrt();
+    let scale = speed * CMD_DT / len;
+    Some((dx * scale, dz * scale))
+}
+
 pub fn consume_inputs(
     arena: Res<Arena>,
     mut players: Query<(&mut Pose, &mut Inputs, &mut Intent, &Vitals, &mut Weapon)>,
 ) {
     for (mut pose, mut inputs, mut intent, vitals, mut weapon) in &mut players {
         *intent = Intent::default();
-        inputs.budget = inputs
-            .budget
-            .saturating_add(CMDS_PER_TICK)
-            .min(CMD_BUDGET_CAP);
+        inputs.budget = refill(inputs.budget);
 
         // Drop a backlog rather than let it become permanent input latency.
         while inputs.queue.len() > MAX_QUEUED_CMDS {
@@ -51,16 +87,7 @@ pub fn consume_inputs(
                 continue;
             }
 
-            let yaw = if cmd.yaw.is_finite() {
-                cmd.yaw
-            } else {
-                pose.yaw
-            };
-            let pitch = if cmd.pitch.is_finite() {
-                cmd.pitch.clamp(-MAX_PITCH, MAX_PITCH)
-            } else {
-                pose.pitch
-            };
+            let (yaw, pitch) = view_angles(cmd.yaw, cmd.pitch, pose.yaw, pose.pitch);
             pose.yaw = yaw;
             pose.pitch = pitch;
             let (mut y, mut vy) = (pose.y, pose.vy);
@@ -75,20 +102,9 @@ pub fn consume_inputs(
             // speed of the weapon it had selected by then.
             weapon.switch_to(cmd.slot);
             pose.crouching = cmd.crouch;
-            let stance = if cmd.crouch { CROUCH_SPEED_FACTOR } else { 1.0 };
-            let speed = weapons::stats(weapon.kind).move_speed * stance;
-
-            let fwd = axis(cmd.forward, cmd.back);
-            let strafe = axis(cmd.right, cmd.left);
-            if fwd != 0 || strafe != 0 {
-                let (sin, cos) = yaw.sin_cos();
-                let (fx, fz) = (-sin, -cos);
-                let (rx, rz) = (cos, -sin);
-                let mut dx = fx * fwd as f32 + rx * strafe as f32;
-                let mut dz = fz * fwd as f32 + rz * strafe as f32;
-                let len = (dx * dx + dz * dz).sqrt();
-                dx *= speed * CMD_DT / len;
-                dz *= speed * CMD_DT / len;
+            let speed = walk_speed(weapon.kind, cmd.crouch);
+            let (forward, right) = (axis(cmd.forward, cmd.back), axis(cmd.right, cmd.left));
+            if let Some((dx, dz)) = walk_step(yaw, forward, right, speed) {
                 let (mut x, mut z) = (pose.x, pose.z);
                 step_move(&arena.map.boxes, &mut x, &mut z, pose.y, dx, dz);
                 pose.x = x;
@@ -117,6 +133,58 @@ pub fn consume_inputs(
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn the_command_budget_refills_by_two_a_tick_up_to_the_cap() {
+        assert_eq!(refill(0), CMDS_PER_TICK);
+        assert_eq!(refill(CMD_BUDGET_CAP), CMD_BUDGET_CAP);
+        assert_eq!(refill(u32::MAX), CMD_BUDGET_CAP);
+    }
+
+    #[test]
+    fn a_command_with_broken_angles_keeps_the_current_view() {
+        assert_eq!(view_angles(f32::NAN, f32::INFINITY, 0.5, -0.2), (0.5, -0.2));
+    }
+
+    #[test]
+    fn pitch_is_clamped_to_what_a_neck_allows() {
+        assert_eq!(view_angles(1.0, 3.0, 0.0, 0.0), (1.0, MAX_PITCH));
+        assert_eq!(view_angles(1.0, -3.0, 0.0, 0.0), (1.0, -MAX_PITCH));
+    }
+
+    #[test]
+    fn opposite_keys_cancel_out_on_an_axis() {
+        assert_eq!(axis(true, false), 1);
+        assert_eq!(axis(false, true), -1);
+        assert_eq!(axis(true, true), 0);
+        assert_eq!(axis(false, false), 0);
+    }
+
+    #[test]
+    fn crouching_walks_at_the_crouch_share_of_the_weapons_speed() {
+        let speed = weapons::stats(Kind::Rifle).move_speed;
+        assert_eq!(walk_speed(Kind::Rifle, false), speed);
+        assert_eq!(walk_speed(Kind::Rifle, true), speed * CROUCH_SPEED_FACTOR);
+    }
+
+    #[test]
+    fn no_movement_key_means_no_step() {
+        assert_eq!(walk_step(0.3, 0, 0, 6.0), None);
+    }
+
+    #[test]
+    fn forward_at_yaw_zero_is_towards_negative_z_and_right_towards_positive_x() {
+        let (dx, dz) = walk_step(0.0, 1, 0, 6.0).unwrap();
+        assert!(dx.abs() < 1e-6 && (dz + 6.0 * CMD_DT).abs() < 1e-6);
+        let (dx, dz) = walk_step(0.0, 0, 1, 6.0).unwrap();
+        assert!((dx - 6.0 * CMD_DT).abs() < 1e-6 && dz.abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_diagonal_step_is_no_longer_than_a_straight_one() {
+        let (dx, dz) = walk_step(0.7, 1, -1, 6.0).unwrap();
+        assert!(((dx * dx + dz * dz).sqrt() - 6.0 * CMD_DT).abs() < 1e-6);
+    }
 
     #[test]
     fn speed_hack_inputs_are_rate_limited() {

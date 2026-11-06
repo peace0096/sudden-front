@@ -39,6 +39,24 @@ const SHIELD_FAR: f32 = 0.65;
 
 const SHIELD_TOP: f32 = 1.75;
 
+/// Every player, as the fire system reads and writes them.
+type Shooters<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Player,
+        &'static Pose,
+        &'static Intent,
+        &'static mut Weapon,
+        &'static mut Vitals,
+        &'static mut Stats,
+        &'static History,
+        &'static mut Perks,
+        &'static mut Loadout,
+    ),
+>;
+
 /// (zone, min, max) of a player's hitboxes, standing on `feet` (their height above the floor).
 /// `pad` widens them, which keeps melee from demanding pixel-perfect aim.
 fn hitboxes(
@@ -109,6 +127,81 @@ pub fn shot_cone(stats: &WeaponStats, scoped: bool, moving: bool, bloom: f32) ->
     }
 }
 
+/// The cone a shot actually leaves in: [`shot_cone`], narrowed by crouching. No Recoil leaves
+/// none, except a shotgun's pattern, which is what it is and not recoil.
+fn spread(
+    stats: &WeaponStats,
+    scoped: bool,
+    moving: bool,
+    bloom: f32,
+    crouching: bool,
+    no_recoil: bool,
+) -> f32 {
+    if no_recoil && stats.pellets == 0 {
+        return 0.0;
+    }
+    let stance = if crouching { CROUCH_SPREAD_FACTOR } else { 1.0 };
+    shot_cone(stats, scoped, moving, bloom) * stance
+}
+
+/// Where the weapon fires this tick: where the trigger aims, or, once it is let go, where a
+/// started burst keeps on firing.
+fn trigger(fire: Option<FireIntent>, weapon: &Weapon) -> Option<FireIntent> {
+    fire.or(if weapon.burst_left > 0 {
+        weapon.burst_fire
+    } else {
+        None
+    })
+}
+
+/// Whether a reload keeps the weapon from firing. A shell-by-shell reload gives way to the trigger
+/// once there is a round to fire.
+fn reload_blocks(weapon: &Weapon, stats: &WeaponStats) -> bool {
+    weapon.reloading() && !(stats.shell_reload && weapon.magazine > 0)
+}
+
+/// Chambers a shot: a round leaves the magazine (a melee swing spends none), a reload under way is
+/// abandoned, and the cooldown grows by the fire interval. Upgraded Pistol fires bursts instead:
+/// a trigger pull starts one, its rounds come a short gap apart, and a longer recovery follows the
+/// last. An empty magazine ends a burst.
+fn chamber(weapon: &mut Weapon, stats: &WeaponStats, melee: bool, bursts: bool, fire: FireIntent) {
+    weapon.reload_left = 0.0;
+    if !melee {
+        weapon.magazine = weapon.magazine.saturating_sub(1);
+    }
+    if bursts {
+        if weapon.burst_left == 0 {
+            weapon.burst_left = weapons::BURST_ROUNDS - 1;
+            weapon.burst_fire = Some(fire);
+        } else {
+            weapon.burst_left = weapon.burst_left.saturating_sub(1);
+        }
+        let burst_on = weapon.burst_left > 0 && weapon.magazine > 0;
+        weapon.cooldown += if burst_on {
+            weapons::BURST_GAP
+        } else {
+            weapons::BURST_RECOVERY
+        };
+    } else {
+        weapon.cooldown += stats.fire_interval;
+    }
+    if weapon.magazine == 0 {
+        weapon.burst_left = 0;
+    }
+}
+
+/// A shot's kick: the bloom grows, up to the weapon's cap, and holds a little past the next shot.
+fn kick(weapon: &mut Weapon, stats: &WeaponStats) {
+    weapon.bloom = (weapon.bloom + stats.bloom_per_shot).min(stats.bloom_max);
+    weapon.bloom_hold = stats.fire_interval + BLOOM_HOLD_EXTRA;
+}
+
+/// The tick a shot rewinds its targets to: the one the shooter's client was rendering, but no
+/// further back than MAX_REWIND_TICKS and never ahead of now.
+fn rewind_tick(render_tick: u32, current_tick: u32) -> u32 {
+    render_tick.clamp(current_tick.saturating_sub(MAX_REWIND_TICKS), current_tick)
+}
+
 pub(super) struct Hit {
     pub(super) attacker: Entity,
     pub(super) attacker_id: u32,
@@ -132,7 +225,162 @@ pub(super) struct TargetView {
     pub(super) shielded: bool,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+impl TargetView {
+    /// Where the target stood at `tick`, as (x, feet, z, crouching, yaw): from its history, or
+    /// where it is now when the history doesn't reach back that far.
+    fn at(&self, tick: u32) -> (f32, f32, f32, bool, f32) {
+        self.samples.at(tick).unwrap_or((
+            self.pose.x,
+            self.pose.y,
+            self.pose.z,
+            self.pose.crouching,
+            self.pose.yaw,
+        ))
+    }
+}
+
+/// What a ray from `origin` along `dir` strikes first within `reach`, each target as it stood at
+/// `tick`: `(distance, struck)`, where `struck` is the target and the zone, and `true` when it was
+/// their shield. `pad` widens the hitboxes, for melee.
+fn first_struck<'a>(
+    origin: [f32; 3],
+    dir: [f32; 3],
+    reach: f32,
+    targets: impl Iterator<Item = &'a TargetView>,
+    tick: u32,
+    pad: f32,
+) -> (f32, Option<(&'a TargetView, pb::HitZone, bool)>) {
+    let mut best_t = reach;
+    let mut struck = None;
+    for target in targets {
+        let (x, feet, z, crouching, yaw) = target.at(tick);
+        for (zone, min, max) in hitboxes(x, feet, z, pad, crouching, target.head_scale) {
+            if let Some(t) = ray_aabb(origin, dir, min, max) {
+                if t < best_t {
+                    best_t = t;
+                    struck = Some((target, zone, false));
+                }
+            }
+        }
+        if target.shielded {
+            if let Some(t) = ray_shield(origin, dir, x, feet, z, yaw, crouching) {
+                if t < best_t {
+                    best_t = t;
+                    struck = Some((target, pb::HitZone::Body, true));
+                }
+            }
+        }
+    }
+    (best_t, struck)
+}
+
+/// What a hit did to its victim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Outcome {
+    /// Their shield took it.
+    Shield,
+    Wounded,
+    Killed,
+}
+
+/// Lands `hit` on its victim. A shield soaks it while the shield lasts; otherwise it hurts, may
+/// paralyse, and kills at 0 HP. Any of those marks the attacker as one who hurt the victim, and
+/// breaks Rest's quiet. `None` when the hit comes to nothing: the victim is already down, or is the
+/// King (Big Head mode), whom nothing harms; the shot still stops at their body.
+fn take_hit(vitals: &mut Vitals, perks: &mut Perks, hit: &Hit) -> Option<Outcome> {
+    if !vitals.alive || perks.king() {
+        return None;
+    }
+    perks.idle = 0.0;
+    if !perks.damaged_by.contains(&hit.attacker) {
+        perks.damaged_by.push(hit.attacker);
+    }
+    // Once earlier pellets break it, what's left reaches the player.
+    if hit.shield && perks.shield_hp > 0 {
+        perks.shield_hp = perks.shield_hp.saturating_sub(hit.amount).max(0);
+        return Some(Outcome::Shield);
+    }
+    if hit.stun > 0.0 {
+        vitals.stun_left = hit.stun;
+    }
+    vitals.hp = vitals.hp.saturating_sub(hit.amount);
+    if vitals.hp > 0 {
+        return Some(Outcome::Wounded);
+    }
+    vitals.hp = 0;
+    vitals.alive = false;
+    vitals.stun_left = 0.0;
+    vitals.respawn_left = RESPAWN_TIME;
+    perks.shield_hp = 0;
+    Some(Outcome::Killed)
+}
+
+/// A victim's head after the kill: a step bigger for each of their attackers who held Big Head, up
+/// to the cap.
+fn grown_head(scale: f32, holders: usize) -> f32 {
+    (scale + augments::BIG_HEAD_STEP * holders as f32).min(augments::BIG_HEAD_MAX)
+}
+
+/// Big Head mode's special kills. Any kill with the hammer is a cute shot. A headshot on a player
+/// whose head is smaller than normal (below level 0) and the smallest in the match is a dot shot:
+/// `lowest` is the lowest level anyone has, and a tie at the bottom counts.
+fn special_kill(
+    big_head: bool,
+    weapon: pb::WeaponKind,
+    zone: pb::HitZone,
+    victim_level: i32,
+    lowest: i32,
+) -> pb::SpecialKill {
+    if !big_head {
+        pb::SpecialKill::Unspecified
+    } else if weapon == pb::WeaponKind::Hammer {
+        pb::SpecialKill::CuteShot
+    } else if zone == pb::HitZone::Head && victim_level < 0 && lowest >= victim_level {
+        pb::SpecialKill::DotShot
+    } else {
+        pb::SpecialKill::Unspecified
+    }
+}
+
+/// What a kill earns its killer. Big Head mode: a level, from below 0 straight to
+/// big_head::COMEBACK_LEVEL. Reaching the top crowns a living player at once (one who is down, after
+/// a grenade that went off when they fell, is crowned as they come back), and the King's own kills
+/// leave the level at the top. And while they live, Soul Drain heals them, and Possession hands them
+/// the victim's primary and fresh health.
+fn reward_killer(
+    rules: &Rules,
+    perks: &mut Perks,
+    vitals: &mut Vitals,
+    weapon: &mut Weapon,
+    loadout: &mut Loadout,
+    victim_primary: pb::WeaponKind,
+) {
+    if rules.big_head && !perks.king() {
+        let level = big_head::after_kill(perks.level);
+        perks.set_level(level);
+        if level == big_head::MAX_LEVEL && vitals.alive {
+            big_head::crown(perks, vitals, weapon, rules.max_hp);
+        }
+    }
+    if !vitals.alive {
+        return;
+    }
+    if perks.has(pb::Augment::SoulDrain) {
+        let cap = augments::max_hp(rules.max_hp, &perks.active);
+        vitals.hp = vitals.hp.saturating_add(augments::SOUL_DRAIN_HEAL).min(cap);
+    }
+    if perks.has(pb::Augment::Possession) {
+        let taken = weapons::base_primary(victim_primary);
+        vitals.hp = augments::POSSESSION_HP;
+        loadout.0 = taken;
+        weapon.set_primary(taken);
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Bevy system takes each resource it uses as a parameter"
+)]
 pub fn fire_weapons(
     arena: Res<Arena>,
     rules: Res<Rules>,
@@ -141,18 +389,7 @@ pub fn fire_weapons(
     mut rng: ResMut<GameRng>,
     mut missiles: ResMut<Missiles>,
     mut grenades: ResMut<Grenades>,
-    mut players: Query<(
-        Entity,
-        &Player,
-        &Pose,
-        &Intent,
-        &mut Weapon,
-        &mut Vitals,
-        &mut Stats,
-        &History,
-        &mut Perks,
-        &mut Loadout,
-    )>,
+    mut players: Shooters,
 ) {
     let current_tick = state.tick;
 
@@ -179,13 +416,7 @@ pub fn fire_weapons(
     let mut hits: Vec<Hit> = Vec::new();
 
     for (entity, player, pose, intent, mut weapon, mut vitals, _, _, mut perks, _) in &mut players {
-        // A burst finishes by itself once started.
-        let fire = intent.fire.or(if weapon.burst_left > 0 {
-            weapon.burst_fire
-        } else {
-            None
-        });
-        let Some(fire) = fire else {
+        let Some(fire) = trigger(intent.fire, &weapon) else {
             continue;
         };
         if vitals.stun_left > 0.0 {
@@ -213,18 +444,18 @@ pub fn fire_weapons(
             continue;
         }
         let stats = weapons::stats(weapon.kind);
-        // A shell-by-shell reload gives way to the trigger once there's a round to fire.
-        let can_interrupt = stats.shell_reload && weapon.magazine > 0;
-        if weapon.reloading() && !can_interrupt {
+        if reload_blocks(&weapon, stats) {
             continue;
         }
         let scoped = intent.aim && weapon.aim_time >= SCOPE_READY_TIME;
-
         let melee = stats.melee_range > 0.0;
         let range = if melee { stats.melee_range } else { SHOT_RANGE };
         let pad = if melee { MELEE_HITBOX_PAD } else { 0.0 };
         let bursts = weapon.kind == pb::WeaponKind::PistolPlus;
         let no_recoil = perks.has(pb::Augment::NoRecoil);
+        let origin = pose.eye();
+        // Targets are rewound to what this client was rendering when it fired.
+        let rewind = rewind_tick(fire.render_tick, current_tick);
 
         let mut shots: u32 = 0;
         while weapon.cooldown <= COOLDOWN_SLACK
@@ -232,66 +463,20 @@ pub fn fire_weapons(
             && shots < MAX_SHOTS_PER_TICK
         {
             shots = shots.saturating_add(1);
-            weapon.reload_left = 0.0;
-            if !melee {
-                weapon.magazine = weapon.magazine.saturating_sub(1);
-            }
-            if bursts {
-                if weapon.burst_left == 0 {
-                    weapon.burst_left = weapons::BURST_ROUNDS - 1;
-                    weapon.burst_fire = Some(fire);
-                } else {
-                    weapon.burst_left = weapon.burst_left.saturating_sub(1);
-                }
-                let burst_on = weapon.burst_left > 0 && weapon.magazine > 0;
-                weapon.cooldown += if burst_on {
-                    weapons::BURST_GAP
-                } else {
-                    weapons::BURST_RECOVERY
-                };
-            } else {
-                weapon.cooldown += stats.fire_interval;
-            }
-            if weapon.magazine == 0 {
-                weapon.burst_left = 0;
-            }
+            chamber(&mut weapon, stats, melee, bursts, fire);
             vitals.protect_left = 0.0;
             perks.idle = 0.0;
-
-            let stance = if pose.crouching {
-                CROUCH_SPREAD_FACTOR
-            } else {
-                1.0
-            };
-            // A shotgun's pattern is what it is, not recoil.
-            let cone = if no_recoil && stats.pellets == 0 {
-                0.0
-            } else {
-                shot_cone(stats, scoped, intent.moving, weapon.bloom) * stance
-            };
+            let cone = spread(
+                stats,
+                scoped,
+                intent.moving,
+                weapon.bloom,
+                pose.crouching,
+                no_recoil,
+            );
             if !no_recoil {
-                weapon.bloom = (weapon.bloom + stats.bloom_per_shot).min(stats.bloom_max);
-                weapon.bloom_hold = stats.fire_interval + BLOOM_HOLD_EXTRA;
+                kick(&mut weapon, stats);
             }
-
-            let eye = if pose.crouching {
-                CROUCH_EYE_HEIGHT
-            } else {
-                EYE_HEIGHT
-            };
-            let origin = [pose.x, pose.y + eye, pose.z];
-            let rewind_tick = fire
-                .render_tick
-                .clamp(current_tick.saturating_sub(MAX_REWIND_TICKS), current_tick);
-            let rewound = |target: &TargetView| {
-                target.samples.at(rewind_tick).unwrap_or((
-                    target.pose.x,
-                    target.pose.y,
-                    target.pose.z,
-                    target.pose.crouching,
-                    target.pose.yaw,
-                ))
-            };
 
             for pellet in 0..stats.pellets.max(1) {
                 // Random cone around the aim direction.
@@ -329,33 +514,11 @@ pub fn fire_weapons(
                 }
 
                 let world_t = ray_world(&arena.map.boxes, origin, dir, range);
-                let mut best_t = world_t.unwrap_or(range);
-                let mut hit_player = None;
-
-                // Targets are rewound to what this client was rendering when it fired.
-                for target in world_view.iter().filter(|s| {
+                let targets = world_view.iter().filter(|s| {
                     s.hittable && rules.hostile(player.team, s.team) && s.entity != entity
-                }) {
-                    let (x, feet, z, crouching, yaw) = rewound(target);
-                    for (zone, min, max) in hitboxes(x, feet, z, pad, crouching, target.head_scale)
-                    {
-                        if let Some(t) = ray_aabb(origin, dir, min, max) {
-                            if t < best_t {
-                                best_t = t;
-                                hit_player = Some((target.entity, target.id, zone, false));
-                            }
-                        }
-                    }
-                    if target.shielded {
-                        if let Some(t) = ray_shield(origin, dir, x, feet, z, yaw, crouching) {
-                            if t < best_t {
-                                best_t = t;
-                                hit_player =
-                                    Some((target.entity, target.id, pb::HitZone::Body, true));
-                            }
-                        }
-                    }
-                }
+                });
+                let (best_t, struck) =
+                    first_struck(origin, dir, world_t.unwrap_or(range), targets, rewind, pad);
 
                 log.push(Event::Shot(pb::ShotEvent {
                     shooter_id: player.id,
@@ -365,20 +528,20 @@ pub fn fire_weapons(
                     to_x: origin[0] + dir[0] * best_t,
                     to_y: origin[1] + dir[1] * best_t,
                     to_z: origin[2] + dir[2] * best_t,
-                    hit_player_id: hit_player.map(|h| h.1).unwrap_or(0),
-                    hit_world: hit_player.is_none() && world_t.is_some(),
+                    hit_player_id: struck.map(|s| s.0.id).unwrap_or(0),
+                    hit_world: struck.is_none() && world_t.is_some(),
                     melee,
                     pellet: pellet > 0,
                     explosive: false,
                 }));
 
-                if let Some((victim, _, zone, shield)) = hit_player {
+                if let Some((target, zone, shield)) = struck {
                     hits.push(Hit {
                         attacker: entity,
                         attacker_id: player.id,
                         attacker_team: player.team,
                         weapon: weapon.kind,
-                        victim,
+                        victim: target.entity,
                         zone,
                         amount: weapons::damage(weapon.kind, rules.mode, zone),
                         shield,
@@ -405,7 +568,18 @@ pub fn fire_weapons(
         &mut log,
         &mut hits,
     );
+    land_hits(hits, &mut players, &mut state, &rules, &mut log);
+}
 
+/// Lands the tick's hits in order, until the match is won: damage, then for a kill the victim's
+/// death, the score, and what the kill earns its killer.
+fn land_hits(
+    hits: Vec<Hit>,
+    players: &mut Shooters,
+    state: &mut MatchState,
+    rules: &Rules,
+    log: &mut EventLog,
+) {
     for hit in hits {
         if state.winner.is_some() {
             break;
@@ -415,51 +589,21 @@ pub fn fire_weapons(
         else {
             continue;
         };
-        if !vitals.alive {
+        let Some(outcome) = take_hit(&mut vitals, &mut perks, &hit) else {
             continue;
-        }
-        // Big Head mode: the King takes no harm. The hit stops at them (it was their body the shot
-        // reached) and comes to nothing: no damage, no paralysis, nobody added to their attackers.
-        if perks.king() {
-            continue;
-        }
-        perks.idle = 0.0;
-        if !perks.damaged_by.contains(&hit.attacker) {
-            perks.damaged_by.push(hit.attacker);
-        }
+        };
         let victim_id = victim_player.id;
-        // Once earlier pellets break it, what's left reaches the player.
-        if hit.shield && perks.shield_hp > 0 {
-            perks.shield_hp = perks.shield_hp.saturating_sub(hit.amount).max(0);
-            log.push(Event::Damage(pb::DamageEvent {
-                attacker_id: hit.attacker_id,
-                victim_id,
-                amount: hit.amount,
-                zone: hit.zone as i32,
-                shield: true,
-            }));
-            continue;
-        }
-        if hit.stun > 0.0 {
-            vitals.stun_left = hit.stun;
-        }
-        vitals.hp = vitals.hp.saturating_sub(hit.amount);
         log.push(Event::Damage(pb::DamageEvent {
             attacker_id: hit.attacker_id,
             victim_id,
             amount: hit.amount,
             zone: hit.zone as i32,
-            shield: false,
+            shield: outcome == Outcome::Shield,
         }));
-        if vitals.hp > 0 {
+        if outcome != Outcome::Killed {
             continue;
         }
-        vitals.hp = 0;
-        vitals.alive = false;
-        vitals.stun_left = 0.0;
-        vitals.respawn_left = RESPAWN_TIME;
         stats.deaths = stats.deaths.saturating_add(1);
-        perks.shield_hp = 0;
         let victim_primary = victim_weapon.primary;
         let victim_level = perks.level;
         let contributors = std::mem::take(&mut perks.damaged_by);
@@ -467,30 +611,19 @@ pub fn fire_weapons(
             .iter()
             .filter(|&&e| players.get(e).is_ok_and(|p| p.8.has(pb::Augment::BigHead)))
             .count();
+        let lowest = players
+            .iter()
+            .map(|p| p.8.level)
+            .min()
+            .unwrap_or(victim_level);
         if let Ok(mut victim) = players.get_mut(hit.victim) {
-            let grown = victim.8.head_scale + augments::BIG_HEAD_STEP * holders as f32;
-            victim.8.head_scale = grown.min(augments::BIG_HEAD_MAX);
-        }
-        // Big Head mode: a kill with the hammer is a cute shot, and one to the head of a player
-        // whose head was smaller than normal and the smallest in the match (levels tied at the
-        // bottom count) a dot shot. Then the victim's level drops, and their head shrinks with it.
-        let special = if !rules.big_head {
-            pb::SpecialKill::Unspecified
-        } else if hit.weapon == pb::WeaponKind::Hammer {
-            pb::SpecialKill::CuteShot
-        } else if hit.zone == pb::HitZone::Head
-            && victim_level < 0
-            && players.iter().all(|p| p.8.level >= victim_level)
-        {
-            pb::SpecialKill::DotShot
-        } else {
-            pb::SpecialKill::Unspecified
-        };
-        if rules.big_head {
-            if let Ok(mut victim) = players.get_mut(hit.victim) {
+            victim.8.head_scale = grown_head(victim.8.head_scale, holders);
+            // Big Head mode: the victim's level drops, and their head shrinks with it.
+            if rules.big_head {
                 victim.8.set_level(big_head::after_death(victim_level));
             }
         }
+        let special = special_kill(rules.big_head, hit.weapon, hit.zone, victim_level, lowest);
         log.push(Event::Kill(pb::KillEvent {
             killer_id: hit.attacker_id,
             victim_id,
@@ -511,29 +644,14 @@ pub fn fire_weapons(
         if rules.ffa && stats.kills >= state.kills_to_win && state.winner.is_none() {
             state.winner = Some(Winner::Player(hit.attacker_id));
         }
-        // Big Head mode: a kill raises the level, from below 0 straight to big_head::COMEBACK_LEVEL.
-        // Reaching the top crowns a living player at once, and one who is down (a grenade that went
-        // off after they fell) as they come back. The King's own kills leave the level at the top.
-        if rules.big_head && !perks.king() {
-            let level = big_head::after_kill(perks.level);
-            perks.set_level(level);
-            if level == big_head::MAX_LEVEL && vitals.alive {
-                big_head::crown(&mut perks, &mut vitals, &mut weapon, rules.max_hp);
-            }
-        }
-        if !vitals.alive {
-            continue;
-        }
-        if perks.has(pb::Augment::SoulDrain) {
-            let cap = augments::max_hp(rules.max_hp, &perks.active);
-            vitals.hp = vitals.hp.saturating_add(augments::SOUL_DRAIN_HEAL).min(cap);
-        }
-        if perks.has(pb::Augment::Possession) {
-            let taken = weapons::base_primary(victim_primary);
-            vitals.hp = augments::POSSESSION_HP;
-            loadout.0 = taken;
-            weapon.set_primary(taken);
-        }
+        reward_killer(
+            rules,
+            &mut perks,
+            &mut vitals,
+            &mut weapon,
+            &mut loadout,
+            victim_primary,
+        );
     }
 }
 
@@ -541,6 +659,505 @@ pub fn fire_weapons(
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    fn entities<const N: usize>() -> [Entity; N] {
+        let mut world = World::new();
+        std::array::from_fn(|_| world.spawn_empty().id())
+    }
+
+    fn standing(x: f32, z: f32) -> Pose {
+        Pose {
+            x,
+            z,
+            ..Default::default()
+        }
+    }
+
+    fn target(entity: Entity, pose: Pose, shielded: bool) -> TargetView {
+        TargetView {
+            entity,
+            id: 7,
+            team: pb::Team::Blue,
+            pose,
+            samples: History::default(),
+            hittable: true,
+            head_scale: 1.0,
+            shielded,
+        }
+    }
+
+    fn alive(hp: i32) -> Vitals {
+        Vitals {
+            hp,
+            alive: true,
+            respawn_left: 0.0,
+            protect_left: 0.0,
+            stun_left: 0.0,
+        }
+    }
+
+    fn hit(attacker: Entity, victim: Entity, amount: i32) -> Hit {
+        Hit {
+            attacker,
+            attacker_id: 1,
+            attacker_team: pb::Team::Red,
+            weapon: Kind::Rifle,
+            victim,
+            zone: pb::HitZone::Body,
+            amount,
+            shield: false,
+            stun: 0.0,
+        }
+    }
+
+    fn aim(render_tick: u32) -> FireIntent {
+        FireIntent {
+            yaw: 0.0,
+            pitch: 0.0,
+            render_tick,
+        }
+    }
+
+    fn rules(big_head: bool) -> Rules {
+        Rules {
+            mode: pb::GameMode::Normal,
+            max_hp: MAX_HP,
+            ffa: false,
+            big_head,
+        }
+    }
+
+    #[test]
+    fn the_head_sits_on_the_body_on_the_legs_and_crouching_lowers_both() {
+        let [head, body, legs] = hitboxes(0.0, 0.0, 0.0, 0.0, false, 1.0);
+        assert_eq!(
+            (head.0, body.0, legs.0),
+            (pb::HitZone::Head, pb::HitZone::Body, pb::HitZone::Legs)
+        );
+        assert_eq!(legs.1[1], 0.0);
+        assert_eq!(legs.2[1], body.1[1]);
+        assert_eq!(body.2[1], head.1[1]);
+        let [low_head, low_body, _] = hitboxes(0.0, 0.0, 0.0, 0.0, true, 1.0);
+        assert!((head.1[1] - low_head.1[1] - CROUCH_DROP).abs() < 1e-6);
+        assert!((body.2[1] - low_body.2[1] - CROUCH_DROP).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_bigger_head_grows_up_and_out_from_the_same_neck() {
+        let [normal, ..] = hitboxes(0.0, 0.0, 0.0, 0.0, false, 1.0);
+        let [big, ..] = hitboxes(0.0, 0.0, 0.0, 0.0, false, 2.0);
+        assert_eq!(big.1[1], normal.1[1]);
+        assert!(big.2[1] > normal.2[1] && big.2[0] > normal.2[0]);
+    }
+
+    #[test]
+    fn melee_padding_widens_every_hitbox() {
+        let plain = hitboxes(0.0, 0.0, 0.0, 0.0, false, 1.0);
+        let padded = hitboxes(0.0, 0.0, 0.0, MELEE_HITBOX_PAD, false, 1.0);
+        for (a, b) in plain.iter().zip(&padded) {
+            assert!((b.2[0] - a.2[0] - MELEE_HITBOX_PAD).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn a_shot_from_in_front_meets_the_shield_and_one_above_it_passes() {
+        // The bearer stands at the origin facing -Z; the shot comes at them from in front.
+        let towards = [0.0, 0.0, 1.0];
+        let t = ray_shield([0.0, 1.2, -5.0], towards, 0.0, 0.0, 0.0, 0.0, false).unwrap();
+        assert!((t - (5.0 - SHIELD_FAR)).abs() < 1e-4);
+        let over = [0.0, SHIELD_TOP + 0.1, -5.0];
+        assert_eq!(ray_shield(over, towards, 0.0, 0.0, 0.0, 0.0, false), None);
+    }
+
+    #[test]
+    fn a_scope_tightens_only_a_scoped_weapon_and_bloom_widens_only_unscoped_shots() {
+        let sniper = weapons::stats(Kind::Sniper);
+        assert!(sniper.has_scope);
+        assert_eq!(
+            shot_cone(sniper, true, false, 0.5),
+            sniper.scoped_spread_still
+        );
+        assert_eq!(
+            shot_cone(sniper, true, true, 0.0),
+            sniper.scoped_spread_still + sniper.scoped_spread_moving
+        );
+        assert_eq!(
+            shot_cone(sniper, false, false, 0.5),
+            sniper.spread_still + 0.5
+        );
+        let rifle = weapons::stats(Kind::Rifle);
+        assert!(!rifle.has_scope);
+        assert_eq!(shot_cone(rifle, true, false, 0.0), rifle.spread_still);
+    }
+
+    #[test]
+    fn crouching_narrows_the_cone_and_no_recoil_removes_it_except_a_shotguns_pattern() {
+        let rifle = weapons::stats(Kind::Rifle);
+        let standing = spread(rifle, false, true, 0.0, false, false);
+        assert_eq!(
+            spread(rifle, false, true, 0.0, true, false),
+            standing * CROUCH_SPREAD_FACTOR
+        );
+        assert_eq!(spread(rifle, false, true, 0.0, false, true), 0.0);
+        let shotgun = weapons::stats(Kind::Shotgun);
+        assert!(shotgun.pellets > 0);
+        assert!(spread(shotgun, false, false, 0.0, false, true) > 0.0);
+    }
+
+    #[test]
+    fn a_burst_keeps_firing_where_it_started_after_the_trigger_is_let_go() {
+        let mut weapon = Weapon::new(Kind::Rifle);
+        assert!(trigger(None, &weapon).is_none());
+        assert_eq!(
+            trigger(Some(aim(3)), &weapon).map(|f| f.render_tick),
+            Some(3)
+        );
+        weapon.burst_left = 1;
+        weapon.burst_fire = Some(aim(5));
+        assert_eq!(trigger(None, &weapon).map(|f| f.render_tick), Some(5));
+        assert_eq!(
+            trigger(Some(aim(6)), &weapon).map(|f| f.render_tick),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn a_reload_holds_the_trigger_unless_a_shell_by_shell_reload_has_a_round_in() {
+        let mut weapon = Weapon::new(Kind::Rifle);
+        let rifle = weapons::stats(Kind::Rifle);
+        assert!(!reload_blocks(&weapon, rifle));
+        weapon.reload_left = 1.0;
+        assert!(reload_blocks(&weapon, rifle));
+        let shotgun = weapons::stats(Kind::Shotgun);
+        weapon.magazine = 1;
+        assert!(!reload_blocks(&weapon, shotgun));
+        weapon.magazine = 0;
+        assert!(reload_blocks(&weapon, shotgun));
+    }
+
+    #[test]
+    fn a_shot_spends_a_round_drops_the_reload_and_waits_a_fire_interval() {
+        let rifle = weapons::stats(Kind::Rifle);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        let magazine = weapon.magazine;
+        weapon.reload_left = 1.0;
+        chamber(&mut weapon, rifle, false, false, aim(0));
+        assert_eq!(weapon.magazine, magazine.saturating_sub(1));
+        assert!(!weapon.reloading());
+        assert_eq!(weapon.cooldown, rifle.fire_interval);
+    }
+
+    #[test]
+    fn a_melee_swing_spends_no_round() {
+        let mut weapon = Weapon::new(Kind::Rifle);
+        let magazine = weapon.magazine;
+        chamber(
+            &mut weapon,
+            weapons::stats(Kind::Knife),
+            true,
+            false,
+            aim(0),
+        );
+        assert_eq!(weapon.magazine, magazine);
+    }
+
+    #[test]
+    fn a_burst_fires_its_rounds_a_short_gap_apart_and_then_recovers() {
+        let stats = weapons::stats(Kind::PistolPlus);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        chamber(&mut weapon, stats, false, true, aim(0));
+        assert_eq!(weapon.burst_left, weapons::BURST_ROUNDS - 1);
+        assert_eq!(weapon.cooldown, weapons::BURST_GAP);
+        for _ in 1..weapons::BURST_ROUNDS {
+            weapon.cooldown = 0.0;
+            chamber(&mut weapon, stats, false, true, aim(0));
+        }
+        assert_eq!(weapon.burst_left, 0);
+        assert_eq!(weapon.cooldown, weapons::BURST_RECOVERY);
+    }
+
+    #[test]
+    fn an_empty_magazine_ends_a_burst() {
+        let stats = weapons::stats(Kind::PistolPlus);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        weapon.magazine = 1;
+        chamber(&mut weapon, stats, false, true, aim(0));
+        assert_eq!((weapon.magazine, weapon.burst_left), (0, 0));
+        assert_eq!(weapon.cooldown, weapons::BURST_RECOVERY);
+    }
+
+    #[test]
+    fn bloom_grows_with_each_shot_up_to_the_weapons_cap() {
+        let rifle = weapons::stats(Kind::Rifle);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        kick(&mut weapon, rifle);
+        assert_eq!(weapon.bloom, rifle.bloom_per_shot.min(rifle.bloom_max));
+        assert_eq!(weapon.bloom_hold, rifle.fire_interval + BLOOM_HOLD_EXTRA);
+        for _ in 0..1000 {
+            kick(&mut weapon, rifle);
+        }
+        assert_eq!(weapon.bloom, rifle.bloom_max);
+    }
+
+    #[test]
+    fn a_shot_rewinds_to_what_its_client_saw_but_not_past_the_window_or_ahead_of_now() {
+        assert_eq!(rewind_tick(95, 100), 95);
+        assert_eq!(
+            rewind_tick(10, 100),
+            100_u32.saturating_sub(MAX_REWIND_TICKS)
+        );
+        assert_eq!(rewind_tick(150, 100), 100);
+        assert_eq!(rewind_tick(0, 5), 0);
+    }
+
+    #[test]
+    fn a_ray_strikes_the_nearest_body_part_in_its_way_within_reach() {
+        let [a, b] = entities();
+        let near = target(a, standing(0.0, -5.0), false);
+        let far = target(b, standing(0.0, -10.0), false);
+        let eye = [0.0, 1.6, 0.0];
+        let ahead = [0.0, 0.0, -1.0];
+        let (t, struck) = first_struck(eye, ahead, 100.0, [&far, &near].into_iter(), 0, 0.0);
+        let (who, zone, shield) = struck.unwrap();
+        assert_eq!((who.entity, zone, shield), (a, pb::HitZone::Head, false));
+        assert!((t - (5.0 - 0.125)).abs() < 1e-4);
+        let chest = [0.0, 1.2, 0.0];
+        let (_, struck) = first_struck(chest, ahead, 100.0, [&near].into_iter(), 0, 0.0);
+        assert_eq!(struck.map(|s| s.1), Some(pb::HitZone::Body));
+        let (t, struck) = first_struck(eye, ahead, 3.0, [&near].into_iter(), 0, 0.0);
+        assert!(struck.is_none());
+        assert_eq!(t, 3.0);
+    }
+
+    #[test]
+    fn a_shield_in_front_takes_the_shot_before_the_body_behind_it() {
+        let [a] = entities();
+        // Five metres down -Z, facing back towards the shooter at the origin.
+        let mut pose = standing(0.0, -5.0);
+        pose.yaw = std::f32::consts::PI;
+        let bearer = target(a, pose, true);
+        let chest = [0.0, 1.2, 0.0];
+        let (_, struck) = first_struck(
+            chest,
+            [0.0, 0.0, -1.0],
+            100.0,
+            [&bearer].into_iter(),
+            0,
+            0.0,
+        );
+        let (_, zone, shield) = struck.unwrap();
+        assert_eq!((zone, shield), (pb::HitZone::Body, true));
+    }
+
+    #[test]
+    fn a_target_is_struck_where_its_history_puts_it_at_the_rewound_tick() {
+        let [a] = entities();
+        let mut view = target(a, standing(5.0, -5.0), false);
+        view.samples
+            .samples
+            .push_back((10, 0.0, 0.0, -5.0, false, 0.0));
+        let chest = [0.0, 1.2, 0.0];
+        let ahead = [0.0, 0.0, -1.0];
+        let (_, then) = first_struck(chest, ahead, 100.0, [&view].into_iter(), 10, 0.0);
+        assert!(then.is_some(), "it stood in the line of fire at tick 10");
+        let (_, before) = first_struck(chest, ahead, 100.0, [&view].into_iter(), 9, 0.0);
+        assert!(
+            before.is_none(),
+            "before its history starts it is where it is now"
+        );
+    }
+
+    #[test]
+    fn a_hit_wounds_then_kills_at_zero_hp_and_the_dead_take_no_more() {
+        let [attacker, victim] = entities();
+        let mut vitals = alive(100);
+        let mut perks = Perks::default();
+        let first = take_hit(&mut vitals, &mut perks, &hit(attacker, victim, 40));
+        assert_eq!(first, Some(Outcome::Wounded));
+        assert_eq!(vitals.hp, 60);
+        let second = take_hit(&mut vitals, &mut perks, &hit(attacker, victim, 80));
+        assert_eq!(second, Some(Outcome::Killed));
+        assert_eq!(
+            (vitals.hp, vitals.alive, vitals.respawn_left),
+            (0, false, RESPAWN_TIME)
+        );
+        assert_eq!(perks.damaged_by, vec![attacker]);
+        assert_eq!(
+            take_hit(&mut vitals, &mut perks, &hit(attacker, victim, 10)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_shield_soaks_hits_until_it_breaks() {
+        let [attacker, victim] = entities();
+        let mut vitals = alive(100);
+        let mut perks = Perks {
+            shield_hp: 50,
+            ..Default::default()
+        };
+        let blocked = Hit {
+            shield: true,
+            ..hit(attacker, victim, 30)
+        };
+        let outcome = take_hit(&mut vitals, &mut perks, &blocked);
+        assert_eq!(outcome, Some(Outcome::Shield));
+        assert_eq!((perks.shield_hp, vitals.hp), (20, 100));
+        take_hit(&mut vitals, &mut perks, &blocked);
+        assert_eq!(perks.shield_hp, 0);
+        let outcome = take_hit(&mut vitals, &mut perks, &blocked);
+        assert_eq!(outcome, Some(Outcome::Wounded));
+        assert_eq!(vitals.hp, 70);
+    }
+
+    #[test]
+    fn the_king_takes_no_harm_and_a_taser_paralyses_without_hurting() {
+        let [attacker, victim] = entities();
+        let mut vitals = alive(100);
+        let mut king = Perks {
+            king_ticks: 10,
+            ..Default::default()
+        };
+        assert_eq!(
+            take_hit(&mut vitals, &mut king, &hit(attacker, victim, 500)),
+            None
+        );
+        assert!(king.damaged_by.is_empty());
+        let mut perks = Perks::default();
+        let zap = Hit {
+            stun: 5.0,
+            ..hit(attacker, victim, 0)
+        };
+        let outcome = take_hit(&mut vitals, &mut perks, &zap);
+        assert_eq!(outcome, Some(Outcome::Wounded));
+        assert_eq!((vitals.hp, vitals.stun_left), (100, 5.0));
+    }
+
+    #[test]
+    fn each_big_head_holder_grows_the_victims_head_a_step_up_to_the_cap() {
+        assert_eq!(grown_head(1.0, 0), 1.0);
+        assert_eq!(grown_head(1.0, 2), 1.0 + 2.0 * augments::BIG_HEAD_STEP);
+        assert_eq!(
+            grown_head(augments::BIG_HEAD_MAX, 1),
+            augments::BIG_HEAD_MAX
+        );
+    }
+
+    #[test]
+    fn big_head_mode_names_hammer_kills_and_headshots_on_the_smallest_head() {
+        use pb::{HitZone, SpecialKill};
+        let special = |weapon, zone, level, lowest| special_kill(true, weapon, zone, level, lowest);
+        assert_eq!(
+            special_kill(false, Kind::Hammer, HitZone::Head, -3, -3),
+            SpecialKill::Unspecified
+        );
+        assert_eq!(
+            special(Kind::Hammer, HitZone::Legs, 2, -3),
+            SpecialKill::CuteShot
+        );
+        assert_eq!(
+            special(Kind::Rifle, HitZone::Head, -3, -3),
+            SpecialKill::DotShot
+        );
+        assert_eq!(
+            special(Kind::Rifle, HitZone::Head, -2, -3),
+            SpecialKill::Unspecified,
+            "someone's head is smaller"
+        );
+        assert_eq!(
+            special(Kind::Rifle, HitZone::Head, 0, 0),
+            SpecialKill::Unspecified,
+            "a normal head"
+        );
+        assert_eq!(
+            special(Kind::Rifle, HitZone::Body, -3, -3),
+            SpecialKill::Unspecified
+        );
+    }
+
+    #[test]
+    fn soul_drain_heals_a_living_killer_up_to_their_cap() {
+        let mut perks = Perks {
+            active: vec![Aug::SoulDrain],
+            ..Default::default()
+        };
+        let mut vitals = alive(MAX_HP.saturating_sub(10));
+        let mut weapon = Weapon::new(Kind::Rifle);
+        let mut loadout = Loadout(Kind::Rifle);
+        reward_killer(
+            &rules(false),
+            &mut perks,
+            &mut vitals,
+            &mut weapon,
+            &mut loadout,
+            Kind::Sniper,
+        );
+        assert_eq!(vitals.hp, augments::max_hp(MAX_HP, &perks.active));
+    }
+
+    #[test]
+    fn possession_hands_the_killer_the_victims_primary_and_fresh_health() {
+        let mut perks = Perks {
+            active: vec![Aug::Possession],
+            ..Default::default()
+        };
+        let mut vitals = alive(20);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        let mut loadout = Loadout(Kind::Rifle);
+        reward_killer(
+            &rules(false),
+            &mut perks,
+            &mut vitals,
+            &mut weapon,
+            &mut loadout,
+            Kind::Sniper,
+        );
+        assert_eq!(vitals.hp, augments::POSSESSION_HP);
+        assert_eq!((loadout.0, weapon.primary), (Kind::Sniper, Kind::Sniper));
+    }
+
+    #[test]
+    fn a_dead_killer_still_climbs_a_level_but_gains_nothing_else() {
+        let mut perks = Perks {
+            active: vec![Aug::SoulDrain],
+            ..Default::default()
+        };
+        let mut vitals = Vitals {
+            alive: false,
+            ..alive(0)
+        };
+        let mut weapon = Weapon::new(Kind::Rifle);
+        let mut loadout = Loadout(Kind::Rifle);
+        reward_killer(
+            &rules(true),
+            &mut perks,
+            &mut vitals,
+            &mut weapon,
+            &mut loadout,
+            Kind::Sniper,
+        );
+        assert_eq!(perks.level, big_head::after_kill(0));
+        assert_eq!(vitals.hp, 0);
+    }
+
+    #[test]
+    fn reaching_the_top_level_alive_crowns_the_killer() {
+        let mut perks = Perks::default();
+        perks.set_level(big_head::MAX_LEVEL.saturating_sub(1));
+        let mut vitals = alive(10);
+        let mut weapon = Weapon::new(Kind::Rifle);
+        let mut loadout = Loadout(Kind::Rifle);
+        reward_killer(
+            &rules(true),
+            &mut perks,
+            &mut vitals,
+            &mut weapon,
+            &mut loadout,
+            Kind::Sniper,
+        );
+        assert!(perks.king());
+        assert_eq!((weapon.kind, vitals.hp), (Kind::Hammer, MAX_HP));
+    }
 
     #[test]
     fn a_player_in_the_air_is_hit_where_they_are() {
