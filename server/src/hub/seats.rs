@@ -164,6 +164,95 @@ mod tests {
     // ---------------------------------------------------------------- seats
 
     #[test]
+    fn the_other_team_of_either_team_is_the_one_it_is_not() {
+        assert_eq!(other_team(RED), BLUE);
+        assert_eq!(other_team(BLUE), RED);
+        for team in [RED, BLUE] {
+            assert_eq!(other_team(other_team(team)), team);
+        }
+    }
+
+    #[test]
+    fn a_new_room_has_a_bot_in_every_seat_or_every_seat_open() {
+        let (bots, open) = (Seats::new(true), Seats::new(false));
+        for team in [RED, BLUE] {
+            assert_eq!(
+                (bots.humans(team), bots.bots(team), bots.players(team)),
+                (0, TEAM_SIZE, TEAM_SIZE)
+            );
+            assert!(!bots.has_open(team));
+            assert_eq!(
+                (open.humans(team), open.bots(team), open.players(team)),
+                (0, 0, 0)
+            );
+            assert!(open.has_open(team));
+        }
+        assert_eq!((bots.bot_count(), open.bot_count()), (MAX_PLAYERS, 0));
+    }
+
+    #[test]
+    fn a_teams_players_are_its_humans_and_its_bots() {
+        let mut seats = Seats::new(false);
+        seats.sit(RED, 1);
+        seats.sit(RED, 2);
+        seats.set_bot(RED, 3, true);
+        seats.set_bot(BLUE, 0, true);
+        assert_eq!(
+            (seats.humans(RED), seats.bots(RED), seats.players(RED)),
+            (2, 1, 3)
+        );
+        assert_eq!(
+            (seats.humans(BLUE), seats.bots(BLUE), seats.players(BLUE)),
+            (0, 1, 1)
+        );
+    }
+
+    #[test]
+    fn seats_are_listed_red_first_in_the_free_for_all_numbering() {
+        let seats = Seats::new(false);
+        let listed: Vec<(usize, usize)> =
+            seats.iter().map(|(team, slot, _)| (team, slot)).collect();
+        assert_eq!(listed.len(), MAX_PLAYERS);
+        for (index, place) in listed.into_iter().enumerate() {
+            assert_eq!(Seats::at(index), Some(place));
+        }
+    }
+
+    #[test]
+    fn the_free_seat_is_the_first_open_one_else_the_first_bots_and_none_once_all_are_human() {
+        let mut seats = Seats::new(true);
+        assert_eq!(seats.free_seat(RED), Some((0, Seat::Bot)));
+        seats.set_bot(RED, 3, false);
+        assert_eq!(seats.free_seat(RED), Some((3, Seat::Open)));
+        for id in 1..=TEAM_SIZE as u32 {
+            seats.sit(RED, id);
+        }
+        assert_eq!(seats.free_seat(RED), None);
+        assert_eq!(seats.free_seat(BLUE), Some((0, Seat::Bot)));
+    }
+
+    #[test]
+    fn a_seat_kept_for_newcomers_mid_match_must_be_open_and_no_bot_gives_way() {
+        let mut seats = Seats::new(true);
+        assert_eq!(seats.sit_open(RED, 1), None, "only bots");
+        seats.set_bot(RED, 3, false);
+        assert_eq!(seats.sit_open(RED, 1), Some(3));
+        assert_eq!(seats.sit_open(RED, 2), None);
+        assert_eq!(seats.bots(RED), TEAM_SIZE.saturating_sub(1));
+    }
+
+    #[test]
+    fn someone_without_a_seat_is_not_found_and_cannot_switch_or_leave() {
+        let mut seats = Seats::new(true);
+        seats.sit(RED, 1);
+        assert_eq!(seats.find(2), None);
+        assert!(!seats.switch(2));
+        seats.leave(2);
+        assert_eq!(seats.find(1), Some((RED, 0)));
+        assert_eq!(seats.bot_count(), MAX_PLAYERS.saturating_sub(1));
+    }
+
+    #[test]
     fn a_newcomer_takes_an_open_seat_before_any_bot_and_then_the_first_bot_gives_way() {
         let mut seats = Seats::new(true);
         seats.set_bot(RED, 2, false);

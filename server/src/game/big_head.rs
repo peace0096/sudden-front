@@ -52,7 +52,96 @@ pub fn crown(perks: &mut Perks, vitals: &mut Vitals, weapon: &mut Weapon, max_hp
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn level_zero_has_the_normal_head_and_every_level_up_a_bigger_one() {
+        assert_eq!(head_scale(0), 1.0);
+        for level in MIN_LEVEL..MAX_LEVEL {
+            let (this, next) = (head_scale(level), head_scale(level.saturating_add(1)));
+            assert!(next > this, "level {level}: {this}, then {next}");
+        }
+        assert!(
+            head_scale(MIN_LEVEL) > 0.0,
+            "the smallest head is still there"
+        );
+    }
+
+    #[test]
+    fn head_sizes_clamp_to_the_lowest_and_highest_levels() {
+        for level in [MIN_LEVEL.saturating_sub(1), i32::MIN] {
+            assert_eq!(head_scale(level), head_scale(MIN_LEVEL), "level {level}");
+        }
+        for level in [MAX_LEVEL.saturating_add(1), i32::MAX] {
+            assert_eq!(head_scale(level), head_scale(MAX_LEVEL), "level {level}");
+        }
+    }
+
+    #[test]
+    fn a_kill_climbs_one_level_to_the_top_and_from_below_zero_jumps_to_the_comeback_level() {
+        for level in MIN_LEVEL..0 {
+            assert_eq!(after_kill(level), COMEBACK_LEVEL, "level {level}");
+        }
+        for level in 0..MAX_LEVEL {
+            assert_eq!(after_kill(level), level.saturating_add(1), "level {level}");
+        }
+        assert_eq!(after_kill(MAX_LEVEL), MAX_LEVEL);
+        assert!(after_kill(-1) > 0, "a comeback goes past level 0");
+    }
+
+    #[test]
+    fn a_death_drops_one_level_down_to_the_bottom() {
+        for level in MIN_LEVEL.saturating_add(1)..=MAX_LEVEL {
+            assert_eq!(after_death(level), level.saturating_sub(1), "level {level}");
+        }
+        assert_eq!(after_death(MIN_LEVEL), MIN_LEVEL);
+    }
+
+    #[test]
+    fn kills_and_deaths_keep_every_level_in_range_even_from_far_outside_it() {
+        let levels = MIN_LEVEL..=MAX_LEVEL;
+        for level in levels.clone() {
+            let (up, down) = (after_kill(level), after_death(level));
+            assert!(
+                levels.contains(&up) && levels.contains(&down),
+                "level {level}: {up}, {down}"
+            );
+        }
+        assert_eq!(after_kill(i32::MAX), MAX_LEVEL);
+        assert_eq!(after_kill(i32::MIN), COMEBACK_LEVEL);
+        assert_eq!(after_death(i32::MIN), MIN_LEVEL);
+    }
+
+    #[test]
+    fn a_reign_lasts_a_whole_number_of_ticks() {
+        assert_eq!(KING_TICKS as f32 / TICK_RATE as f32, KING_TIME);
+    }
+
+    #[test]
+    fn crowning_heals_and_frees_the_king_and_leaves_only_the_hammer() {
+        let mut perks = Perks::default();
+        perks.set_level(MAX_LEVEL);
+        let mut vitals = Vitals {
+            hp: 1,
+            alive: true,
+            respawn_left: 0.0,
+            protect_left: 0.0,
+            stun_left: 2.0,
+        };
+        let mut weapon = Weapon::new(Kind::Sniper);
+        weapon.reload_left = 1.0;
+        crown(&mut perks, &mut vitals, &mut weapon, MAX_HP);
+        assert!(perks.king());
+        assert_eq!(perks.king_ticks, KING_TICKS);
+        assert_eq!((vitals.hp, vitals.stun_left), (MAX_HP, 0.0));
+        assert_eq!((weapon.kind, weapon.grenades()), (Kind::Hammer, 0));
+        assert!(!weapon.reloading());
+        for slot in 1..=4 {
+            weapon.switch_to(slot);
+            assert_eq!(weapon.kind, Kind::Hammer, "slot {slot}");
+        }
+    }
 
     #[test]
     fn big_head_levels_run_from_minus_five_to_three_with_a_head_for_each() {

@@ -541,6 +541,203 @@ mod tests {
     use super::*;
     use crate::game::test_support::*;
 
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    // ---------------------------------------------------------------- mirroring
+
+    #[test]
+    fn mirroring_a_box_turns_it_half_round_the_centre_and_twice_restores_it() {
+        let b = bx(BoxKind::Crate, -3.0, -1.0, 0.5, 1.7, 2.0, 5.0);
+        let m = mirror_box(&b);
+        assert_eq!((m.min_x, m.max_x, m.min_z, m.max_z), (1.0, 3.0, -5.0, -2.0));
+        assert_eq!((m.kind, m.min_y, m.max_y), (b.kind, b.min_y, b.max_y));
+        assert_eq!(mirror_box(&m), b);
+    }
+
+    #[test]
+    fn a_mirrored_prop_stands_opposite_and_faces_the_other_way() {
+        let p = MapProp {
+            tilt: 0.3,
+            ..prop(PropKind::Window, -7.0, 3.8, -12.0, FRAC_PI_2, 3.0, 1.8)
+        };
+        let m = mirror_prop(&p);
+        assert_eq!((m.x, m.y, m.z), (7.0, 3.8, 12.0));
+        assert_eq!(
+            (m.kind, m.width, m.height, m.tilt),
+            (p.kind, p.width, p.height, p.tilt)
+        );
+        assert!(
+            close(m.rotation.sin(), -p.rotation.sin())
+                && close(m.rotation.cos(), -p.rotation.cos())
+        );
+        let back = mirror_prop(&m);
+        assert_eq!((back.x, back.y, back.z), (p.x, p.y, p.z));
+        assert!(
+            close(back.rotation.sin(), p.rotation.sin())
+                && close(back.rotation.cos(), p.rotation.cos())
+        );
+    }
+
+    #[test]
+    fn free_for_all_spawns_are_the_team_spawns_and_open_points_each_with_its_mirror() {
+        let spawns = [(-46.0, -24.0), (-46.0, 0.0)];
+        let open = [(0.0, -20.0), (-24.0, 12.0)];
+        let all = ffa_spawns(&spawns, &open);
+        assert_eq!(all.len(), 8, "each of the four points and its mirror");
+        for &(x, z) in spawns.iter().chain(&open) {
+            assert!(
+                all.contains(&(x, z)) && all.contains(&(-x, -z)),
+                "({x}, {z})"
+            );
+        }
+    }
+
+    #[test]
+    fn every_map_is_point_symmetric_so_both_halves_play_the_same() {
+        for id in [pb::MapId::SupplyYard, pb::MapId::Warehouse] {
+            let def = build_map(id);
+            let map = &def.data;
+            for b in &map.boxes {
+                let m = mirror_box(b);
+                let mirrored = map.boxes.iter().any(|o| {
+                    o.kind == m.kind
+                        && [
+                            (o.min_x, m.min_x),
+                            (o.max_x, m.max_x),
+                            (o.min_y, m.min_y),
+                            (o.max_y, m.max_y),
+                            (o.min_z, m.min_z),
+                            (o.max_z, m.max_z),
+                        ]
+                        .iter()
+                        .all(|&(a, b)| close(a, b))
+                });
+                assert!(mirrored, "{id:?}: {b:?} has no mirror image");
+            }
+            for p in &map.props {
+                let m = mirror_prop(p);
+                let mirrored = map.props.iter().any(|o| {
+                    o.kind == m.kind
+                        && (o.width, o.height, o.tilt) == (m.width, m.height, m.tilt)
+                        && [
+                            (o.x, m.x),
+                            (o.y, m.y),
+                            (o.z, m.z),
+                            (o.rotation.sin(), m.rotation.sin()),
+                            (o.rotation.cos(), m.rotation.cos()),
+                        ]
+                        .iter()
+                        .all(|&(a, b)| close(a, b))
+                });
+                assert!(mirrored, "{id:?}: {p:?} has no mirror image");
+            }
+            for points in [&def.ffa_spawns, &def.lanes] {
+                for &(x, z) in points {
+                    assert!(
+                        points.contains(&(-x, -z)),
+                        "{id:?}: ({x}, {z}) has no mirror image"
+                    );
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- the leaning container
+
+    /// A container 6 m long and 2.4 m deep with its middle `y` up, tipped by `tilt` and turned by
+    /// `rotation`.
+    fn container(y: f32, tilt: f32, rotation: f32) -> MapProp {
+        MapProp {
+            tilt,
+            ..prop(PropKind::TiltedContainer, 0.0, y, 0.0, rotation, 6.0, 2.4)
+        }
+    }
+
+    /// The slices of `p`, west to east.
+    fn slices_of(p: &MapProp) -> Vec<MapBox> {
+        let mut slices = lean_slices(p);
+        slices.sort_by(|a, b| a.min_x.total_cmp(&b.min_x));
+        slices
+    }
+
+    #[test]
+    fn a_level_container_collides_as_slices_that_fill_its_own_box_end_to_end() {
+        let slices = slices_of(&container(CONTAINER_H / 2.0, 0.0, 0.0));
+        for s in &slices {
+            assert_eq!(s.kind, BoxKind::Invisible as i32);
+            assert!(s.max_x - s.min_x <= LEAN_SLICE + 1e-4, "{s:?}");
+            assert!(close(s.min_y, 0.0) && close(s.max_y, CONTAINER_H), "{s:?}");
+            assert!(close(s.min_z, -1.2) && close(s.max_z, 1.2), "{s:?}");
+        }
+        let (first, last) = (slices.first().unwrap(), slices.last().unwrap());
+        assert!(close(first.min_x, -3.0) && close(last.max_x, 3.0));
+        for pair in slices.windows(2) {
+            assert!(
+                close(pair[0].max_x, pair[1].min_x),
+                "a gap after {:?}",
+                pair[0]
+            );
+        }
+    }
+
+    #[test]
+    fn a_leaning_containers_slices_hold_all_of_it_and_stand_at_most_a_slices_rise_above_it() {
+        let tilt = 0.3;
+        let p = container(3.0, tilt, 0.0);
+        let slices = slices_of(&p);
+        // Points all over the container's tipped side, (along, up) from its middle.
+        let (sin, cos) = tilt.sin_cos();
+        let half_height = CONTAINER_H / 2.0;
+        for along in [-3.0, -2.2, -1.0, 0.0, 0.4, 1.7, 2.5, 3.0] {
+            for up in [-half_height, -0.5, 0.0, 0.9, half_height] {
+                let (x, y) = (along * cos - up * sin, p.y + along * sin + up * cos);
+                let held = slices.iter().any(|s| {
+                    (s.min_x - 1e-4..=s.max_x + 1e-4).contains(&x)
+                        && (s.min_y - 1e-4..=s.max_y + 1e-4).contains(&y)
+                });
+                assert!(held, "({x}, {y}) sticks out of the slices");
+            }
+        }
+        // The top face rises along x at tan(tilt); no slice stands more than its length's rise
+        // above it.
+        let top = |x: f32| p.y + x * tilt.tan() + half_height / cos;
+        for s in &slices {
+            assert!(
+                s.max_y <= top(s.min_x) + LEAN_SLICE * tilt.tan() + 1e-4,
+                "{s:?} towers over the top at {}",
+                top(s.min_x)
+            );
+        }
+    }
+
+    #[test]
+    fn a_quarter_turned_leaning_container_turns_its_slices_as_three_js_turns_the_model() {
+        // three.js turns +x a quarter turn about +y onto -z, so the raised end ends up north.
+        let slices = lean_slices(&container(3.0, 0.3, FRAC_PI_2));
+        for s in &slices {
+            assert!(close(s.min_x, -1.2) && close(s.max_x, 1.2), "{s:?}");
+            assert!(s.max_z - s.min_z <= LEAN_SLICE + 1e-4, "{s:?}");
+        }
+        let highest = slices.iter().max_by(|a, b| a.max_y.total_cmp(&b.max_y));
+        let lowest = slices.iter().min_by(|a, b| a.max_y.total_cmp(&b.max_y));
+        let (highest, lowest) = (highest.unwrap(), lowest.unwrap());
+        assert!(
+            highest.max_z < lowest.min_z,
+            "the raised end at {highest:?} is not north of the low one at {lowest:?}"
+        );
+    }
+
+    #[test]
+    fn a_leaning_container_that_would_dip_through_the_floor_stops_at_it() {
+        let slices = lean_slices(&container(1.0, LEAN, 0.0));
+        assert!(slices.iter().all(|s| s.min_y >= 0.0));
+        assert!(slices.iter().any(|s| s.min_y == 0.0));
+    }
+
+    // ---------------------------------------------------------------- the maps
+
     #[test]
     fn every_map_is_fully_connected_and_spawns_are_clear() {
         // Nothing may be over a free-for-all spawn below this, which keeps them out of doorways

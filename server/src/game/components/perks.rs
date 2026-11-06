@@ -51,3 +51,41 @@ pub struct AugmentOffer {
     /// Which of the cards has been swapped; each can be, once.
     pub refreshed: [bool; 3],
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::big_head::{head_scale, MAX_LEVEL, MIN_LEVEL};
+
+    #[test]
+    fn an_augment_counts_while_active_not_because_its_card_was_chosen() {
+        // Double Time's card grants the two it drew, not itself.
+        let perks = Perks {
+            augment: pb::Augment::DoubleTime,
+            active: vec![pb::Augment::Vest, pb::Augment::Rest],
+            ..Default::default()
+        };
+        assert!(perks.has(pb::Augment::Vest) && perks.has(pb::Augment::Rest));
+        assert!(!perks.has(pb::Augment::DoubleTime));
+        assert!(!Perks::default().has(pb::Augment::Vest));
+    }
+
+    #[test]
+    fn the_king_is_whoever_has_ticks_of_a_reign_left() {
+        let mut perks = Perks::default();
+        assert!(!perks.king());
+        perks.king_ticks = 1;
+        assert!(perks.king());
+        perks.king_ticks = 0;
+        assert!(!perks.king());
+    }
+
+    #[test]
+    fn a_new_level_brings_the_head_size_for_it() {
+        let mut perks = Perks::default();
+        for level in (MIN_LEVEL..=MAX_LEVEL).rev() {
+            perks.set_level(level);
+            assert_eq!((perks.level, perks.head_scale), (level, head_scale(level)));
+        }
+    }
+}

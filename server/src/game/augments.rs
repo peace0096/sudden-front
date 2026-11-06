@@ -132,7 +132,142 @@ pub fn roll_double(rng: &mut GameRng) -> Vec<Augment> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::game::systems::weapon::forced_primary;
     use crate::game::test_support::*;
+    use crate::game::weapons::{primary_for, sidearm_for, PRIMARIES};
+
+    const GRADES: [AugmentGrade; 3] = [
+        AugmentGrade::Silver,
+        AugmentGrade::Gold,
+        AugmentGrade::Prism,
+    ];
+
+    /// Every augment there is.
+    fn every_augment() -> impl Iterator<Item = Augment> {
+        (0..64)
+            .filter_map(|n| Augment::try_from(n).ok())
+            .filter(|&augment| augment != Augment::Unspecified)
+    }
+
+    #[test]
+    fn every_augment_is_dealt_from_exactly_one_grade() {
+        for augment in every_augment() {
+            let grades = GRADES
+                .iter()
+                .filter(|&&grade| pool(grade).contains(&augment))
+                .count();
+            assert_eq!(grades, 1, "{augment:?}");
+        }
+        assert!(pool(AugmentGrade::Unspecified).is_empty());
+    }
+
+    #[test]
+    fn every_augment_that_changes_a_weapon_slot_clashes_with_the_others_there() {
+        for augment in every_augment() {
+            let changes_slot_one = forced_primary(&[augment]).is_some()
+                || PRIMARIES
+                    .iter()
+                    .any(|&kind| primary_for(kind, &[augment]) != kind);
+            let changes_slot_two = sidearm_for(&[augment]) != Kind::Pistol;
+            assert!(
+                !changes_slot_one || SLOT_ONE.contains(&augment),
+                "{augment:?} changes slot 1"
+            );
+            assert!(
+                !changes_slot_two || SLOT_TWO.contains(&augment),
+                "{augment:?} changes slot 2"
+            );
+        }
+        // A shield needs the plain pistol, so it holds slot 2 too.
+        assert!(SLOT_TWO.contains(&Augment::Shield));
+        assert!(SLOT_ONE.iter().all(|augment| !SLOT_TWO.contains(augment)));
+    }
+
+    #[test]
+    fn dealing_one_card_at_a_time_gives_every_augment_once_and_then_nothing() {
+        let total = every_augment().count();
+        let mut rng = GameRng(5);
+        let mut seen = Vec::new();
+        let mut dealt = Vec::new();
+        while let Some(card) = deal_one(&mut rng, &mut seen) {
+            assert!(!dealt.contains(&card), "{card:?} dealt twice");
+            dealt.push(card);
+            assert!(dealt.len() <= total, "never ran out");
+        }
+        assert_eq!(dealt.len(), total);
+        assert_eq!(seen, dealt, "each card is recorded as it is dealt");
+        assert_eq!(deal_one(&mut rng, &mut seen), None);
+        assert_eq!(seen.len(), total);
+    }
+
+    #[test]
+    fn a_grade_that_has_run_out_falls_back_to_one_that_has_not() {
+        let mut rng = GameRng(11);
+        for _ in 0..100 {
+            let mut seen: Vec<Augment> = SILVER.iter().chain(&GOLD).copied().collect();
+            let card = deal_one(&mut rng, &mut seen);
+            assert!(card.is_some_and(|card| PRISM.contains(&card)), "{card:?}");
+        }
+    }
+
+    #[test]
+    fn a_hand_is_cards_nobody_has_seen_which_count_as_seen_from_then_on() {
+        let mut rng = GameRng(3);
+        let mut seen = vec![Augment::Vest, Augment::Missile];
+        let before = seen.clone();
+        let first = deal(&mut rng, &mut seen);
+        assert_eq!(first.len(), HAND_SIZE);
+        for (i, card) in first.iter().enumerate() {
+            assert!(!before.contains(card), "{card:?} was seen already");
+            assert!(!first[..i].contains(card), "{card:?} twice in {first:?}");
+        }
+        assert_eq!(seen[..before.len()], before[..]);
+        assert_eq!(seen[before.len()..], first[..]);
+        let second = deal(&mut rng, &mut seen);
+        assert!(
+            second.iter().all(|card| !first.contains(card)),
+            "{first:?} then {second:?}"
+        );
+    }
+
+    #[test]
+    fn a_hand_runs_short_only_once_fewer_cards_than_a_hand_are_left() {
+        let all: Vec<Augment> = every_augment().collect();
+        let mut rng = GameRng(3);
+        let mut seen = all[2..].to_vec();
+        let mut hand = deal(&mut rng, &mut seen);
+        hand.sort_unstable();
+        assert_eq!(hand, all[..2]);
+        assert!(deal(&mut rng, &mut seen).is_empty());
+    }
+
+    #[test]
+    fn double_time_can_pair_augments_that_change_different_slots() {
+        let mut rng = GameRng(21);
+        let paired = (0..5_000).any(|_| {
+            let active = roll_double(&mut rng);
+            active.iter().any(|a| SLOT_ONE.contains(a))
+                && active.iter().any(|a| SLOT_TWO.contains(a))
+        });
+        assert!(paired, "slot 1 and slot 2 augments never came together");
+    }
+
+    #[test]
+    fn the_vest_sets_the_max_hp_whatever_the_base_and_no_other_augment_changes_it() {
+        for base in [MAX_HP, AUGMENT_MAX_HP] {
+            assert_eq!(max_hp(base, &[]), base);
+            assert_eq!(max_hp(base, &[Augment::Vest]), VEST_MAX_HP);
+            assert_eq!(max_hp(base, &[Augment::Rest, Augment::Vest]), VEST_MAX_HP);
+            for augment in every_augment().filter(|&a| a != Augment::Vest) {
+                assert_eq!(max_hp(base, &[augment]), base, "{augment:?}");
+            }
+        }
+        assert!(
+            max_hp(AUGMENT_MAX_HP, &[Augment::Vest]) > AUGMENT_MAX_HP,
+            "the vest adds health"
+        );
+    }
 
     #[test]
     fn grades_roll_at_40_35_25() {

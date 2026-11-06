@@ -255,6 +255,301 @@ pub fn line_clear(boxes: &[MapBox], from: [f32; 3], to: [f32; 3]) -> bool {
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    /// A grenade-sized ball's radius, and the half size of the map it is swept in.
+    const BALL: f32 = 0.1;
+    const HALF: f32 = 10.0;
+
+    /// A box from `min` to `max`.
+    fn solid(min: [f32; 3], max: [f32; 3]) -> MapBox {
+        MapBox {
+            min_x: min[0],
+            min_y: min[1],
+            min_z: min[2],
+            max_x: max[0],
+            max_y: max[1],
+            max_z: max[2],
+            ..Default::default()
+        }
+    }
+
+    fn near(a: [f32; 3], b: [f32; 3]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
+    }
+
+    // ---------------------------------------------------------------- aim and rays
+
+    #[test]
+    fn the_view_looks_down_minus_z_at_yaw_zero_turns_with_yaw_and_rises_with_pitch() {
+        assert!(near(view_dir(0.0, 0.0), [0.0, 0.0, -1.0]));
+        // A quarter turn the negative way looks along +x, the positive way along -x.
+        assert!(near(view_dir(-FRAC_PI_2, 0.0), [1.0, 0.0, 0.0]));
+        assert!(near(view_dir(FRAC_PI_2, 0.0), [-1.0, 0.0, 0.0]));
+        assert!(near(view_dir(PI, 0.0), [0.0, 0.0, 1.0]));
+        // Straight up whatever the yaw.
+        assert!(near(view_dir(1.0, FRAC_PI_2), [0.0, 1.0, 0.0]));
+        assert!(view_dir(0.0, 0.2)[1] > 0.0 && view_dir(0.0, -0.2)[1] < 0.0);
+    }
+
+    #[test]
+    fn every_view_direction_is_a_unit_vector() {
+        for yaw in [-4.0, -PI, -1.0, 0.0, 0.5, 2.0, 7.0] {
+            for pitch in [-MAX_PITCH, -0.5, 0.0, 0.7, MAX_PITCH] {
+                let d = view_dir(yaw, pitch);
+                let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                assert!(
+                    (length - 1.0).abs() < 1e-6,
+                    "yaw {yaw}, pitch {pitch}: {length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_ray_meets_a_box_ahead_at_its_near_face_and_misses_one_behind_or_beside() {
+        let (min, max) = ([2.0, -1.0, -1.0], [3.0, 1.0, 1.0]);
+        let east = [1.0, 0.0, 0.0];
+        assert_eq!(ray_aabb([0.0; 3], east, min, max), Some(2.0));
+        assert_eq!(
+            ray_aabb([0.0; 3], [-1.0, 0.0, 0.0], min, max),
+            None,
+            "behind"
+        );
+        assert_eq!(ray_aabb([0.0, 1.01, 0.0], east, min, max), None, "over it");
+        assert_eq!(ray_aabb([0.0, 0.99, 0.0], east, min, max), Some(2.0));
+        // Aslant, the distance is along the ray, to where it crosses the near face.
+        let length = (1.0f32 + 0.25 * 0.25).sqrt();
+        let aslant = [1.0 / length, 0.25 / length, 0.0];
+        let t = ray_aabb([0.0; 3], aslant, min, max).unwrap();
+        assert!((t * aslant[0] - 2.0).abs() < 1e-5, "{t}");
+    }
+
+    #[test]
+    fn a_ray_from_inside_a_box_meets_it_at_once() {
+        let (min, max) = ([2.0, -1.0, -1.0], [3.0, 1.0, 1.0]);
+        for dir in [
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, -1.0],
+        ] {
+            assert_eq!(
+                ray_aabb([2.5, 0.0, 0.0], dir, min, max),
+                Some(0.0),
+                "{dir:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_ray_into_the_world_stops_at_the_nearest_box_within_reach_in_any_order() {
+        let near = solid([2.0, 0.0, -1.0], [3.0, 2.0, 1.0]);
+        let far = solid([5.0, 0.0, -1.0], [6.0, 2.0, 1.0]);
+        let (from, east) = ([0.0, 1.0, 0.0], [1.0, 0.0, 0.0]);
+        assert_eq!(ray_world(&[near, far], from, east, 10.0), Some(2.0));
+        assert_eq!(ray_world(&[far, near], from, east, 10.0), Some(2.0));
+        assert_eq!(
+            ray_world(&[near, far], from, east, 1.9),
+            None,
+            "out of reach"
+        );
+        assert_eq!(ray_world(&[], from, east, 10.0), None);
+    }
+
+    #[test]
+    fn a_line_is_clear_unless_a_box_stands_between_its_ends_either_way() {
+        let wall = solid([2.0, 0.0, -1.0], [3.0, 2.0, 1.0]);
+        let (here, there) = ([0.0, 1.0, 0.0], [5.0, 1.0, 0.0]);
+        assert!(!line_clear(&[wall], here, there));
+        assert!(!line_clear(&[wall], there, here));
+        assert!(
+            line_clear(&[wall], here, [1.5, 1.0, 0.0]),
+            "short of the wall"
+        );
+        assert!(
+            line_clear(&[wall], [0.0, 2.5, 0.0], [5.0, 2.5, 0.0]),
+            "over it"
+        );
+        assert!(line_clear(&[], here, there));
+        assert!(line_clear(&[wall], here, here), "a line of no length");
+    }
+
+    // ---------------------------------------------------------------- standing
+
+    #[test]
+    fn the_ground_is_the_highest_box_top_underfoot_that_is_not_above_the_feet() {
+        let low = solid([-1.0, 0.0, -1.0], [1.0, 0.5, 1.0]);
+        let high = solid([-1.0, 0.5, -1.0], [1.0, 1.2, 1.0]);
+        let stack = [low, high];
+        assert_eq!(ground_height(&[], 0.0, 0.0, 2.0), 0.0, "the floor");
+        assert_eq!(ground_height(&stack, 0.0, 0.0, 1.2), 1.2, "on top");
+        assert_eq!(ground_height(&stack, 0.0, 0.0, 3.0), 1.2, "falling onto it");
+        assert_eq!(ground_height(&stack, 0.0, 0.0, 0.8), 0.5, "under the top");
+        assert_eq!(ground_height(&stack, 3.0, 0.0, 3.0), 0.0, "beside it");
+        // A top a hair above the feet, where rounding leaves them, is still underfoot.
+        assert_eq!(ground_height(&stack, 0.0, 0.0, 1.2 - FOOTING / 2.0), 1.2);
+    }
+
+    #[test]
+    fn a_box_is_underfoot_only_where_the_footprint_overlaps_it_past_the_contact_slack() {
+        let c = crate_box();
+        let (r, top) = (PLAYER_HALF_WIDTH, c.max_y);
+        let ground = |x: f32| ground_height(&[c], x, 0.0, 2.0);
+        assert_eq!(ground(c.min_x - r), 0.0, "touching its side");
+        assert_eq!(
+            ground(c.min_x - r + CONTACT_EPS / 2.0),
+            0.0,
+            "within the slack"
+        );
+        assert_eq!(ground(c.min_x - r + 0.05), top, "a toe over its edge");
+        assert_eq!(ground(c.max_x + r - 0.05), top, "a heel over its far edge");
+        assert_eq!(ground(c.max_x + r), 0.0, "touching its far side");
+    }
+
+    #[test]
+    fn only_a_box_that_starts_below_head_height_blocks_a_player_on_the_floor() {
+        let starting_at = |min_y: f32| solid([0.0, min_y, 0.0], [1.0, min_y + 1.0, 1.0]);
+        assert!(blocks(&starting_at(0.0)));
+        assert!(blocks(&starting_at(PLAYER_HEIGHT - 0.01)));
+        assert!(
+            !blocks(&starting_at(PLAYER_HEIGHT)),
+            "a lintel at head height"
+        );
+        assert!(!blocks(&starting_at(PLAYER_HEIGHT + 2.0)));
+        for min_y in [0.0, 1.0, PLAYER_HEIGHT - 0.01, PLAYER_HEIGHT, 4.0] {
+            let b = starting_at(min_y);
+            assert_eq!(blocks_at(&b, 0.0), blocks(&b), "starting {min_y} m up");
+        }
+    }
+
+    #[test]
+    fn a_box_is_in_the_way_only_between_the_feet_and_the_head() {
+        let c = crate_box();
+        assert!(blocks_at(&c, 0.0), "on the floor beside it");
+        assert!(
+            blocks_at(&c, c.max_y - 0.2),
+            "jumping, the feet below its top"
+        );
+        assert!(!blocks_at(&c, c.max_y), "standing on it");
+        assert!(
+            !blocks_at(&c, c.max_y - FOOTING / 2.0),
+            "a hair below its top"
+        );
+        assert!(!blocks_at(&c, c.max_y + 0.8), "over it");
+        let lid = solid([0.0, 2.3, 0.0], [1.0, 2.6, 1.0]);
+        assert!(!blocks_at(&lid, 0.0), "overhead");
+        assert!(
+            blocks_at(&lid, lid.min_y - PLAYER_HEIGHT + 0.01),
+            "the head reaches it"
+        );
+        let marking = solid([0.0, 0.0, 0.0], [1.0, FOOTING, 1.0]);
+        assert!(!blocks_at(&marking, 0.0), "flush with the floor");
+    }
+
+    // ---------------------------------------------------------------- a rolling ball
+
+    #[test]
+    fn a_ball_that_does_not_move_touches_nothing() {
+        for y in [1.0, BALL] {
+            assert_eq!(
+                sweep_ball(&[], [0.0, y, 0.0], [0.0; 3], BALL, HALF, HALF),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn the_floor_stops_a_falling_ball_one_radius_up_and_lets_a_rolling_one_go() {
+        let (t, axis, sign) =
+            sweep_ball(&[], [0.0, 1.0, 0.0], [0.0, -2.0, 0.0], BALL, HALF, HALF).unwrap();
+        assert_eq!((axis, sign), (1, 1.0));
+        assert!(
+            (1.0 - 2.0 * t - BALL).abs() < 1e-6,
+            "stopped at {}",
+            1.0 - 2.0 * t
+        );
+        let rolling = sweep_ball(&[], [0.0, BALL, 0.0], [1.0, 0.0, 0.5], BALL, HALF, HALF);
+        assert_eq!(rolling, None);
+        let short = sweep_ball(&[], [0.0, 1.0, 0.0], [0.0, -0.5, 0.0], BALL, HALF, HALF);
+        assert_eq!(short, None, "still above the floor");
+    }
+
+    #[test]
+    fn a_ball_meets_a_box_one_radius_out_with_the_faces_outward_normal() {
+        let block = solid([2.0, 0.0, -1.0], [3.0, 2.0, 1.0]);
+        let sweep =
+            |from: [f32; 3], delta: [f32; 3]| sweep_ball(&[block], from, delta, BALL, HALF, HALF);
+        let (t, axis, sign) = sweep([0.0, 1.0, 0.0], [4.0, 0.0, 0.0]).unwrap();
+        assert_eq!((axis, sign), (0, -1.0), "its -x face");
+        assert!((4.0 * t - (2.0 - BALL)).abs() < 1e-5, "{t}");
+        let (t, axis, sign) = sweep([5.0, 1.0, 0.0], [-4.0, 0.0, 0.0]).unwrap();
+        assert_eq!((axis, sign), (0, 1.0), "its +x face");
+        assert!((5.0 - 4.0 * t - (3.0 + BALL)).abs() < 1e-5, "{t}");
+        let (t, axis, sign) = sweep([2.5, 3.0, 0.0], [0.0, -2.0, 0.0]).unwrap();
+        assert_eq!((axis, sign), (1, 1.0), "its top");
+        assert!((3.0 - 2.0 * t - (2.0 + BALL)).abs() < 1e-5, "{t}");
+        assert_eq!(sweep([0.0, 1.0, 0.0], [-4.0, 0.0, 0.0]), None, "away");
+        assert_eq!(sweep([0.0, 1.0, 3.0], [8.0, 0.0, 0.0]), None, "beside it");
+        assert_eq!(
+            sweep([2.2, 2.0 + BALL, 0.0], [0.5, 0.0, 0.0]),
+            None,
+            "rolling along its top"
+        );
+    }
+
+    #[test]
+    fn the_map_edge_keeps_a_ball_in() {
+        let (half_x, half_z) = (10.0, 6.0);
+        let (t, axis, sign) =
+            sweep_ball(&[], [9.0, 1.0, 0.0], [2.0, 0.0, 0.0], BALL, half_x, half_z).unwrap();
+        assert_eq!((axis, sign), (0, -1.0));
+        assert!((9.0 + 2.0 * t - (half_x - BALL)).abs() < 1e-5, "{t}");
+        let (t, axis, sign) = sweep_ball(
+            &[],
+            [0.0, 1.0, -5.0],
+            [0.0, 0.0, -2.0],
+            BALL,
+            half_x,
+            half_z,
+        )
+        .unwrap();
+        assert_eq!((axis, sign), (2, 1.0));
+        assert!((-5.0 - 2.0 * t - (BALL - half_z)).abs() < 1e-5, "{t}");
+    }
+
+    #[test]
+    fn the_first_of_several_surfaces_in_the_way_is_the_one_touched() {
+        let near = solid([2.0, 0.0, -1.0], [3.0, 2.0, 1.0]);
+        let far = solid([5.0, 0.0, -1.0], [6.0, 2.0, 1.0]);
+        for boxes in [[near, far], [far, near]] {
+            let (t, axis, _) =
+                sweep_ball(&boxes, [0.0, 1.0, 0.0], [8.0, -0.5, 0.0], BALL, HALF, HALF).unwrap();
+            assert_eq!(axis, 0);
+            assert!((8.0 * t - (2.0 - BALL)).abs() < 1e-5, "{t}");
+        }
+        let (_, axis, _) =
+            sweep_ball(&[near], [0.0, 0.5, 0.0], [4.0, -2.0, 0.0], BALL, HALF, HALF).unwrap();
+        assert_eq!(axis, 1, "the floor comes before the box");
+    }
+
+    #[test]
+    fn a_ball_a_hair_inside_a_surface_still_touches_it_and_one_deeper_is_let_out() {
+        let block = solid([2.0, 0.0, -1.0], [3.0, 2.0, 1.0]);
+        let sweep =
+            |x: f32, dx: f32| sweep_ball(&[block], [x, 1.0, 0.0], [dx, 0.0, 0.0], BALL, HALF, HALF);
+        let touching = Some((0.0, 0, -1.0));
+        assert_eq!(sweep(2.0 - BALL, 1.0), touching, "resting against it");
+        assert_eq!(
+            sweep(2.0 - BALL + BALL_SLACK / 2.0, 1.0),
+            touching,
+            "a hair in"
+        );
+        assert_eq!(sweep(2.0 - BALL + BALL_SLACK * 3.0, 1.0), None, "deeper in");
+        assert_eq!(sweep(2.5, -1.0), None, "inside, on the way out");
+    }
+
+    // ---------------------------------------------------------------- moving
 
     #[test]
     fn walls_stop_movement() {

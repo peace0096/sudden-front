@@ -165,6 +165,150 @@ mod tests {
     use super::*;
     use crate::game::test_support::*;
 
+    /// A full load of `kind`: its magazine and reserve.
+    fn full(kind: Kind) -> (u32, u32) {
+        let stats = weapons::stats(kind);
+        (stats.magazine, stats.reserve)
+    }
+
+    #[test]
+    fn a_fresh_set_holds_the_primary_fully_loaded_with_a_pistol_a_knife_and_grenades() {
+        let w = Weapon::new(Kind::Sniper);
+        assert_eq!(
+            (w.kind, w.primary, w.sidearm, w.active_slot),
+            (Kind::Sniper, Kind::Sniper, Kind::Pistol, 0)
+        );
+        assert_eq!((w.magazine, w.reserve), full(Kind::Sniper));
+        let grenades = weapons::stats(Kind::Grenade).magazine;
+        assert_eq!(
+            w.holstered[1..],
+            [full(Kind::Pistol), (0, 0), (grenades, 0)]
+        );
+        assert_eq!(w.grenades(), grenades);
+        assert!(!w.reloading());
+    }
+
+    #[test]
+    fn equipping_with_augments_follows_the_weapon_rules_for_each_slot() {
+        let w = Weapon::equipped(Kind::Smg, &[Aug::Akimbo]);
+        assert_eq!((w.kind, w.primary), (Kind::AkimboSmg, Kind::AkimboSmg));
+        assert_eq!((w.magazine, w.reserve), full(Kind::AkimboSmg));
+        let w = Weapon::equipped(RIFLE, &[Aug::Shotgun]);
+        assert_eq!((w.kind, w.sidearm), (RIFLE, Kind::Shotgun));
+        assert_eq!(w.holstered[1], full(Kind::Shotgun));
+    }
+
+    #[test]
+    fn switching_brings_out_the_slots_own_ammo_drops_a_reload_and_has_to_draw() {
+        let mut w = Weapon::new(RIFLE);
+        w.magazine = 17;
+        w.reload_left = 1.0;
+        w.bloom = 0.01;
+        w.aim_time = 0.5;
+        w.switch_to(2);
+        assert_eq!((w.kind, w.active_slot), (Kind::Pistol, 1));
+        assert_eq!((w.magazine, w.reserve), full(Kind::Pistol));
+        assert!(!w.reloading(), "the reload is dropped");
+        assert_eq!((w.bloom, w.aim_time, w.cooldown), (0.0, 0.0, DRAW_TIME));
+        w.switch_to(3);
+        assert_eq!((w.kind, w.magazine, w.reserve), (Kind::Knife, 0, 0));
+        w.switch_to(1);
+        assert_eq!((w.kind, w.magazine, w.reserve), (RIFLE, 17, full(RIFLE).1));
+        // A longer wait, such as a bolt cycle, outlasts the draw.
+        w.cooldown = DRAW_TIME * 3.0;
+        w.switch_to(2);
+        assert_eq!(w.cooldown, DRAW_TIME * 3.0);
+    }
+
+    #[test]
+    fn taking_the_slot_in_hand_or_one_that_does_not_exist_changes_nothing() {
+        let mut w = Weapon::new(RIFLE);
+        w.magazine = 9;
+        w.reload_left = 1.0;
+        for slot in [0, 1, 5, 99] {
+            w.switch_to(slot);
+            assert_eq!(
+                (w.kind, w.active_slot, w.magazine, w.cooldown),
+                (RIFLE, 0, 9, 0.0),
+                "slot {slot}"
+            );
+            assert!(w.reloading(), "slot {slot}");
+        }
+    }
+
+    #[test]
+    fn the_grenade_comes_out_only_while_one_is_left_and_a_throw_goes_back_where_it_came_from() {
+        for from in 1..=3 {
+            let mut w = Weapon::new(RIFLE);
+            w.switch_to(from);
+            w.switch_to(4);
+            assert_eq!((w.kind, w.active_slot), (Kind::Grenade, GRENADE_SLOT));
+            assert_eq!(w.grenades(), w.magazine, "the grenades in hand");
+            assert_eq!(w.slot_before_grenade(), from);
+        }
+        let mut w = Weapon::new(RIFLE);
+        w.switch_to(4);
+        // The last one thrown.
+        w.magazine = 0;
+        assert_eq!(w.grenades(), 0);
+        w.switch_to(w.slot_before_grenade());
+        assert_eq!((w.kind, w.grenades()), (RIFLE, 0));
+        w.switch_to(4);
+        assert_eq!(w.kind, RIFLE, "none left to draw");
+    }
+
+    #[test]
+    fn a_new_primary_is_drawn_full_if_in_hand_and_waits_full_in_its_holster_if_not() {
+        let mut w = Weapon::new(RIFLE);
+        w.magazine = 3;
+        w.reload_left = 1.0;
+        w.set_primary(Kind::Smg);
+        assert_eq!((w.kind, w.primary), (Kind::Smg, Kind::Smg));
+        assert_eq!((w.magazine, w.reserve), full(Kind::Smg));
+        assert!(!w.reloading());
+        assert_eq!(w.cooldown, DRAW_TIME);
+
+        let mut w = Weapon::new(RIFLE);
+        w.switch_to(2);
+        w.magazine = 5;
+        w.set_primary(Kind::Sniper);
+        assert_eq!(
+            (w.kind, w.magazine, w.primary),
+            (Kind::Pistol, 5, Kind::Sniper),
+            "the pistol in hand stays as it was"
+        );
+        w.switch_to(1);
+        assert_eq!(w.kind, Kind::Sniper);
+        assert_eq!((w.magazine, w.reserve), full(Kind::Sniper));
+    }
+
+    #[test]
+    fn the_hammer_replaces_whatever_is_in_hand_and_nothing_replaces_it() {
+        for slot in [1, 4] {
+            let mut w = Weapon::new(RIFLE);
+            w.switch_to(slot);
+            w.reload_left = 1.0;
+            w.burst_left = 2;
+            w.burst_fire = Some(FireIntent {
+                yaw: 0.0,
+                pitch: 0.0,
+                render_tick: 0,
+            });
+            w.take_hammer();
+            assert_eq!(
+                (w.kind, w.magazine, w.reserve, w.grenades()),
+                (Kind::Hammer, 0, 0, 0),
+                "from slot {slot}"
+            );
+            assert!(!w.reloading() && w.burst_left == 0 && w.burst_fire.is_none());
+            assert!(w.cooldown >= DRAW_TIME);
+            for other in 1..=4 {
+                w.switch_to(other);
+                assert_eq!(w.kind, Kind::Hammer, "slot {other}");
+            }
+        }
+    }
+
     #[test]
     fn spawns_with_30_mag_and_120_reserve() {
         assert_eq!(weapon(&duel(), SHOOTER), (30, 120, false));

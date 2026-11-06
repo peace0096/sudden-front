@@ -41,3 +41,65 @@ impl MatchState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pb::Team::{Blue, Red};
+
+    /// A team match played to `kills`.
+    fn race_to(kills: u32) -> MatchState {
+        MatchState {
+            kills_to_win: kills,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_kill_scores_for_the_killers_team_only() {
+        let mut state = race_to(5);
+        state.score_kill(Red);
+        assert_eq!((state.red_score, state.blue_score), (1, 0));
+        state.score_kill(Blue);
+        state.score_kill(Blue);
+        assert_eq!((state.red_score, state.blue_score), (1, 2));
+        assert_eq!(state.winner, None);
+    }
+
+    #[test]
+    fn the_first_team_to_reach_the_target_wins_and_stays_the_winner() {
+        let mut state = race_to(2);
+        state.score_kill(Blue);
+        state.score_kill(Red);
+        assert_eq!(state.winner, None, "one kill short each");
+        state.score_kill(Blue);
+        assert_eq!(state.winner, Some(Winner::Team(Blue)));
+        // Kills landing after the end, on the same tick, still count but leave the result alone.
+        state.score_kill(Red);
+        state.score_kill(Red);
+        assert_eq!(state.red_score, 3);
+        assert_eq!(state.winner, Some(Winner::Team(Blue)));
+    }
+
+    #[test]
+    fn a_result_already_decided_is_not_overturned_by_a_kill() {
+        let mut state = MatchState {
+            winner: Some(Winner::Team(Red)),
+            ..race_to(1)
+        };
+        state.score_kill(Blue);
+        assert_eq!(state.blue_score, 1);
+        assert_eq!(state.winner, Some(Winner::Team(Red)));
+    }
+
+    #[test]
+    fn a_score_never_wraps_around() {
+        let mut state = MatchState {
+            blue_score: u32::MAX,
+            ..race_to(u32::MAX)
+        };
+        state.score_kill(Blue);
+        assert_eq!(state.blue_score, u32::MAX);
+        assert_eq!(state.winner, Some(Winner::Team(Blue)));
+    }
+}

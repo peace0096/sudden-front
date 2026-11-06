@@ -326,7 +326,113 @@ pub fn bot_think(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::physics::view_dir;
     use crate::game::test_support::*;
+
+    // ---------------------------------------------------------------- aiming
+
+    #[test]
+    fn wrapping_brings_an_angle_within_a_half_turn_and_keeps_its_direction() {
+        for angle in [-10.0, -4.0, -1.0, 0.0, 2.0, 4.0, 10.0] {
+            let wrapped = wrap_angle(angle);
+            assert!((-PI..=PI).contains(&wrapped), "{angle} wraps to {wrapped}");
+            assert!(
+                (wrapped.sin() - angle.sin()).abs() < 1e-5
+                    && (wrapped.cos() - angle.cos()).abs() < 1e-5,
+                "{angle} wraps to {wrapped}"
+            );
+        }
+        for angle in [-PI, -1.0, 0.0, 0.5, PI] {
+            assert_eq!(wrap_angle(angle), angle, "already within a half turn");
+        }
+    }
+
+    #[test]
+    fn a_turn_goes_the_short_way_round_and_no_further_than_a_step() {
+        let step = 0.1;
+        assert_eq!(turn_towards(0.0, 1.0, step), step);
+        assert_eq!(turn_towards(0.0, -1.0, step), -step);
+        assert_eq!(turn_towards(0.0, 0.05, step), 0.05, "near enough to arrive");
+        // Across the half turn: on through it, not most of a turn back.
+        assert!((turn_towards(3.0, -3.0, step) - (3.0 + step)).abs() < 1e-6);
+        assert!((turn_towards(-3.0, 3.0, step) - (-3.0 - step)).abs() < 1e-6);
+        assert!(
+            (turn_towards(1.0, 1.0 + TAU, step) - 1.0).abs() < 1e-5,
+            "a whole turn round is where it looks already"
+        );
+    }
+
+    #[test]
+    fn the_yaw_to_a_point_looks_straight_at_it() {
+        assert_eq!(yaw_to(0.0, -1.0), 0.0, "ahead, down -z");
+        for (dx, dz) in [
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (-1.0, 0.0),
+            (3.0, -4.0),
+            (-2.0, 5.0),
+        ] {
+            let look = view_dir(yaw_to(dx, dz), 0.0);
+            let length = (dx * dx + dz * dz).sqrt();
+            assert!(
+                (look[0] - dx / length).abs() < 1e-6 && (look[2] - dz / length).abs() < 1e-6,
+                "({dx}, {dz}): {look:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lob_lands_at_the_distance_and_height_it_is_aimed_at_on_the_low_arc() {
+        // How high a throw aimed at `pitch` is `distance` along: it leaves THROW_LIFT above the aim.
+        let height_at = |distance: f32, pitch: f32| {
+            let angle = pitch + THROW_LIFT;
+            let time = distance / (THROW_SPEED * angle.cos());
+            THROW_SPEED * angle.sin() * time - GRENADE_GRAVITY * time * time / 2.0
+        };
+        for distance in [4.0, 10.0, 16.0] {
+            for rise in [-EYE_HEIGHT, 0.0, 1.5] {
+                let pitch = lob_pitch(distance, rise)
+                    .unwrap_or_else(|| panic!("{distance} m away, {rise} m up is out of reach"));
+                let landing = height_at(distance, pitch);
+                assert!(
+                    (landing - rise).abs() < 1e-3,
+                    "{distance} m away, {rise} m up: it lands {landing} m up"
+                );
+                // On the low arc a higher aim passes higher; on the high arc it would pass lower.
+                assert!(
+                    height_at(distance, pitch + 0.01) > landing,
+                    "{distance} m away, {rise} m up: the high arc"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_lob_beyond_the_throws_reach_or_at_no_distance_has_no_pitch() {
+        // On level ground a throw reaches furthest, v²/g, at 45 degrees.
+        let reach = THROW_SPEED * THROW_SPEED / GRENADE_GRAVITY;
+        assert!(lob_pitch(reach * 0.99, 0.0).is_some());
+        assert!(lob_pitch(reach * 1.01, 0.0).is_none());
+        assert!(
+            lob_pitch(reach * 0.99, 3.0).is_none(),
+            "higher up is out of reach sooner"
+        );
+        assert!(lob_pitch(0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn a_bot_can_reach_every_distance_it_lobs_at_on_level_ground() {
+        // From a standing bot's eye to an enemy's feet, across the whole range it lobs at.
+        for distance in [GRENADE_RANGE.start, GRENADE_RANGE.end] {
+            let lob = lob_pitch(distance * GRENADE_SHORT, -EYE_HEIGHT);
+            assert!(
+                lob.is_some_and(|pitch| pitch.abs() <= MAX_PITCH),
+                "{distance} m: {lob:?}"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------- matches
 
     #[test]
     fn bot_match_plays_to_completion_with_a_30_kill_winner() {

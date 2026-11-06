@@ -828,6 +828,32 @@ mod tests {
 
     const BLUE: usize = 1;
 
+    // ---------------------------------------------------------------- names
+
+    #[test]
+    fn a_name_loses_its_control_characters_and_the_spaces_around_it() {
+        assert_eq!(clean_text("  Ace\t \n", MAX_NAME_CHARS), "Ace");
+        assert_eq!(clean_text("A\u{7}c\u{1b}e", MAX_NAME_CHARS), "Ace");
+        assert_eq!(clean_text("Big  Boss", MAX_NAME_CHARS), "Big  Boss");
+    }
+
+    #[test]
+    fn a_name_is_cut_to_its_length_in_characters_and_hidden_ones_do_not_count() {
+        for max in [MAX_NAME_CHARS, MAX_ROOM_NAME_CHARS] {
+            let long = "가".repeat(max.saturating_add(4));
+            assert_eq!(clean_text(&long, max), "가".repeat(max));
+            assert_eq!(clean_text("가나다", max), "가나다");
+        }
+        assert_eq!(clean_text("\u{7}\u{7}\u{7}Ace", 3), "Ace");
+    }
+
+    #[test]
+    fn a_blank_name_cleans_to_nothing() {
+        for raw in ["", "   ", "\n\t\r", "\u{0}\u{7f}"] {
+            assert_eq!(clean_text(raw, MAX_NAME_CHARS), "", "{raw:?}");
+        }
+    }
+
     // ---------------------------------------------------------------- the hub
 
     /// A hub with connected clients that are only inboxes.

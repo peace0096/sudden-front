@@ -505,6 +505,249 @@ mod tests {
     use crate::game::test_support::RIFLE;
     use crate::game::test_support::*;
 
+    const MODES: [pb::GameMode; 3] = [
+        pb::GameMode::Normal,
+        pb::GameMode::Augment,
+        pb::GameMode::BigHead,
+    ];
+
+    const ZONES: [pb::HitZone; 3] = [pb::HitZone::Head, pb::HitZone::Body, pb::HitZone::Legs];
+
+    /// Every augment there is.
+    fn every_augment() -> impl Iterator<Item = Aug> {
+        (0..64)
+            .filter_map(|n| Aug::try_from(n).ok())
+            .filter(|&augment| augment != Aug::Unspecified)
+    }
+
+    #[test]
+    fn every_weapon_kind_has_its_own_entry_and_an_unspecified_one_is_the_rifle() {
+        let kinds: Vec<Kind> = (0..64)
+            .filter_map(|n| Kind::try_from(n).ok())
+            .filter(|&kind| kind != Kind::Unspecified)
+            .collect();
+        assert_eq!(kinds.len(), ALL.len(), "ALL is what clients are sent");
+        for kind in kinds {
+            assert!(ALL.contains(&kind), "{kind:?} is missing from ALL");
+        }
+        let mut names: Vec<&str> = ALL.iter().map(|&kind| stats(kind).name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), ALL.len(), "two kinds share an entry");
+        assert_eq!(stats(Kind::Unspecified).name, stats(Kind::Rifle).name);
+    }
+
+    #[test]
+    fn only_melee_weapons_carry_no_ammo() {
+        for kind in ALL {
+            let s = stats(kind);
+            let melee = s.melee_range > 0.0;
+            assert_eq!(melee, s.magazine == 0, "{kind:?}");
+            assert!(!melee || s.reserve == 0, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn quick_reload_shortens_a_reload_no_recoil_lengthens_it_and_together_they_multiply() {
+        for kind in ALL {
+            let s = stats(kind);
+            let base = reload_time(s, &[]);
+            assert_eq!(base, s.reload_time, "{kind:?}");
+            if base == 0.0 {
+                continue;
+            }
+            let quick = reload_time(s, &[Aug::QuickReload]);
+            let slow = reload_time(s, &[Aug::NoRecoil]);
+            let both = reload_time(s, &[Aug::QuickReload, Aug::NoRecoil]);
+            assert!(
+                quick < base && base < slow,
+                "{kind:?}: {quick} {base} {slow}"
+            );
+            assert!(
+                (both / base - (quick / base) * (slow / base)).abs() < 1e-5,
+                "{kind:?}: {both}"
+            );
+        }
+    }
+
+    #[test]
+    fn borrow_reloads_instantly_whatever_else_is_held() {
+        for kind in ALL {
+            let s = stats(kind);
+            for others in [&[][..], &[Aug::QuickReload], &[Aug::NoRecoil]] {
+                let mut active = others.to_vec();
+                active.push(Aug::Borrow);
+                assert_eq!(reload_time(s, &active), 0.0, "{kind:?} with {active:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn augments_that_are_not_about_reloading_leave_the_reload_time_alone() {
+        let reloading = [Aug::QuickReload, Aug::NoRecoil, Aug::Borrow];
+        for augment in every_augment().filter(|a| !reloading.contains(a)) {
+            for kind in ALL {
+                let s = stats(kind);
+                assert_eq!(
+                    reload_time(s, &[augment]),
+                    s.reload_time,
+                    "{augment:?} {kind:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_head_hit_deals_at_least_a_body_hit_and_a_body_hit_at_least_a_leg_hit() {
+        for kind in ALL {
+            for mode in MODES {
+                let [head, body, legs] = ZONES.map(|zone| damage(kind, mode, zone));
+                assert!(
+                    head >= body && body >= legs,
+                    "{kind:?} in {mode:?}: {head} {body} {legs}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn outside_augment_mode_a_hit_deals_what_the_table_says() {
+        for kind in ALL {
+            let s = stats(kind);
+            for mode in [pb::GameMode::Normal, pb::GameMode::BigHead] {
+                assert_eq!(
+                    ZONES.map(|zone| damage(kind, mode, zone)),
+                    [s.damage_head, s.damage_body, s.damage_legs],
+                    "{kind:?} in {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn augment_mode_raises_every_zone_for_the_sniper_and_the_smgs_and_for_no_other_weapon() {
+        for kind in ALL {
+            let boosted = matches!(kind, Kind::Sniper | Kind::Smg | Kind::AkimboSmg);
+            for zone in ZONES {
+                let normal = damage(kind, pb::GameMode::Normal, zone);
+                let augment = damage(kind, pb::GameMode::Augment, zone);
+                if boosted {
+                    assert!(augment > normal, "{kind:?} {zone:?}: {normal} -> {augment}");
+                } else {
+                    assert_eq!(augment, normal, "{kind:?} {zone:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_akimbo_smg_hits_like_the_smg_in_every_mode_and_zone() {
+        for mode in MODES {
+            for zone in ZONES {
+                assert_eq!(
+                    damage(Kind::AkimboSmg, mode, zone),
+                    damage(Kind::Smg, mode, zone),
+                    "{mode:?} {zone:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_kings_hammer_fells_anyone_with_a_hit_anywhere() {
+        for zone in ZONES {
+            assert!(
+                damage(Kind::Hammer, pb::GameMode::BigHead, zone) >= MAX_HP,
+                "{zone:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_taser_stuns_and_deals_no_damage_and_nothing_else_stuns() {
+        assert!(stats(Kind::Taser).stun > 0.0);
+        for mode in MODES {
+            for zone in ZONES {
+                assert_eq!(damage(Kind::Taser, mode, zone), 0, "{mode:?} {zone:?}");
+            }
+        }
+        for kind in ALL.into_iter().filter(|&kind| kind != Kind::Taser) {
+            assert_eq!(stats(kind).stun, 0.0, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn each_slot_two_augment_brings_its_own_sidearm_and_every_other_keeps_the_pistol() {
+        let own = [
+            (Aug::Shotgun, Kind::Shotgun),
+            (Aug::Magnum, Kind::Magnum),
+            (Aug::Taser, Kind::Taser),
+            (Aug::PistolUpgrade, Kind::PistolPlus),
+        ];
+        assert_eq!(sidearm_for(&[]), Kind::Pistol);
+        for augment in every_augment() {
+            let expected = own
+                .iter()
+                .find(|(owner, _)| *owner == augment)
+                .map_or(Kind::Pistol, |&(_, kind)| kind);
+            assert_eq!(sidearm_for(&[augment]), expected, "{augment:?}");
+            // Also as one of Double Time's two.
+            assert_eq!(sidearm_for(&[Aug::Vest, augment]), expected, "{augment:?}");
+        }
+    }
+
+    #[test]
+    fn akimbo_doubles_a_chosen_smg_and_leaves_every_other_primary_alone() {
+        for kind in PRIMARIES {
+            let akimbo = if kind == Kind::Smg {
+                Kind::AkimboSmg
+            } else {
+                kind
+            };
+            assert_eq!(primary_for(kind, &[Aug::Akimbo]), akimbo, "{kind:?}");
+            assert_eq!(primary_for(kind, &[Aug::Vest, Aug::Akimbo]), akimbo);
+            for augment in every_augment().filter(|&a| a != Aug::Akimbo) {
+                assert_eq!(primary_for(kind, &[augment]), kind, "{kind:?} {augment:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_base_of_any_augmented_primary_is_the_weapon_that_was_chosen() {
+        for kind in PRIMARIES {
+            assert_eq!(base_primary(kind), kind);
+            for augment in every_augment() {
+                assert_eq!(
+                    base_primary(primary_for(kind, &[augment])),
+                    kind,
+                    "{kind:?} {augment:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bots_get_only_primaries_rifles_most_often_and_snipers_least() {
+        let mut rng = GameRng(7);
+        let mut counts = [0u32; PRIMARIES.len()];
+        for _ in 0..10_000 {
+            let kind = random_for_bot(&mut rng);
+            let i = PRIMARIES
+                .iter()
+                .position(|&primary| primary == kind)
+                .unwrap_or_else(|| panic!("{kind:?} is no primary"));
+            counts[i] = counts[i].saturating_add(1);
+        }
+        let count = |kind: Kind| counts[PRIMARIES.iter().position(|&p| p == kind).unwrap()];
+        for kind in [Kind::Sniper, Kind::MachineGun, Kind::Smg] {
+            assert!(count(Kind::Rifle) > count(kind), "{counts:?}");
+        }
+        for kind in [Kind::MachineGun, Kind::Smg] {
+            assert!(count(Kind::Sniper) < count(kind), "{counts:?}");
+        }
+        assert!(count(Kind::Sniper) > 0, "{counts:?}");
+    }
+
     #[test]
     fn weapon_table_matches_the_spec() {
         use pb::WeaponKind::*;
