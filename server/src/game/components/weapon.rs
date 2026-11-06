@@ -123,7 +123,7 @@ impl Weapon {
 
     /// Big Head mode: the King's hammer in hand, drawn like any weapon, and nothing else for the
     /// reign. switch_to refuses while it is held and the grenade is gone; the reign's end issues
-    /// a fresh set (systems::update_kings), so nothing else is kept.
+    /// a fresh set (systems::king::update_kings), so nothing else is kept.
     pub fn take_hammer(&mut self) {
         self.kind = pb::WeaponKind::Hammer;
         self.magazine = 0;

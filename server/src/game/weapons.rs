@@ -289,7 +289,7 @@ const AKIMBO_SMG: Stats = Stats {
 };
 
 /// Slot 4. `magazine` is how many a life starts with; there is no reserve and no reload. The
-/// damage is the blast's at its centre, falling off with distance (systems.rs `blast`).
+/// damage is the blast's at its centre, falling off with distance (systems/blast.rs `blast`).
 const GRENADE: Stats = Stats {
     name: "HG-3",
     magazine: 1,

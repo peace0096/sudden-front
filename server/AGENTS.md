@@ -33,7 +33,9 @@
    - 계속 늘어나는 ID(봇·방·미사일·수류탄)에는 `wrapping_*`를 씁니다.
    - 넘치는 경우를 따로 처리해야 하면 `checked_*`를 씁니다.
    - 넘칠 수 없는 것이 분명한 곳은 `#[expect(clippy::arithmetic_side_effects, reason = "...")]`에 그 이유를 적습니다(예: `nav.rs`의 격자 계산, `hub/mod.rs`의 틱 시계).
-   - 확인: `Cargo.toml`이 `clippy::arithmetic_side_effects`를 warn으로 켜고, clippy를 `-D warnings`로 돌려 실패시킵니다. 실수(`f32`) 연산은 검사 대상이 아니고, 테스트 코드도 같은 규칙을 따릅니다.
+   - 확인: `Cargo.toml`이 `clippy::arithmetic_side_effects`를 warn으로 켜고, clippy를 `-D warnings`로 돌려 실패시킵니다.
+     - 실수(`f32`) 연산은 검사 대상이 아닙니다.
+     - clippy는 `#[test]` 함수 본문의 정수 연산을 검사하지 않고, 테스트 도우미(`test_support.rs`, 테스트 모듈 안의 일반 함수)는 검사합니다. 테스트 함수도 같은 방식으로 쓰지만, 검사로 강제되지는 않습니다.
    - 이유: release 빌드는 정수 오버플로를 조용히 감싸서(wrap) 엉뚱한 값을 만듭니다. 허브 스레드 하나가 모든 방을 돌리므로 panic도 피해야 합니다.
 5. **서버 작업을 마칠 때마다 `server/`에서 `cargo fmt`와 `cargo clippy --all-targets -- -D warnings`를 실행합니다.**
    - 둘 다 경고 없이 끝나야 작업이 끝난 것입니다. `cargo test --release`도 함께 돌립니다.
