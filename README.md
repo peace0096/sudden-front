@@ -66,12 +66,13 @@ macOS·Linux에서는 프로젝트 폴더의 `./run.sh` 하나로 클라이언�
 
 ```
 proto/game.proto          패킷 정의의 단일 원본 (Rust, TS 코드 생성)
+server/AGENTS.md          서버 코드 규칙 (도메인별 패키지, 순수 함수와 단위 테스트, fmt·clippy)
 server/src/net.rs         WebSocket <-> 허브 스레드
-server/src/hub.rs         로비, 방, 30Hz 틱 루프
+server/src/hub/           로비, 방, 30Hz 틱 루프
 server/src/game/          방마다 하나의 Bevy ECS World
-  systems.rs              입력 → 무기 → 사격 → 부활 순서의 규칙 시스템
+  systems/                입력 → 무기 → 사격 → 부활 순서의 규칙 시스템, 도메인마다 한 파일
+  systems/bot.rs          봇 AI (사람과 같은 InputCmd 큐로 입력)
   weapons.rs              총기 스탯 표
-  bot.rs                  봇 AI (사람과 같은 InputCmd 큐로 입력)
   map.rs                  맵 데이터 (점대칭 생성, MatchStart로 클라이언트에 전송)
 client/src/game/          렌더링, 예측, HUD, 사운드 (캐릭터·총기·맵 소품·이펙트는 glTF/WebP 에셋, 사운드와 벽·하늘·이름표 텍스처는 코드로 생성)
 client/public/art/        glTF·WebP 에셋과 파일별 라이선스 기록(LICENSES.json)

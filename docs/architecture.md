@@ -8,18 +8,24 @@ server/
   build.rs                  prost-build로 game.proto → game.v1.rs
   src/main.rs               axum 라우터: /ws, /art (없는 파일은 404), client/dist 정적 파일, 포트 선택 (기본 8800, 사용 중이면 빈 포트)
   src/net.rs                WebSocket 세션 ↔ 허브 스레드 (mpsc 채널)
-  src/hub.rs                로비, 방(팀별 5칸: 사람·봇·빈칸, 개인전은 같은 10칸을 번호 0~9로 씀), 방장 권한, 30Hz 틱 루프, 칸 배정·준비·도중 참가 단위 테스트 (43개)
-  src/game/
-    mod.rs                  Match: World + Schedule, 스냅샷 생성, 증강 적용, 대기/선택 단계
-    components.rs           ECS 컴포넌트와 리소스
-    systems.rs              틱마다 도는 규칙 시스템 (이동, 무기, 사격, 미사일, 수류탄, 부활, 기록)
+  AGENTS.md                 서버 코드 규칙 (도메인별 패키지, 순수 함수와 단위 테스트, unsafe 금지, 정수 오버플로, fmt·clippy)
+  src/hub/                  로비와 방, 30Hz 틱 루프. 테스트는 각 파일 맨 아래
+    mod.rs                  허브: 메시지 처리, 방장 권한, 방 목록·대기실 상태 전송, 틱 루프, 대기실·준비·도중 참가 흐름 테스트
+    seats.rs                좌석 (팀별 5칸: 사람·봇·빈칸, 개인전은 같은 10칸을 번호 0~9로 씀)과 칸 배정
+    room.rs                 방: 설정·멤버, 신규·도중 참가 좌석 선택
+  src/game/                 테스트는 각 파일 맨 아래 (순수 함수 단위 테스트, 그다음 Match 시나리오 테스트)
+    mod.rs                  Match: World + Schedule, 증강 적용, 대기/선택 단계
+    snapshot.rs             명단·시작·스냅샷·종료 메시지 생성
+    systems/                틱마다 도는 규칙 시스템, 도메인마다 한 파일 (입력, 무기, 사격, 폭발, 미사일, 수류탄, 휴식, 왕대두, 부활, 기록, 틱, 봇 AI). mod.rs의 schedule()이 실행 순서를 정함
+    components/             ECS 컴포넌트 (player, weapon, perks, input, history, bot)
+    resources/              ECS 리소스 (arena, rules, match_state, projectile, event_log, rng)
     physics.rs              이동 충돌(step_move), 레이·시야 판정
     weapons.rs              무기 스탯 표, 모드별 대미지, 증강에 따른 무기 교체
     augments.rs             증강 등급 풀, 카드 배분, 더블 타임 추첨, 증강 상수
-    bot.rs                  봇 AI
+    big_head.rs             왕대두모드 레벨·머리 배율·왕대두 시간, 즉위
     nav.rs                  봇용 보행 격자와 BFS 경로 탐색
     map.rs                  맵 데이터 (보급창고, 웨어하우스), 팀 스폰과 개인전 스폰(`ffa_spawns`)
-    tests.rs                규칙 단위 테스트 (109개, 1개는 디버그 빌드 전용)
+    test_support.rs         시나리오 테스트 공용 도우미 (#[cfg(test)])
 client/
   src/main.ts               진입점, 화면 전환, 에셋 프리로드(에셋이 준비되기 전 경기가 시작되면 "에셋 불러오는 중…" 오버레이로 대기), ?art 미리보기 분기
   src/net.ts                WebSocket 연결, encode/decode
@@ -99,7 +105,7 @@ bot_think → consume_inputs → update_weapons → fire_weapons → update_perk
 
 ### 이동 예측과 보정
 - 클라이언트는 입력을 즉시 자기 위치에 적용(예측)하고, 스냅샷의 `last_input_seq` 이후 명령을 다시 적용(replay)해 서버 위치에 맞춥니다.
-- `client/src/game/movement.ts`는 서버 `physics.rs`의 `step_move`·`step_vertical`, `systems.rs` `consume_inputs`의 이동 부분과 같은 규칙이어야 합니다. 벽에 비비는 경우 축별로 미끄러지게 처리합니다.
+- `client/src/game/movement.ts`는 서버 `physics.rs`의 `step_move`·`step_vertical`, `systems/input.rs`의 `walk_step`·`consume_inputs`과 같은 규칙이어야 합니다. 벽에 비비는 경우 축별로 미끄러지게 처리합니다.
 - 한 명령은 수평 이동(그때 발 높이에서 발~머리 사이에 걸친 박스만 막음) → 수직 이동(서 있으면 점프, 중력, 머리 위 박스와 발밑 바닥·박스 윗면에서 멈춤) 순서입니다. `vy`가 0이고 발이 바닥 높이에 있으면 서 있는 상태입니다. 보정 때는 서버의 `y`·`vy`에서 다시 적용합니다. 마비 중에는 중력만 받고, 증강 선택 대기 중에는 서버가 명령을 이동에 쓰지 않습니다.
 
 ### Lag compensation

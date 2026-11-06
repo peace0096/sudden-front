@@ -17,7 +17,7 @@ Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@b
 2. **서버 실행** — `server/`에서 `cargo run --release`. 프로젝트 폴더의 `./run.sh`는 클라이언트 빌드 → 서버 빌드 → 서버 시작을 한 번에 합니다. `Sudden Front server: http://localhost:<포트>`가 출력되면 준비된 것입니다. 서버가 `/ws`와 `client/dist` 정적 파일을 함께 제공하며, 정적 파일 경로는 `CLIENT_DIST`로 바꿉니다.
    - 포트: `PORT`가 없으면 8800, 사용 중이면 8801~8819 중 빈 포트로 열고 준비 줄 앞에 알려 줍니다. `PORT`를 지정하면 그 포트만 쓰고, 사용 중이면 한 줄 오류로 종료합니다(exit 1). 여러 서버를 띄우는 검증에서는 `PORT`를 직접 지정해 포트를 확정합니다.
    - 클라이언트를 고치는 중에는 서버를 켠 채 `client/`에서 `npm run dev`로 http://localhost:5173 을 씁니다. Vite가 `/ws`를 `PORT`(없으면 8800)로 프록시하므로, 서버가 다른 포트로 열렸으면 같은 `PORT`를 주고 실행합니다.
-3. **서버 테스트** — `server/`에서 `cargo test --release`. 모두 통과하면 완료입니다. 게임 규칙 테스트는 `server/src/game/tests.rs`, 대기실 칸 배정 테스트는 `server/src/hub.rs`의 `tests` 모듈에 있으므로, 규칙을 바꾸면 해당 위치에 테스트를 추가하거나 고칩니다.
+3. **서버 테스트와 검사** — `server/`에서 `cargo test --release`, `cargo fmt`, `cargo clippy --all-targets -- -D warnings`. 테스트가 모두 통과하고 clippy 경고가 0이면 완료입니다. 테스트는 그 테스트가 검증하는 로직이 있는 파일 맨 아래 `tests` 모듈에 있으므로, 규칙을 바꾸면 그 파일의 테스트를 추가하거나 고칩니다. 서버 코드 규칙은 [server/AGENTS.md](server/AGENTS.md)에 있습니다(규칙 12).
 4. **브라우저 e2e** — release 서버를 켠 상태에서 `client/`에서 `node e2e/<스크립트>.mjs [URL] [스크린샷 폴더]`(URL을 생략하면 `client/e2e/server.mjs`가 `PORT`(없으면 8800)로 만든 주소, 스크린샷 폴더 기본값은 `e2e-shots`). 종료 코드 0이면 통과이며, `SKIP`으로 출력된 항목은 검증되지 않은 것입니다. 스크립트별 검증 범위는 [docs/development.md](docs/development.md)에 있습니다.
    - Microsoft Edge가 필요합니다. `playwright-core`가 `msedge` 채널의 headless Edge와 SwiftShader로 렌더링합니다. Edge가 없으면 스크립트를 `client/e2e/` 안에 임시 사본으로 복사해 `channel`만 `"chrome"` 등 설치된 브라우저로 바꿔 실행하고, 끝나면 사본을 지웁니다. 사본이 `client/e2e/` 안에 있어야 `playwright-core`를 찾습니다.
    - 기본 URL은 Rust 서버가 제공하는 `client/dist`를 엽니다. 클라이언트를 고쳤으면 `npm run build`를 먼저 해야 새 코드가 테스트됩니다.
@@ -26,11 +26,11 @@ Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@b
 ## 작업 규칙
 
 1. **판정 규칙과 수치의 원본은 서버입니다.** 무기 스탯, 증강 효과, HP, 각종 시간은 `server/src/game/`에서 정하고, 클라이언트는 `MatchStart`의 `GameConfig`로 받은 값을 씁니다. 이유: 판정을 일관되게 하고 치트를 막습니다. 다만 클라이언트에는 예측·표시용으로 서버 값을 손으로 옮긴 사본이 있습니다: `client/src/game/game.ts`의 `MAX_PITCH`·`BLOOM_DECAY`·`BLOOM_HOLD_EXTRA`·`VEST_MAX_HP`·`BURST_*`와 `reloadTime()`의 장전 배율, `movement.ts`의 `CMD_DT`·`CONTACT_EPS`·`FOOTING`, `client/src/game/art/hitbox.ts`의 히트박스·`CROUCH_DROP`·방패 크기·`HEAD_SCALE_MAX`(= `augments.rs`의 `BIG_HEAD_MAX`, 캐릭터 경계용), `lobby.ts`의 `TEAM_SIZE`·`KILL_TARGETS`, `augments.ts`의 증강 등급과 설명 속 수치, `world.ts`의 `TILTED_HEIGHT`(= `map.rs`의 `CONTAINER_H`, 기울어진 컨테이너의 충돌 조각 높이), `weapons.ts`·`hud.ts`의 수류탄 설명 속 수치(개수·3초·반경 5 m), `hud.ts`의 왕대두모드 Tab 규칙 문구 속 1레벨(`big_head.rs`의 `COMEBACK_LEVEL`)·0레벨(`KING_END_LEVEL`). 서버의 해당 값을 바꾸면 같은 변경에서 사본도 고칩니다. 이유: 사본이 어긋나도 컴파일 오류가 나지 않고, 예측·HUD만 서버 판정과 달라집니다.
-2. **이동 규칙은 서버와 클라이언트를 함께 고칩니다.** `server/src/game/physics.rs`의 `step_move`·`step_vertical`(점프·중력·박스 윗면 착지), `systems.rs` `consume_inputs`의 이동 부분, `client/src/game/movement.ts`는 규칙과 상수(`CONTACT_EPS`·`FOOTING` 등, 점프 속도·중력은 `GameConfig`로 받음)가 같아야 합니다. 이유: 클라이언트 예측이 서버와 어긋나면 보정할 때 위치가 튑니다. 확인: `e2e/wall-rub.mjs`, `e2e/play.mjs`(예측 오차).
+2. **이동 규칙은 서버와 클라이언트를 함께 고칩니다.** `server/src/game/physics.rs`의 `step_move`·`step_vertical`(점프·중력·박스 윗면 착지), `systems/input.rs`의 `walk_step`·`consume_inputs`, `client/src/game/movement.ts`는 규칙과 상수(`CONTACT_EPS`·`FOOTING` 등, 점프 속도·중력은 `GameConfig`로 받음)가 같아야 합니다. 이유: 클라이언트 예측이 서버와 어긋나면 보정할 때 위치가 튑니다. 확인: `e2e/wall-rub.mjs`, `e2e/play.mjs`(예측 오차).
 3. **프로토콜은 `proto/game.proto`에서만 바꿉니다.** 서버는 `cargo build`가(`build.rs`, protoc 내장이라 따로 설치할 필요 없음), 클라이언트는 `npm run gen`(`dev`·`build`가 자동 실행)이 코드를 다시 만듭니다. 생성물(`client/src/gen/`, 서버 `OUT_DIR`)은 손대지 않습니다. 지운 필드 번호는 `reserved`로 남깁니다(예: `Snapshot`의 `reserved 14`). 이유: 옛 클라이언트와 번호가 충돌하지 않게 합니다.
-4. **봇의 이동·조준·사격·장전은 사람과 같은 `InputCmd` 큐로 넣습니다.** `server/src/game/bot.rs`의 `bot_think`가 명령을 만들어 넣으면 사람과 같은 시스템이 판정합니다. 새 봇 행동도 입력 생성으로 구현합니다. 이유: 규칙 구현을 하나로 유지합니다. 무기 관리만 예외로 직접 처리합니다: 탄이 떨어진 테이저를 1번 무기로 바꾸기와 예비 탄약 보충(`bot.rs`), 증강 무기가 2번 칸이면 그 무기를 든 채 시작(`systems.rs`의 `issue_weapons`), 재투입 때 주무기 재추첨(`respawn_players`), 우지 아킴보 봇의 기관단총 고정(`mod.rs`).
+4. **봇의 이동·조준·사격·장전은 사람과 같은 `InputCmd` 큐로 넣습니다.** `server/src/game/systems/bot.rs`의 `bot_think`가 명령을 만들어 넣으면 사람과 같은 시스템이 판정합니다. 새 봇 행동도 입력 생성으로 구현합니다. 이유: 규칙 구현을 하나로 유지합니다. 무기 관리만 예외로 직접 처리합니다: 탄이 떨어진 테이저를 1번 무기로 바꾸기와 예비 탄약 보충(`systems/bot.rs`), 증강 무기가 2번 칸이면 그 무기를 든 채 시작(`systems/weapon.rs`의 `issue_weapons`), 재투입 때 주무기 재추첨(`systems/respawn.rs`의 `respawn_players`), 우지 아킴보 봇의 기관단총 고정(`mod.rs`).
 5. **반동은 클라이언트, 탄퍼짐은 서버가 정합니다.** 클라이언트(`client/src/game/game.ts`)가 반동을 더한 조준각을 `InputCmd`의 yaw/pitch로 보내고, 서버가 무작위 탄퍼짐을 더해 판정합니다. 서버는 한 틱 안의 **첫 번째** 사격 명령의 조준각을 씁니다. 이유: 화면과 판정이 일치해야 하고, 마지막 명령을 쓰면 반동이 이미 더해진 각도로 첫 발이 위로 튑니다.
-6. **증강 효과는 `Perks.active`로 판정합니다.** `Perks.augment`는 고른 카드(배지 표시용)이고, 실제 효과 목록은 `Perks.active`(더블 타임이면 뽑힌 2개)입니다. `Perks::has()`와 `&[Augment]`를 받는 헬퍼(`weapons.rs`의 `sidearm_for` 등)가 모두 `active`를 봅니다. 새 증강을 추가할 때는 `proto`의 `Augment` 열거형, `augments.rs`의 등급 풀과 무기 칸 충돌 목록(`SLOT_ONE`·`SLOT_TWO`, 더블 타임이 같은 칸 증강을 함께 뽑지 않게 함), 무기를 바꾸는 증강이면 `weapons.rs`의 `sidearm_for`·`primary_for`와 `systems.rs`의 `forced_primary`, 클라이언트 `augments.ts` 문구를 함께 고칩니다.
+6. **증강 효과는 `Perks.active`로 판정합니다.** `Perks.augment`는 고른 카드(배지 표시용)이고, 실제 효과 목록은 `Perks.active`(더블 타임이면 뽑힌 2개)입니다. `Perks::has()`와 `&[Augment]`를 받는 헬퍼(`weapons.rs`의 `sidearm_for` 등)가 모두 `active`를 봅니다. 새 증강을 추가할 때는 `proto`의 `Augment` 열거형, `augments.rs`의 등급 풀과 무기 칸 충돌 목록(`SLOT_ONE`·`SLOT_TWO`, 더블 타임이 같은 칸 증강을 함께 뽑지 않게 함), 무기를 바꾸는 증강이면 `weapons.rs`의 `sidearm_for`·`primary_for`와 `systems/weapon.rs`의 `forced_primary`, 클라이언트 `augments.ts` 문구를 함께 고칩니다.
 7. **모델·텍스처·이펙트 이미지는 출처와 라이선스를 기록한 에셋 파일로 씁니다.**
    - 런타임 파일은 `client/public/art/`에 두고 `client/src/game/art/manifest.json`에 등록합니다.
    - 파일마다 출처 팩·저작자·URL·라이선스·수정 내역을 `client/public/art/LICENSES.json`에 기록합니다.
@@ -64,27 +64,42 @@ Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@b
 9. **수치나 규칙을 바꾸면 같은 변경에서 문서도 고칩니다.** 무기·조작·맵·봇 → `docs/gameplay.md`, 증강 → `docs/augment-mode.md`, 프로토콜 → `docs/protocol.md`, 구조·동기화 → `docs/architecture.md`, 빌드·테스트·수치 위치 → `docs/development.md`, 설계 결정·알려진 이슈 → `docs/history.md`, 조작·무기·증강 표 → 루트 `README.md`. 이유: 수치표와 설명이 문서에 따로 있어 코드만 고치면 문서가 어긋납니다.
 10. **문서는 한국어, 코드 주석·식별자·커밋 메시지는 영어로 씁니다.** 기존 코드와 커밋 이력이 이 방식을 따릅니다.
 11. **작업을 하나 마칠 때마다 커밋하고, 푸시는 개발자가 허용할 때만 합니다.** 작업 하나(보통 사용자 요청 하나)를 끝내면 바로 커밋합니다. 작업 트리와 스테이징 영역에는 개발자나 다른 세션이 남긴 커밋하지 않은 변경이 있을 수 있으므로, 이번 작업의 파일만 경로를 지정해 커밋하고(`git add -A`·`git add .`·`git commit -a` 대신) 같은 파일 안의 이전 변경도 빼고 이번 작업 부분만 넣습니다. 이전 변경과 같은 줄을 고쳐 나눌 수 없으면 그 파일은 커밋하지 않고 개발자에게 알립니다. `git push`는 자동으로 하지 않고 개발자가 허용할 때만 하며, 허용은 그 한 번의 푸시에만 적용합니다. 이유: 작업 단위로 히스토리를 남겨 무엇이 바뀌었는지 추적하고 작업 하나만 되돌릴 수 있게 합니다. 푸시는 원격 저장소에 올라가 되돌리기 어려우므로 개발자가 정합니다. 확인: 커밋 뒤 `git show HEAD`에 이번 작업의 변경만 들어 있습니다.
+12. **서버 코드는 [server/AGENTS.md](server/AGENTS.md)의 규칙을 따릅니다.** 다음 다섯 가지입니다: 도메인별 패키지와 도메인 이름의 파일, 순수 함수와 같은 파일 맨 아래의 단위 테스트, `unsafe` 금지, 넘칠 수 있는 정수 연산의 처리, 작업을 마칠 때 `cargo fmt`·`cargo clippy`. 이유: 서버 코드에만 해당하는 규칙을 한곳에 모아 두면, 서버 파일을 다룰 때 함께 읽힙니다. 확인: `unsafe`와 정수 연산은 `cargo clippy --all-targets -- -D warnings`가 막습니다. Claude Code에서는 Stop 훅(`.claude/hooks/server-check.sh`)이 작업을 마칠 때 fmt와 clippy를 돌리고, 실패하면 종료를 한 번 막습니다.
 
 ## 구조
 
 ```
 proto/game.proto           패킷 정의의 단일 원본
-server/src/
+server/
+  AGENTS.md                서버 코드 규칙(도메인별 패키지, 순수 함수와 단위 테스트, unsafe 금지, 정수 오버플로, fmt·clippy)
+  Cargo.toml               [lints]: unsafe_code forbid, clippy::arithmetic_side_effects
+server/src/                테스트는 각 파일 맨 아래 tests 모듈
   main.rs                  axum 라우터: /ws, /art(없는 파일은 404), client/dist 정적 파일
   net.rs                   연결별 WebSocket 세션 ↔ 허브 스레드(mpsc). 16KB 초과 프레임은 연결 종료, 디코딩 실패 프레임은 버림
-  hub.rs                   로비, 방(팀별 5칸 좌석, 개인전은 같은 10칸을 번호 0~9로), 방장 권한, 30Hz 틱 루프, 칸 배정 테스트
+  hub/                     로비와 방, 30Hz 틱 루프
+    mod.rs                 허브: 메시지 처리, 방장 권한, 방 목록·대기실 상태 전송, 틱 루프
+    seats.rs               좌석(팀별 5칸, 개인전은 같은 10칸을 번호 0~9로)과 칸 배정
+    room.rs                방: 설정·멤버, 신규·도중 참가 좌석 선택
   game/
-    mod.rs                 Match(World + Schedule), 스냅샷, 증강 적용, 선택·대기 단계, 틱·HP·부활 상수
-    systems.rs             틱 규칙 시스템. 상단에 사격·미사일·수류탄·방패 판정 상수
+    mod.rs                 Match(World + Schedule), 증강 적용, 선택·대기 단계, 틱·HP·부활 상수
+    snapshot.rs            명단·시작·스냅샷·종료 메시지
+    systems/               틱 규칙 시스템, 도메인마다 한 파일(판정 상수는 각 파일 상단). mod.rs의 schedule()이 실행 순서를 정함
+      input.rs, weapon.rs      입력(명령 예산·시선·이동), 무기 관리(쿨다운·블룸·장전·스코프·무기 지급)
+      fire.rs, blast.rs        사격·근접·방패 판정과 피해·처치, 폭발 피해
+      missile.rs, grenade.rs   미사일 비행, 수류탄 던지기·튕김·퓨즈
+      perk.rs, king.rs         휴식 회복, 왕대두 시간
+      respawn.rs, history.rs   부활과 스폰, lag compensation용 위치 기록
+      tick.rs                  경기 틱
+      bot.rs                   봇 AI. 상단에 반응·조준 상수
+    components/            ECS 컴포넌트(player, weapon, perks, input, history, bot)
+    resources/             ECS 리소스(arena, rules, match_state, projectile, event_log, rng)
     physics.rs             step_move(축별 미끄러짐 충돌), 레이·시야 판정
     nav.rs                 봇용 보행 격자와 BFS 경로 탐색
-    bot.rs                 봇 AI. 상단에 반응·조준 상수
     weapons.rs             무기 스탯, 공용 계수, 모드별 대미지, 증강별 무기 지급
     augments.rs            증강 등급 풀·확률, 카드 배분, 더블 타임, 선택·대기 시간, 증강 수치
     big_head.rs            왕대두모드: 레벨 범위·레벨별 머리 배율·왕대두 시간 상수, 레벨 증감, 즉위(crown)
     map.rs                 맵 데이터(점대칭 생성), 팀 스폰과 개인전 스폰(ffa_spawns), 컨테이너 계단(WAREHOUSE_CLIMBS), 기울어진 컨테이너 충돌 조각(lean_slices)
-    components.rs          ECS 컴포넌트·리소스(Perks 등)
-    tests.rs               게임 규칙 단위 테스트
+    test_support.rs        시나리오 테스트 공용 도우미(#[cfg(test)])
 client/src/
   main.ts, net.ts, lobby.ts   진입점·화면 전환·에셋 프리로드와 시작 대기·?art 미리보기, WebSocket encode/decode, 로그인·방 목록·대기실
   settings.ts                 개인 설정(마우스 감도 배율, localStorage). 로비와 게임 Esc 화면이 같은 슬라이더를 씀
@@ -107,7 +122,7 @@ client/e2e/*.mjs           Playwright 브라우저 테스트
 
 - **스레드**: tokio가 WebSocket 연결을 받고, `game-hub` 스레드 하나가 모든 방을 소유해 30Hz로 진행합니다. 방 사이 공유 상태가 없어 락을 쓰지 않습니다. 클라이언트별 송신 큐(512)가 차면 그 연결을 끊습니다.
 - **방 상태**: 대기실 → 진행 → 결과(8초) → 대기실. 최대 10명, 팀당 5명(개인전은 같은 10칸을 번호 0~9로 씀).
-- **틱 순서**(`Match`의 chained `Schedule`): `bot_think → consume_inputs → update_weapons → fire_weapons → update_perks → update_kings → respawn_players → record_history → advance_tick`. 증강모드의 선택(15초)·대기(5초) 동안은 스케줄 대신 `freeze_tick`만 돌고, 그 틱 수(`frozen_ticks`)는 경기 시계에서 뺍니다.
+- **틱 순서**(`server/src/game/systems/mod.rs`의 `schedule()`, chained): `bot_think → consume_inputs → update_weapons → fire_weapons → update_perks → update_kings → respawn_players → record_history → advance_tick`. 증강모드의 선택(15초)·대기(5초) 동안은 스케줄 대신 `freeze_tick`만 돌고, 그 틱 수(`frozen_ticks`)는 경기 시계에서 뺍니다.
 - **입력**: 클라이언트는 60Hz 고정 스텝으로 `InputCmd`(seq, 이동키, yaw/pitch, 사격, 장전, 스코프, 무기 칸, 앉기, `render_tick`)를 만들어 `InputBatch`로 보냅니다. 서버는 틱마다 명령 2개분의 예산을 더해(최대 8) 그만큼만 적용하며, 더 빠른 입력은 스피드핵으로 봅니다.
 - **예측·보정**: 클라이언트는 입력을 즉시 자기 위치에 적용하고, 스냅샷의 `last_input_seq` 이후 명령을 다시 적용(replay)해 서버 위치에 맞춥니다.
 - **Lag compensation**: 클라이언트는 원격 플레이어를 보간해 그리며 그 서버 틱을 `render_tick`으로 보냅니다. 서버는 사격 시 표적을 그 틱 위치(`History`, 최대 15틱 = 0.5초)로 되돌려 판정합니다. 미사일은 실제 투사체라 대상이 아닙니다.
@@ -125,7 +140,7 @@ client/e2e/*.mjs           Playwright 브라우저 테스트
 - 대기실은 팀마다 위치가 고정된 5칸(사람·봇·빈칸)이고, 방장이 빈칸마다 봇을 넣거나 뺍니다. 방 생성 때 "빈 자리는 봇으로 채우기"를 켜면 방장 외 모든 칸이 봇으로 시작합니다. 봇 칸만 남은 팀에 사람이 입장하면 봇이 빠지고, 팀을 바꿔 들어오면 그 봇이 옮긴 사람의 원래 칸으로 갑니다. 양 팀에 사람이나 봇이 1명 이상 있어야 시작합니다.
 - 방장 외 모든 플레이어가 준비(`SetReady`)해야 방장이 시작할 수 있고(서버 `on_start_game`이 검사, 클라이언트는 시작 버튼을 끔), 경기가 시작되면 준비가 풀립니다. 손님이 있는 e2e는 시작 전에 손님이 `.actions .ready-btn`을 누릅니다.
 - 경기 중 나간 자리는 비워 두고, 한 팀에 아무도 남지 않으면 남은 팀이 기권승합니다. 시간 제한이 없어 상대가 없으면 경기가 끝나지 않기 때문입니다.
-- 경기 중에도 빈 자리로 도중 참가할 수 있습니다(`hub.rs` `join_running_match` → `Match::add_player`). 봇 칸은 경기 중에 양보하지 않고, 결과 화면 중에는 거절합니다.
+- 경기 중에도 빈 자리로 도중 참가할 수 있습니다(`hub/mod.rs`의 `join_running_match` → `Match::add_player`). 봇 칸은 경기 중에 양보하지 않고, 결과 화면 중에는 거절합니다.
 - 맵: 보급창고(야외 100×64m), 웨어하우스(실내 컨테이너 창고, 단층 컨테이너마다 상자 계단). `map.rs`가 점대칭으로 만들어 `MatchStart`로 보냅니다. 기울어진 컨테이너는 서버가 기울기(`MapProp.tilt`)를 보내고, 충돌은 그 기울기를 따라 자른 INVISIBLE 조각 상자(`lean_slices`)입니다.
 - 무기 칸: 1 주무기(소총 M416·저격소총 AWP·기관총 M249·기관단총 UZI 중 게임 중 B키로 선택, 다음 경기에도 유지), 2 권총, 3 나이프, 4 수류탄(목숨당 1개, 던지면 3초 뒤 폭발하고 그 전 칸으로 복귀, 남은 개수는 `Weapon.holstered[3]`). 바꾸면 0.35초 꺼내는 시간이 있고 진행 중인 장전은 취소되며, 탄약은 무기별로 유지됩니다.
 - 무기 표의 이동속도·탄퍼짐에는 공용 계수 `SPEED_SCALE`(0.9)과 `SPREAD_SCALE`(0.75, 샷건 제외)이 곱해집니다. 무기별 상대 밸런스를 유지한 채 전체 체감을 바꿀 때 이 계수를 조정합니다.

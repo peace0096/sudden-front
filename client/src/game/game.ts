@@ -52,7 +52,7 @@ const WHEEL_GAP_MS = 120;
 const BASE_FOV = 72;
 const SCOPE_FOV = 16;
 const BLOOM_DECAY = 0.09;
-// See BLOOM_HOLD_EXTRA in the server's systems.rs.
+// See BLOOM_HOLD_EXTRA in the server's systems/fire.rs.
 const BLOOM_HOLD_EXTRA = 0.1;
 // Recoil moves the real aim: it is sent with each shot, not only drawn.
 const RECOIL_RECOVERY = 0.25;

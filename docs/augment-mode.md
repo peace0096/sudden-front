@@ -2,7 +2,7 @@
 
 방을 만들 때 모드를 고릅니다. 증강모드는 HP 150으로 시작하고, 경기 시작 시 증강 카드 하나를 골라 그 판 동안 유지합니다. 팀 데스매치와 개인전 모두에서 고를 수 있습니다. 증강 규칙은 팀을 보지 않고, 개인전에서는 나를 뺀 모두가 적이라 투과(Wallhack)가 다른 플레이어 모두를 비춥니다.
 
-규칙은 서버(`server/src/game/augments.rs`, `mod.rs`, `systems.rs`, `weapons.rs`), 카드 문구는 클라이언트(`client/src/augments.ts`)에 있습니다.
+규칙은 서버(`server/src/game/augments.rs`, `mod.rs`, `systems/`, `weapons.rs`), 카드 문구는 클라이언트(`client/src/augments.ts`)에 있습니다.
 
 경기 중에 도중 참가한 사람은 카드 선택(15초) 중이면 카드 3장을 받아 남은 시간 안에 고르고(안 고르면 무작위), 선택이 끝난 뒤(5초 대기 포함)에 들어오면 받은 패에서 바로 무작위로 정해집니다.
 

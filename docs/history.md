@@ -164,6 +164,18 @@
 - 오프셋은 게임의 `Rig.closeFist`(2관절 IK)로 구했습니다. 주먹 자리와 망치 방향을 격자로 바꿔 가며 손목 꺾임이 작고 망치 머리가 주먹 위·바깥쪽·몸 앞 0.33m 이상인 조합을 고른 뒤, 클립 자세에 대한 뼈 회전으로 바꿨습니다. 팔이 짧아(어깨~손목 0.4m) 더 높이는 들 수 없습니다.
 - 왕대두 머리가 아주 크면(5배) 목도리와 헬멧이 어깨를 덮어, 3/4 앞 시점에서는 망치 일부가 가려집니다.
 
+### 18. 서버 하네스: 도메인 패키지, 순수 함수와 단위 테스트, 린트
+- 서버 코드 규칙을 `server/AGENTS.md`로 분리하고 루트 AGENTS.md 규칙 12가 가리키게 함. 규칙은 다섯 가지: 도메인별 패키지, 순수 함수와 같은 파일 맨 아래의 단위 테스트, `unsafe` 금지, 넘칠 수 있는 정수 연산의 처리, 작업을 마칠 때 fmt·clippy
+- 패키지 재구성
+  - `game/systems.rs` → `game/systems/`: 도메인마다 한 파일, `schedule()`이 실행 순서를 정함. `game/bot.rs`는 `systems/bot.rs`로
+  - `components.rs` → `components/`·`resources/`
+  - `hub.rs` → `hub/`(mod·seats·room)
+  - `Match`의 메시지 생성 → `snapshot.rs`
+- 시스템 안의 판정을 순수 함수로 분리(`chamber`, `spread`, `first_struck`, `take_hit`, `reload`, `walk_step`, `flight`, `throw_start`, `rest`, `freeze_step` 등)하고, 각 파일 맨 아래에 단위 테스트를 추가. `game/tests.rs`의 시나리오 테스트 132개는 검증하는 로직이 있는 파일 맨 아래로 옮기고, 공용 도우미는 `test_support.rs`로
+- `Cargo.toml` `[lints]`: `unsafe_code = "forbid"`, `clippy::arithmetic_side_effects`(clippy는 `-D warnings`). 정수 연산 78곳을 `saturating_`·`wrapping_`으로 바꾸거나, 이유를 적은 `#[expect]`로 둠
+- 서버 전체를 `cargo fmt` 기본 설정으로 포맷
+- Claude Code Stop 훅(`.claude/hooks/server-check.sh`): 작업을 마칠 때 서버 소스가 바뀌었으면 fmt·clippy를 돌리고, 실패하면 종료를 한 번 막음
+
 ## 설계 결정
 
 | 결정 | 이유 |
@@ -228,6 +240,11 @@
 | 이동속도 상승은 뿅망치의 이동속도로 구현 | 이동속도는 이미 손에 든 무기를 따르고 `GameConfig.weapons`로 클라이언트 예측까지 같은 값을 씀 |
 | 왕대두의 금관은 코드로 그린 스프라이트 | 이름표처럼 단순한 그림이라 에셋 파일보다 코드가 나음(규칙 7) |
 | 에이전트 지침은 `AGENTS.md`에만 두고 `CLAUDE.md`는 두지 않음 | Claude Code(2.1.277 이상)는 작업 폴더와 그 위에 `CLAUDE.md`가 없을 때만 `AGENTS.md`를 직접 읽음. 루트 `CLAUDE.md`(`@AGENTS.md` 한 줄)는 루트 `AGENTS.md`만 가져오고 하위 폴더 `AGENTS.md`는 읽히지 않게 했음. 지운 뒤 2.1.318에서 루트(메인 세션·서브에이전트)와 하위 폴더 `AGENTS.md`가 모두 읽히는 것을 확인 |
+| 서버 코드는 종류 패키지(`systems/`, `components/`, `resources/`, `hub/`) 아래 도메인 이름의 파일로 나눔. `mod.rs`는 선언·다시 내보내기·조립만 | 파일 이름으로 규칙 위치를 찾고, 한 파일에 여러 도메인이 쌓이지 않게 함 |
+| 판정은 순수 함수에 두고, 시스템은 읽기·호출·쓰기·이벤트만 함 | 규칙을 ECS 없이 단위 테스트할 수 있음 |
+| 테스트는 검증하는 로직이 있는 파일 맨 아래에 두고, 시나리오 공용 도우미만 `test_support.rs`에 둠 | 규칙과 테스트를 한곳에서 함께 고치게 됨 |
+| 정수 연산은 clippy `arithmetic_side_effects`로 검사. 수치는 `saturating_`, ID는 `wrapping_`, 넘칠 수 없는 곳만 이유를 적은 `#[expect]` | release 빌드는 오버플로를 조용히 감싸 엉뚱한 값을 만들고, 허브 스레드 하나가 모든 방을 돌리므로 panic도 피해야 함 |
+| fmt·clippy는 Claude Code Stop 훅이 서버 소스가 바뀌었을 때만 돌리고, 실패해도 종료는 한 번만 막음 | 사람이 기억할 필요가 없고, 고칠 수 없는 실패로 세션이 갇히지 않음 |
 
 ## 알려진 이슈와 미검증 항목
 

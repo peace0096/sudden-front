@@ -194,7 +194,7 @@ export function ground(size: number, divisions: number): THREE.Object3D {
 
 /**
  * The server's hitboxes as wireframes: red head, orange body, blue legs, and a shield bearer's
- * shield in grey. `pose` sizes them as `hitboxes` and `ray_shield` in server/src/game/systems.rs
+ * shield in grey. `pose` sizes them as `hitboxes` and `ray_shield` in server/src/game/systems/fire.rs
  * do; the shield turns with the player's yaw, the other boxes never turn.
  */
 export interface HitboxFrame {

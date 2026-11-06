@@ -1,4 +1,4 @@
-// Client copy of the server's hitboxes: `hitboxes` and `ray_shield` in server/src/game/systems.rs,
+// Client copy of the server's hitboxes: `hitboxes` and `ray_shield` in server/src/game/systems/fire.rs,
 // CROUCH_DROP in server/src/game/mod.rs. The server judges every hit; models are fitted to these.
 // Heights are metres above the feet and half-widths are measured from the player's centre. The
 // boxes are axis-aligned and never turn with the player.

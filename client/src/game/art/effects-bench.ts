@@ -16,7 +16,7 @@ import { toLambert } from "./materials";
 import { el, fact, type Viewer } from "./view";
 
 const STEP = 1 / 60;
-/** The server's missile speed (systems.rs MISSILE_SPEED) and the game's trail interval (game.ts). */
+/** The server's missile speed (systems/missile.rs MISSILE_SPEED) and the game's trail interval (game.ts). */
 const MISSILE_SPEED = 60;
 const TRAIL_EVERY = 0.025;
 

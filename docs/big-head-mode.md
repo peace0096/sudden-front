@@ -2,7 +2,7 @@
 
 적을 처치하거나 죽을 때마다 레벨과 머리 크기가 바뀌는 모드입니다. 방을 만들 때 모드로 고르거나 대기실에서 방장이 바꾸며, 팀 데스매치와 개인전 모두에서 고를 수 있습니다. HP(100), 무기 선택(B키), 수류탄, 목표 킬은 일반모드와 같습니다.
 
-규칙은 서버(`server/src/game/big_head.rs`의 레벨·머리 크기·왕대두 상수와 `crown`, `systems.rs`의 `fire_weapons`(무적·레벨·특수 샷)·`update_kings`(왕대두 시간)·`respawn_players`, `weapons.rs`의 `HAMMER`, `bot.rs`)에 있습니다. 클라이언트는 `GameConfig`(`min_level`·`max_level`·`king_time`), `PlayerState`(`level`·`head_scale`·`king_left`), `KillEvent.special`로 받은 값을 보여 줍니다.
+규칙은 서버(`server/src/game/big_head.rs`의 레벨·머리 크기·왕대두 상수와 `crown`, `systems/fire.rs`(무적·레벨·특수 샷: `take_hit`·`special_kill`·`reward_killer`)·`systems/king.rs`(왕대두 시간)·`systems/respawn.rs`, `weapons.rs`의 `HAMMER`, `systems/bot.rs`)에 있습니다. 클라이언트는 `GameConfig`(`min_level`·`max_level`·`king_time`), `PlayerState`(`level`·`head_scale`·`king_left`), `KillEvent.special`로 받은 값을 보여 줍니다.
 
 ## 레벨과 머리 크기
 
