@@ -322,3 +322,212 @@ pub fn bot_think(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn bot_match_plays_to_completion_with_a_30_kill_winner() {
+        let mut game = Match::new(&[], YARD, true, 777);
+        // 20 simulated minutes is far beyond any plausible match length.
+        for _ in 0..(20 * 60 * TICK_RATE) {
+            game.tick();
+            if game.winner().is_some() {
+                break;
+            }
+        }
+        let winner = game.winner().expect("bots never finished: AI is stuck");
+        let snapshot = game.shared_snapshot();
+        let (winning, losing) = if winner == Winner::Team(pb::Team::Red) {
+            (snapshot.red_score, snapshot.blue_score)
+        } else {
+            (snapshot.blue_score, snapshot.red_score)
+        };
+        assert_eq!(winning, KILLS_TO_WIN);
+        assert!(losing < KILLS_TO_WIN);
+        println!(
+            "match took {:.1}s, {}-{}",
+            snapshot.tick as f32 / TICK_RATE as f32,
+            snapshot.red_score,
+            snapshot.blue_score
+        );
+    }
+
+    #[test]
+    fn warehouse_bot_match_finishes() {
+        let mut game = Match::new(&[], pb::MapId::Warehouse, true, 91);
+        for _ in 0..(20 * 60 * TICK_RATE) {
+            game.tick();
+            if game.winner().is_some() {
+                break;
+            }
+        }
+        assert!(
+            game.winner().is_some(),
+            "bots never finished on the warehouse map"
+        );
+        let s = game.shared_snapshot();
+        println!(
+            "warehouse match took {:.1}s, {}-{}",
+            s.tick as f32 / TICK_RATE as f32,
+            s.red_score,
+            s.blue_score
+        );
+    }
+
+    #[test]
+    fn bots_can_kill_a_crouching_player() {
+        // Bots rarely happen upon a player idling at spawn, so one match proves little.
+        let mut deaths = 0;
+        for seed in 1..=12 {
+            let mut game = Match::new(
+                &[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)],
+                YARD,
+                true,
+                seed,
+            );
+            for seq in 1..=(TICK_RATE * 180) {
+                game.push_inputs(SHOOTER, vec![crouch_cmd(seq, tick_now(&game))]);
+                game.tick();
+            }
+            deaths += game
+                .world
+                .get::<Stats>(game.entities[&SHOOTER])
+                .unwrap()
+                .deaths;
+        }
+        assert!(deaths > 0, "bots never hit a crouched target");
+    }
+
+    #[test]
+    fn bots_fire_their_taser_once_then_use_their_gun() {
+        assert_eq!(
+            systems::weapon::issue_weapons(RIFLE, &[Aug::Taser], true).kind,
+            Kind::Taser
+        );
+        let mut game = Match::new(
+            &[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)],
+            YARD,
+            true,
+            3,
+        );
+        let mut query = game.world.query_filtered::<Entity, With<BotBrain>>();
+        let bot = query.iter(&game.world).next().unwrap();
+        let mut weapon = systems::weapon::issue_weapons(RIFLE, &[Aug::Taser], true);
+        weapon.magazine = 0;
+        *game.world.get_mut::<Weapon>(bot).unwrap() = weapon;
+        game.tick();
+        assert_eq!(game.world.get::<Weapon>(bot).unwrap().kind, RIFLE);
+    }
+
+    #[test]
+    fn bots_throw_grenades_too() {
+        let mut game = Match::new(&[], YARD, true, 777);
+        let (mut throws, mut blasts) = (0, 0);
+        for _ in 0..(3 * 60 * TICK_RATE) {
+            game.tick();
+            let events = game.shared_snapshot().events;
+            throws += thrown(&events);
+            blasts += explosions(&events).len();
+            if game.winner().is_some() {
+                break;
+            }
+        }
+        assert!(
+            throws > 0 && blasts > 0,
+            "{throws} thrown, {blasts} went off"
+        );
+        println!("bots threw {throws} grenades, {blasts} went off");
+    }
+
+    #[test]
+    fn bot_free_for_alls_finish_with_one_player_at_the_target() {
+        for map in [YARD, pb::MapId::Warehouse] {
+            for mode in [pb::GameMode::Normal, pb::GameMode::Augment] {
+                let mut game =
+                    Match::with_rules(&[], map, mode, pb::MatchType::FreeForAll, [5, 5], 7);
+                // 30 simulated minutes is far beyond any plausible match length.
+                for _ in 0..(30 * 60 * TICK_RATE) {
+                    game.tick();
+                    if game.winner().is_some() {
+                        break;
+                    }
+                }
+                let Some(Winner::Player(winner)) = game.winner() else {
+                    panic!("{map:?} {mode:?}: the bots never finished");
+                };
+                let snapshot = game.shared_snapshot();
+                let at_target: Vec<(u32, u32)> = snapshot
+                    .players
+                    .iter()
+                    .filter(|p| p.kills >= KILLS_TO_WIN_FFA)
+                    .map(|p| (p.id, p.kills))
+                    .collect();
+                assert_eq!(at_target, [(winner, KILLS_TO_WIN_FFA)], "{map:?} {mode:?}");
+                assert_eq!((snapshot.red_score, snapshot.blue_score), (0, 0));
+                println!(
+                    "{map:?} {mode:?} free-for-all took {:.1}s, {} kills in all",
+                    snapshot.tick as f32 / TICK_RATE as f32,
+                    snapshot.players.iter().map(|p| p.kills).sum::<u32>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bot_big_head_matches_finish_and_their_kings_score_with_the_hammer() {
+        for match_type in [pb::MatchType::TeamDeathmatch, pb::MatchType::FreeForAll] {
+            let mut game =
+                Match::with_rules(&[], YARD, pb::GameMode::BigHead, match_type, [5, 5], 11);
+            let mut kings = std::collections::HashSet::new();
+            let (mut crowned, mut cute, mut dot) = (0, 0, 0);
+            // 30 simulated minutes is far beyond any plausible match length.
+            for _ in 0..(30 * 60 * TICK_RATE) {
+                game.tick();
+                let snapshot = game.shared_snapshot();
+                for player in &snapshot.players {
+                    assert!(
+                        (big_head::MIN_LEVEL..=big_head::MAX_LEVEL).contains(&player.level),
+                        "level {}",
+                        player.level
+                    );
+                    assert_eq!(player.head_scale, big_head::head_scale(player.level));
+                    if player.king_left > 0.0 {
+                        assert_eq!(
+                            (player.level, player.weapon),
+                            (big_head::MAX_LEVEL, Kind::Hammer as i32)
+                        );
+                        if kings.insert(player.id) {
+                            crowned += 1;
+                        }
+                    } else {
+                        kings.remove(&player.id);
+                    }
+                }
+                for event in &snapshot.events {
+                    if let Some(pb::game_event::Event::Kill(kill)) = &event.event {
+                        cute += (kill.special == pb::SpecialKill::CuteShot as i32) as u32;
+                        dot += (kill.special == pb::SpecialKill::DotShot as i32) as u32;
+                    }
+                }
+                if game.winner().is_some() {
+                    break;
+                }
+            }
+            assert!(
+                game.winner().is_some(),
+                "{match_type:?}: the bots never finished"
+            );
+            assert!(
+                crowned > 0 && cute > 0,
+                "{match_type:?}: {crowned} kings, {cute} cute shots"
+            );
+            println!(
+            "{match_type:?} Big Head match took {:.1}s: {crowned} kings, {cute} cute shots, {dot} dot shots",
+            game.shared_snapshot().tick as f32 / TICK_RATE as f32
+        );
+        }
+    }
+}

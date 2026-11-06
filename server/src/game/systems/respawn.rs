@@ -158,3 +158,145 @@ pub fn respawn_players(
         }));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn dead_player_respawns_with_full_ammo() {
+        let mut game = duel();
+        let shot = line_up(&mut game, 0.03);
+        let victim = game.entities[&VICTIM];
+        game.world.get_mut::<Weapon>(victim).unwrap().magazine = 3;
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        assert!(!game.world.get::<Vitals>(victim).unwrap().alive);
+        for _ in 0..(RESPAWN_TIME * TICK_RATE as f32) as u32 + 2 {
+            game.tick();
+        }
+        let vitals = game.world.get::<Vitals>(victim).unwrap();
+        assert!(vitals.alive);
+        assert_eq!(vitals.hp, MAX_HP);
+        assert_eq!(weapon(&game, VICTIM), (30, 120, false));
+        assert!(
+            game.world.get::<Pose>(victim).unwrap().x > 40.0,
+            "blue spawns on the +x side"
+        );
+    }
+
+    #[test]
+    fn shield_is_only_restored_by_respawning() {
+        let mut game = with_augment(Aug::Shield);
+        let e = game.entities[&SHOOTER];
+        assert_eq!(game.world.get::<Perks>(e).unwrap().shield_hp, 1200);
+        game.world.get_mut::<Perks>(e).unwrap().shield_hp = 10;
+        for _ in 0..(TICK_RATE * 10) {
+            game.tick();
+        }
+        assert_eq!(
+            game.world.get::<Perks>(e).unwrap().shield_hp,
+            10,
+            "no repair out of combat"
+        );
+
+        {
+            let mut vitals = game.world.get_mut::<Vitals>(e).unwrap();
+            vitals.alive = false;
+            vitals.hp = 0;
+            vitals.respawn_left = 0.01;
+        }
+        game.tick();
+        assert!(game.world.get::<Vitals>(e).unwrap().alive);
+        assert_eq!(
+            game.world.get::<Perks>(e).unwrap().shield_hp,
+            augments::SHIELD_HP
+        );
+    }
+
+    #[test]
+    fn vest_raises_max_hp_to_200_also_after_respawn() {
+        let mut game = with_augment(Aug::Vest);
+        assert_eq!(hp(&game, SHOOTER), 200);
+        let e = game.entities[&SHOOTER];
+        {
+            let mut vitals = game.world.get_mut::<Vitals>(e).unwrap();
+            vitals.alive = false;
+            vitals.hp = 0;
+            vitals.respawn_left = 0.01;
+        }
+        game.tick();
+        assert_eq!(hp(&game, SHOOTER), 200);
+    }
+
+    #[test]
+    fn free_for_all_players_start_on_points_of_their_own_facing_the_middle() {
+        for map in [YARD, pb::MapId::Warehouse] {
+            for seed in 1..=50 {
+                let game = Match::with_rules(
+                    &[],
+                    map,
+                    pb::GameMode::Normal,
+                    pb::MatchType::FreeForAll,
+                    [5, 5],
+                    seed,
+                );
+                let mut taken = Vec::new();
+                for &entity in game.entities.values() {
+                    let point = assert_ffa_spawned(&game, entity);
+                    assert!(
+                        !taken.contains(&point),
+                        "{map:?}, seed {seed}: two start at {point:?}"
+                    );
+                    taken.push(point);
+                }
+                assert_eq!(taken.len(), 2 * TEAM_SIZE);
+            }
+        }
+    }
+
+    #[test]
+    fn free_for_all_players_respawning_on_the_same_tick_get_points_of_their_own() {
+        let humans = [
+            (SHOOTER, "a".into(), NO_TEAM, RIFLE),
+            (VICTIM, "b".into(), NO_TEAM, RIFLE),
+        ];
+        for map in [YARD, pb::MapId::Warehouse] {
+            for seed in 1..=50 {
+                let mut game = Match::with_rules(
+                    &humans,
+                    map,
+                    pb::GameMode::Normal,
+                    pb::MatchType::FreeForAll,
+                    [4, 4],
+                    seed,
+                );
+                // Everyone but the shooter is due back on the next tick.
+                for (&id, &entity) in &game.entities {
+                    if id != SHOOTER {
+                        let mut vitals = game.world.get_mut::<Vitals>(entity).unwrap();
+                        vitals.alive = false;
+                        vitals.hp = 0;
+                        vitals.respawn_left = 0.01;
+                    }
+                }
+                game.tick();
+                let shooter = game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap();
+                let mut taken = vec![(shooter.x, shooter.z)];
+                for (&id, &entity) in &game.entities {
+                    if id == SHOOTER {
+                        continue;
+                    }
+                    assert!(game.world.get::<Vitals>(entity).unwrap().alive);
+                    let point = assert_ffa_spawned(&game, entity);
+                    assert!(
+                        !taken.contains(&point),
+                        "{map:?}, seed {seed}: two at {point:?}"
+                    );
+                    taken.push(point);
+                }
+            }
+        }
+    }
+}

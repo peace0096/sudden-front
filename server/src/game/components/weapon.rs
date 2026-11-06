@@ -159,3 +159,149 @@ impl Weapon {
 
 /// Index of the grenade's slot (4) in `Weapon::holstered`.
 pub const GRENADE_SLOT: usize = 3;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn spawns_with_30_mag_and_120_reserve() {
+        assert_eq!(weapon(&duel(), SHOOTER), (30, 120, false));
+    }
+
+    #[test]
+    fn slots_keep_their_own_ammo() {
+        let mut game = duel();
+        let e = game.entities[&SHOOTER];
+        game.world.get_mut::<Weapon>(e).unwrap().magazine = 17;
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 2,
+                ..cmd(1, 0)
+            }],
+        );
+        game.tick();
+        assert_eq!(weapon(&game, SHOOTER), (12, 36, false));
+        assert_eq!(
+            game.world.get::<Weapon>(e).unwrap().kind,
+            pb::WeaponKind::Pistol
+        );
+
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 3,
+                ..cmd(2, 0)
+            }],
+        );
+        game.tick();
+        assert_eq!(
+            game.world.get::<Weapon>(e).unwrap().kind,
+            pb::WeaponKind::Knife
+        );
+
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 1,
+                ..cmd(3, 0)
+            }],
+        );
+        game.tick();
+        assert_eq!(weapon(&game, SHOOTER), (17, 120, false));
+        assert_eq!(game.world.get::<Weapon>(e).unwrap().kind, RIFLE);
+    }
+
+    #[test]
+    fn switching_abandons_a_reload_and_takes_time_to_draw() {
+        let mut game = duel();
+        let e = game.entities[&SHOOTER];
+        game.world.get_mut::<Weapon>(e).unwrap().magazine = 10;
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                reload: true,
+                ..cmd(1, 0)
+            }],
+        );
+        game.tick();
+        assert!(weapon(&game, SHOOTER).2);
+
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 2,
+                fire: true,
+                ..cmd(2, 0)
+            }],
+        );
+        game.tick();
+        assert_eq!(
+            weapon(&game, SHOOTER),
+            (12, 36, false),
+            "no shot during the draw"
+        );
+
+        for _ in 0..(DRAW_TIME * TICK_RATE as f32) as u32 + 1 {
+            game.tick();
+        }
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                fire: true,
+                ..cmd(3, 0)
+            }],
+        );
+        game.tick();
+        assert_eq!(weapon(&game, SHOOTER).0, 11);
+
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 1,
+                ..cmd(4, 0)
+            }],
+        );
+        game.tick();
+        assert_eq!(
+            weapon(&game, SHOOTER),
+            (10, 120, false),
+            "the reload did not complete"
+        );
+    }
+
+    #[test]
+    fn switching_cannot_skip_a_bolt_cycle() {
+        let mut game = duel();
+        game.select_weapon(SHOOTER, pb::WeaponKind::Sniper);
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                fire: true,
+                ..cmd(1, 0)
+            }],
+        );
+        game.tick();
+        let e = game.entities[&SHOOTER];
+        let before = game.world.get::<Weapon>(e).unwrap().cooldown;
+        assert!(before > DRAW_TIME);
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 2,
+                ..cmd(2, 0)
+            }],
+        );
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 1,
+                ..cmd(3, 0)
+            }],
+        );
+        game.tick();
+        assert!(game.world.get::<Weapon>(e).unwrap().cooldown > DRAW_TIME);
+    }
+}

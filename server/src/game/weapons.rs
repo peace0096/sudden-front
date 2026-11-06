@@ -498,3 +498,150 @@ pub fn random_for_bot(rng: &mut GameRng) -> WeaponKind {
         WeaponKind::Sniper
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::RIFLE;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn weapon_table_matches_the_spec() {
+        use pb::WeaponKind::*;
+        let (rifle, sniper, mg, smg) = (
+            weapons::stats(Rifle),
+            weapons::stats(Sniper),
+            weapons::stats(MachineGun),
+            weapons::stats(Smg),
+        );
+        assert_eq!((rifle.magazine, rifle.reserve), (30, 120));
+        assert_eq!((sniper.magazine, sniper.reserve), (5, 20));
+        assert_eq!((mg.magazine, mg.reserve), (100, 200));
+        assert_eq!((smg.magazine, smg.reserve), (25, 125));
+        // Damage: sniper > machine gun > rifle > SMG.
+        assert!(
+            sniper.damage_body > mg.damage_body
+                && mg.damage_body > rifle.damage_body
+                && rifle.damage_body > smg.damage_body
+        );
+        // Speed: SMG > rifle > sniper > machine gun.
+        assert!(
+            smg.move_speed > rifle.move_speed
+                && rifle.move_speed > sniper.move_speed
+                && sniper.move_speed > mg.move_speed
+        );
+        // Fire rate: machine gun > SMG > rifle > bolt action.
+        assert!(
+            mg.fire_interval < smg.fire_interval
+                && smg.fire_interval < rifle.fire_interval
+                && rifle.fire_interval < sniper.fire_interval
+        );
+        // Hip accuracy: SMG > rifle > sniper > machine gun, and the scope beats all.
+        assert!(
+            smg.spread_still < rifle.spread_still
+                && rifle.spread_still < sniper.spread_still
+                && sniper.spread_still < mg.spread_still
+        );
+        assert!(sniper.scoped_spread_still < smg.spread_still);
+    }
+
+    #[test]
+    fn fire_rates_are_distinct_at_a_30hz_tick() {
+        assert_eq!(shots_in_one_second(pb::WeaponKind::Sniper), 1);
+        assert_eq!(shots_in_one_second(pb::WeaponKind::Rifle), 10);
+        // 800 and 1000 rpm land between whole counts within one second.
+        let smg = shots_in_one_second(pb::WeaponKind::Smg);
+        let mg = shots_in_one_second(pb::WeaponKind::MachineGun);
+        assert!((13..=14).contains(&smg), "smg fired {smg}");
+        assert!((16..=17).contains(&mg), "mg fired {mg}");
+    }
+
+    #[test]
+    fn sidearm_stats_match_the_spec() {
+        use pb::WeaponKind::*;
+        let (rifle, pistol, knife, smg) = (
+            weapons::stats(Rifle),
+            weapons::stats(Pistol),
+            weapons::stats(Knife),
+            weapons::stats(Smg),
+        );
+        assert_eq!((pistol.magazine, pistol.reserve), (12, 36));
+        assert!(pistol.damage_body < rifle.damage_body);
+        assert!(pistol.fire_interval > rifle.fire_interval, "low fire rate");
+        assert!(pistol.move_speed > rifle.move_speed, "slightly high speed");
+        assert!(pistol.spread_still < smg.spread_still, "high accuracy");
+        assert!(knife.damage_body > rifle.damage_body, "high damage");
+        assert!(knife.move_speed > pistol.move_speed && knife.move_speed < smg.move_speed);
+        assert!(knife.melee_range > 0.0);
+    }
+
+    #[test]
+    fn augment_mode_hits_harder_with_the_sniper_and_smg_only() {
+        let hit = |kind, mode| weapons::damage(kind, mode, pb::HitZone::Body);
+        let (normal, augment) = (pb::GameMode::Normal, pb::GameMode::Augment);
+        assert_eq!(hit(Kind::Sniper, normal), 100);
+        assert_eq!(
+            hit(Kind::Sniper, augment),
+            150,
+            "still one body shot at 150 HP"
+        );
+        assert_eq!(hit(Kind::Smg, normal), 24);
+        assert_eq!(hit(Kind::Smg, augment), 28);
+        assert_eq!(hit(Kind::AkimboSmg, augment), 28);
+        assert_eq!(hit(RIFLE, augment), hit(RIFLE, normal));
+        assert!(
+            hit(Kind::Magnum, augment) > 100 && hit(Kind::Magnum, augment) < 150,
+            "a body survives a clean magnum shot"
+        );
+        assert!(weapons::damage(Kind::Magnum, augment, pb::HitZone::Head) > 200);
+    }
+
+    #[test]
+    fn upgraded_pistol_has_more_ammo_and_damage() {
+        let mut game = with_augment(Aug::PistolUpgrade);
+        draw_sidearm(&mut game, SHOOTER);
+        assert_eq!(held(&game, SHOOTER), Kind::PistolPlus);
+        assert_eq!(weapon(&game, SHOOTER), (12, 120, false));
+        assert!(
+            weapons::stats(Kind::PistolPlus).damage_body > weapons::stats(Kind::Pistol).damage_body
+        );
+    }
+
+    #[test]
+    fn akimbo_doubles_magazine_and_fire_rate_only_for_the_smg() {
+        let mut rifle = with_augment(Aug::Akimbo);
+        assert_eq!(held(&rifle, SHOOTER), RIFLE, "needs an SMG");
+        rifle.select_weapon(SHOOTER, Kind::Smg);
+        assert_eq!(held(&rifle, SHOOTER), Kind::AkimboSmg);
+        assert_eq!(
+            weapon(&rifle, SHOOTER).0,
+            weapons::stats(Kind::Smg).magazine * 2
+        );
+
+        let shots = |augment: Aug| {
+            let mut game = with_augment(augment);
+            game.select_weapon(SHOOTER, Kind::Smg);
+            let e = game.entities[&SHOOTER];
+            game.world.get_mut::<Weapon>(e).unwrap().cooldown = 0.0;
+            let yaw = -std::f32::consts::FRAC_PI_2;
+            place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+            place(&mut game, VICTIM, -46.0, -8.0, 0.0);
+            let mut fired = 0;
+            for seq in 1..=30 {
+                game.push_inputs(
+                    SHOOTER,
+                    vec![pb::InputCmd {
+                        fire: true,
+                        yaw,
+                        ..cmd(seq, tick_now(&game))
+                    }],
+                );
+                game.tick();
+                fired += shot_events(&game.shared_snapshot().events);
+            }
+            fired
+        };
+        let (double, single) = (shots(Aug::Akimbo), shots(Aug::SoulDrain));
+        assert!(double >= single * 2 - 1, "akimbo {double}, single {single}");
+    }
+}

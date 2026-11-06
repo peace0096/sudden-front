@@ -26,3 +26,48 @@ pub fn update_perks(rules: Res<Rules>, mut players: Query<(&Pose, &mut Vitals, &
         vitals.hp = (vitals.hp + whole).min(cap);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn rest_heals_only_when_crouched_and_out_of_combat() {
+        let mut game = with_augment(Aug::Rest);
+        let e = game.entities[&SHOOTER];
+        game.world.get_mut::<Vitals>(e).unwrap().hp = 50;
+        game.world.get_mut::<Vitals>(e).unwrap().protect_left = 0.0;
+        let crouch = |game: &mut Match, seq: u32, down: bool| {
+            game.push_inputs(
+                SHOOTER,
+                vec![pb::InputCmd {
+                    crouch: down,
+                    ..cmd(seq, 0)
+                }],
+            );
+            game.tick();
+        };
+        // Standing never heals.
+        for seq in 1..=(TICK_RATE * 5) {
+            crouch(&mut game, seq, false);
+        }
+        assert_eq!(hp(&game, SHOOTER), 50);
+
+        // Fresh from a fight: four seconds must pass first.
+        game.world.get_mut::<Perks>(e).unwrap().idle = 0.0;
+        for seq in 1..=(TICK_RATE * 3) {
+            crouch(&mut game, 1000 + seq, true);
+        }
+        assert_eq!(hp(&game, SHOOTER), 50, "still in combat");
+        for seq in 1..=(TICK_RATE * 3) {
+            crouch(&mut game, 2000 + seq, true);
+        }
+        let healed = hp(&game, SHOOTER);
+        assert!(healed > 50 && healed < 150, "gradual, got {healed}");
+        for seq in 1..=(TICK_RATE * 10) {
+            crouch(&mut game, 3000 + seq, true);
+        }
+        assert_eq!(hp(&game, SHOOTER), 150, "stops at the maximum");
+    }
+}

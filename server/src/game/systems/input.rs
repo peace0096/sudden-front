@@ -100,3 +100,136 @@ pub fn consume_inputs(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn speed_hack_inputs_are_rate_limited() {
+        let mut game = duel();
+        place(&mut game, SHOOTER, -40.0, 0.0, -std::f32::consts::FRAC_PI_2);
+        let flood: Vec<pb::InputCmd> = (1..=30)
+            .map(|seq| pb::InputCmd {
+                forward: true,
+                yaw: -std::f32::consts::FRAC_PI_2,
+                ..cmd(seq, 0)
+            })
+            .collect();
+        game.push_inputs(SHOOTER, flood);
+        game.tick();
+        let pose = *game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap();
+        // At most the budget cap's worth of 1/60 s steps in one tick.
+        assert!(
+            pose.x - -40.0 <= weapons::stats(RIFLE).move_speed * CMD_DT * 4.0 + 1e-3,
+            "moved {}",
+            pose.x + 40.0
+        );
+    }
+
+    #[test]
+    fn nan_view_angles_do_not_corrupt_state() {
+        let mut game = duel();
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                forward: true,
+                yaw: f32::NAN,
+                pitch: f32::INFINITY,
+                ..cmd(1, 0)
+            }],
+        );
+        game.tick();
+        let pose = *game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap();
+        assert!(
+            pose.x.is_finite()
+                && pose.z.is_finite()
+                && pose.yaw.is_finite()
+                && pose.pitch.is_finite()
+        );
+    }
+
+    #[test]
+    fn movement_speed_depends_on_the_weapon() {
+        use pb::WeaponKind::*;
+        let walked = |kind| {
+            let mut game = Match::new(
+                &[(SHOOTER, "a".into(), pb::Team::Red, kind)],
+                YARD,
+                false,
+                5,
+            );
+            let yaw = std::f32::consts::FRAC_PI_2;
+            place(&mut game, SHOOTER, 40.0, -30.0, yaw);
+            let before = game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap().x;
+            for seq in 0..20 {
+                game.push_inputs(
+                    SHOOTER,
+                    vec![pb::InputCmd {
+                        forward: true,
+                        yaw,
+                        ..cmd(seq + 1, 0)
+                    }],
+                );
+                game.tick();
+            }
+            (game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap().x - before).abs()
+        };
+        assert!(walked(Smg) > walked(Rifle));
+        assert!(walked(Rifle) > walked(Sniper));
+        assert!(walked(Sniper) > walked(MachineGun));
+    }
+
+    #[test]
+    fn slot_speed_applies_from_the_command_that_switches() {
+        let walk = |slot: u32| {
+            let mut game = duel();
+            let yaw = std::f32::consts::FRAC_PI_2;
+            place(&mut game, SHOOTER, 40.0, -30.0, yaw);
+            game.push_inputs(
+                SHOOTER,
+                vec![pb::InputCmd {
+                    forward: true,
+                    slot,
+                    yaw,
+                    ..cmd(1, 0)
+                }],
+            );
+            game.tick();
+            40.0 - game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap().x
+        };
+        let expected = weapons::stats(pb::WeaponKind::Knife).move_speed * CMD_DT;
+        assert!((walk(3) - expected).abs() < 1e-3);
+        assert!(walk(3) > walk(1));
+    }
+
+    #[test]
+    fn crouching_halves_speed_and_persists_between_commands() {
+        let mut game = duel();
+        let yaw = std::f32::consts::FRAC_PI_2;
+        place(&mut game, SHOOTER, 40.0, -30.0, yaw);
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                forward: true,
+                yaw,
+                ..crouch_cmd(1, 0)
+            }],
+        );
+        game.tick();
+        let e = game.entities[&SHOOTER];
+        let moved = 40.0 - game.world.get::<Pose>(e).unwrap().x;
+        assert!(
+            (moved - weapons::stats(RIFLE).move_speed * CROUCH_SPEED_FACTOR * CMD_DT).abs() < 1e-3
+        );
+        game.tick();
+        assert!(
+            game.world.get::<Pose>(e).unwrap().crouching,
+            "no new command, so the stance holds"
+        );
+        game.push_inputs(SHOOTER, vec![cmd(2, 0)]);
+        game.tick();
+        assert!(!game.world.get::<Pose>(e).unwrap().crouching);
+    }
+}

@@ -10,7 +10,7 @@ mod resources;
 mod snapshot;
 mod systems;
 #[cfg(test)]
-mod tests;
+mod test_support;
 pub mod weapons;
 
 use crate::pb;
@@ -593,5 +593,526 @@ impl Match {
 
     pub fn winner(&self) -> Option<Winner> {
         self.world.resource::<MatchState>().winner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn a_chosen_kill_target_ends_the_match_there_and_reaches_the_client() {
+        let mut game = duel();
+        game.set_kills_to_win(10);
+        assert_eq!(game.start_message(SHOOTER).config.unwrap().kills_to_win, 10);
+        game.world.resource_mut::<MatchState>().red_score = 9;
+        let shot = line_up(&mut game, 0.03);
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Red)));
+        assert_eq!(game.end_message(8.0).red_score, 10);
+    }
+
+    #[test]
+    fn first_team_to_30_kills_wins_and_the_match_freezes() {
+        let mut game = duel();
+        game.world.resource_mut::<MatchState>().red_score = KILLS_TO_WIN - 1;
+        let shot = line_up(&mut game, 0.03);
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Red)));
+        let end = game.end_message(8.0);
+        assert_eq!((end.winner, end.winner_id), (pb::Team::Red as i32, 0));
+        assert_eq!(end.red_score, KILLS_TO_WIN);
+        let frozen = tick_now(&game);
+        game.tick();
+        assert_eq!(tick_now(&game), frozen);
+    }
+
+    #[test]
+    fn fill_bots_makes_it_five_versus_five() {
+        let mut game = Match::new(
+            &[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)],
+            YARD,
+            true,
+            3,
+        );
+        let roster = game.roster();
+        assert_eq!(roster.len(), 10);
+        assert_eq!(
+            roster
+                .iter()
+                .filter(|r| r.team == pb::Team::Red as i32)
+                .count(),
+            5
+        );
+        assert_eq!(roster.iter().filter(|r| r.is_bot).count(), 9);
+    }
+
+    #[test]
+    fn each_team_gets_as_many_bots_as_it_is_given() {
+        // One human on red, then two bots for red and three for blue.
+        let humans = [(SHOOTER, "a".into(), pb::Team::Red, RIFLE)];
+        let mut game = Match::with_mode(&humans, YARD, pb::GameMode::Normal, [2, 3], 3);
+        let roster = game.roster();
+        let on = |team: pb::Team, bots: bool| {
+            roster
+                .iter()
+                .filter(|r| r.team == team as i32 && r.is_bot == bots)
+                .count()
+        };
+        assert_eq!((on(pb::Team::Red, false), on(pb::Team::Red, true)), (1, 2));
+        assert_eq!(
+            (on(pb::Team::Blue, false), on(pb::Team::Blue, true)),
+            (0, 3)
+        );
+        assert_eq!(roster.len(), 6);
+    }
+
+    #[test]
+    fn a_leaving_player_is_not_replaced() {
+        let mut game = Match::new(
+            &[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)],
+            YARD,
+            true,
+            3,
+        );
+        let roster = game.remove_player(SHOOTER);
+        // The seat stays empty: nine bots are left, four of them on the leaver's team.
+        assert_eq!(roster.len(), 9);
+        assert!(roster.iter().all(|r| r.is_bot));
+        assert_eq!(
+            roster
+                .iter()
+                .filter(|r| r.team == pb::Team::Red as i32)
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn a_team_left_with_nobody_forfeits_the_match() {
+        // Blue is only its human, so with them gone red wins at once, with no kill scored.
+        let mut game = duel_with_bots([2, 0], pb::GameMode::Normal);
+        assert_eq!(game.winner(), None);
+        game.remove_player(VICTIM);
+        assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Red)));
+        let end = game.end_message(8.0);
+        assert_eq!(
+            (end.winner, end.red_score, end.blue_score),
+            (pb::Team::Red as i32, 0, 0)
+        );
+        // It is over: the clock no longer runs.
+        let frozen = tick_now(&game);
+        game.tick();
+        assert_eq!(tick_now(&game), frozen);
+    }
+
+    #[test]
+    fn a_forfeit_ends_a_match_that_is_still_choosing_augments() {
+        let mut game = duel_with_bots([0, 0], pb::GameMode::Augment);
+        assert!(
+            game.world.resource::<MatchState>().freeze_left > 0.0,
+            "still frozen before play"
+        );
+        game.remove_player(SHOOTER);
+        assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Blue)));
+    }
+
+    #[test]
+    fn a_team_that_still_has_a_bot_does_not_forfeit() {
+        let mut game = duel_with_bots([1, 1], pb::GameMode::Normal);
+        game.remove_player(VICTIM);
+        assert_eq!(game.winner(), None);
+        // The bots carry on; the empty seat does not stop or crash the match.
+        for _ in 0..(10 * TICK_RATE) {
+            game.tick();
+        }
+        assert_eq!(game.roster().len(), 3);
+        assert_eq!(game.winner(), None);
+    }
+
+    #[test]
+    fn a_forfeit_does_not_overwrite_a_result_already_in() {
+        let mut game = duel_with_bots([0, 0], pb::GameMode::Normal);
+        game.world.resource_mut::<MatchState>().winner = Some(Winner::Team(pb::Team::Red));
+        game.remove_player(SHOOTER);
+        assert_eq!(game.winner(), Some(Winner::Team(pb::Team::Red)));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "would seat 6 players")]
+    fn a_team_cannot_be_given_more_than_five_players() {
+        let humans = [(SHOOTER, "a".into(), pb::Team::Red, RIFLE)];
+        Match::with_mode(&humans, YARD, pb::GameMode::Normal, [5, 0], 3);
+    }
+
+    #[test]
+    fn weapon_change_is_immediate_under_protection_otherwise_next_spawn() {
+        let mut game = duel();
+        game.select_weapon(SHOOTER, pb::WeaponKind::Smg);
+        assert_eq!(weapon(&game, SHOOTER), (25, 125, false));
+
+        game.world
+            .get_mut::<Vitals>(game.entities[&SHOOTER])
+            .unwrap()
+            .protect_left = 0.0;
+        game.select_weapon(SHOOTER, pb::WeaponKind::MachineGun);
+        assert_eq!(
+            weapon(&game, SHOOTER).0,
+            25,
+            "keeps the gun in hand mid-fight"
+        );
+
+        let entity = game.entities[&SHOOTER];
+        {
+            let mut v = game.world.get_mut::<Vitals>(entity).unwrap();
+            v.alive = false;
+            v.respawn_left = 0.01;
+        }
+        game.tick();
+        assert_eq!(weapon(&game, SHOOTER), (100, 200, false));
+    }
+
+    #[test]
+    fn normal_mode_is_unchanged_by_augments() {
+        let mut game = duel();
+        assert_eq!(hp(&game, SHOOTER), MAX_HP);
+        let snapshot = game.shared_snapshot();
+        assert_eq!(snapshot.freeze_left, 0.0);
+        let mut personal = snapshot;
+        game.fill_personal(SHOOTER, &mut personal);
+        assert!(personal.offered.is_empty());
+        game.pick_augment(SHOOTER, Aug::Missile);
+        assert_eq!(held(&game, SHOOTER), RIFLE);
+    }
+
+    #[test]
+    fn augment_mode_starts_with_150_hp_and_a_5_second_wait() {
+        let mut game = augment_duel();
+        assert_eq!(hp(&game, SHOOTER), 150);
+        for id in [SHOOTER, VICTIM] {
+            let card = game
+                .world
+                .get::<AugmentOffer>(game.entities[&id])
+                .unwrap()
+                .offered[0];
+            game.pick_augment(id, card);
+        }
+        let start = game.world.get::<Pose>(game.entities[&SHOOTER]).unwrap().x;
+        let total = (augments::AUGMENT_WAIT * TICK_RATE as f32).round() as u32;
+        for seq in 1..total {
+            let yaw = 0.3;
+            game.push_inputs(
+                SHOOTER,
+                vec![pb::InputCmd {
+                    forward: true,
+                    fire: true,
+                    yaw,
+                    ..cmd(seq, 0)
+                }],
+            );
+            game.tick();
+        }
+        let e = game.entities[&SHOOTER];
+        assert_eq!(
+            game.world.get::<Pose>(e).unwrap().x,
+            start,
+            "no moving while waiting"
+        );
+        assert_eq!(
+            game.world.get::<Pose>(e).unwrap().yaw,
+            0.3,
+            "aiming still works"
+        );
+        assert_eq!(weapon(&game, SHOOTER).0, 30, "no firing while waiting");
+        let mut personal = game.shared_snapshot();
+        game.fill_personal(SHOOTER, &mut personal);
+        assert_eq!(
+            personal.last_input_seq,
+            total - 1,
+            "inputs are still acknowledged"
+        );
+        assert!(personal.freeze_left > 0.0);
+        // Ending the choice takes a tick, and rounding can leave the wait one more.
+        game.push_inputs(SHOOTER, vec![]);
+        game.tick();
+        game.tick();
+        game.tick();
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                forward: true,
+                yaw: 1.5,
+                ..cmd(total, 0)
+            }],
+        );
+        game.tick();
+        assert_ne!(
+            game.world.get::<Pose>(e).unwrap().x,
+            start,
+            "moves once the wait is over"
+        );
+    }
+
+    #[test]
+    fn each_card_can_be_swapped_once_for_one_not_seen_yet() {
+        for seed in 1..200 {
+            let mut game = Match::with_mode(
+                &[
+                    (SHOOTER, "a".into(), pb::Team::Red, RIFLE),
+                    (VICTIM, "b".into(), pb::Team::Blue, RIFLE),
+                ],
+                YARD,
+                pb::GameMode::Augment,
+                [0, 0],
+                seed,
+            );
+            let e = game.entities[&SHOOTER];
+            let mut seen = game.world.get::<AugmentOffer>(e).unwrap().offered.clone();
+            assert_eq!(seen.len(), 3);
+            assert!(
+                seen[0] != seen[1] && seen[1] != seen[2] && seen[0] != seen[2],
+                "{seen:?}"
+            );
+
+            for slot in 0..3 {
+                let before = game.world.get::<AugmentOffer>(e).unwrap().offered.clone();
+                game.refresh_augments(SHOOTER, slot);
+                let after = game.world.get::<AugmentOffer>(e).unwrap().offered.clone();
+                for i in 0..3 {
+                    if i == slot as usize {
+                        assert!(!seen.contains(&after[i]), "{seen:?} {after:?}");
+                    } else {
+                        assert_eq!(after[i], before[i], "only the chosen card changes");
+                    }
+                }
+                seen.push(after[slot as usize]);
+                game.refresh_augments(SHOOTER, slot);
+                assert_eq!(
+                    game.world.get::<AugmentOffer>(e).unwrap().offered,
+                    after,
+                    "once per card"
+                );
+            }
+            let before = game.world.get::<AugmentOffer>(e).unwrap().offered.clone();
+            game.refresh_augments(SHOOTER, 3);
+            assert_eq!(game.world.get::<AugmentOffer>(e).unwrap().offered, before);
+        }
+    }
+
+    #[test]
+    fn choosing_takes_15_seconds_and_the_5_second_wait_comes_after() {
+        let ticks = |seconds: f32| (seconds * TICK_RATE as f32).round() as u32;
+        let mut game = augment_duel();
+        let e = game.entities[&SHOOTER];
+        for _ in 0..ticks(augments::AUGMENT_PICK) - 1 {
+            game.tick();
+        }
+        assert_eq!(
+            game.world.get::<Perks>(e).unwrap().augment,
+            Aug::Unspecified,
+            "still choosing"
+        );
+        assert_eq!(
+            game.world.resource::<MatchState>().freeze_left,
+            augments::AUGMENT_WAIT,
+            "the wait hasn't begun"
+        );
+        let card = game.world.get::<AugmentOffer>(e).unwrap().offered[1];
+        game.pick_augment(SHOOTER, card);
+        game.tick();
+        assert_eq!(
+            game.world.get::<Perks>(e).unwrap().augment,
+            card,
+            "a late choice stands"
+        );
+        assert_ne!(
+            game.world
+                .get::<Perks>(game.entities[&VICTIM])
+                .unwrap()
+                .augment,
+            Aug::Unspecified,
+            "time chose"
+        );
+        assert!(game.world.resource::<MatchState>().freeze_left > 0.0);
+        for _ in 0..ticks(augments::AUGMENT_WAIT) + 1 {
+            game.tick();
+        }
+        let snapshot = game.shared_snapshot();
+        assert_eq!(snapshot.freeze_left, 0.0);
+        assert!(snapshot.clock < 0.1, "the clock starts with the fight");
+        game.tick();
+        assert!(game.shared_snapshot().clock > 0.0);
+    }
+
+    #[test]
+    fn everyone_choosing_early_skips_to_the_wait() {
+        let mut game = augment_duel();
+        for id in [SHOOTER, VICTIM] {
+            let card = game
+                .world
+                .get::<AugmentOffer>(game.entities[&id])
+                .unwrap()
+                .offered[0];
+            game.pick_augment(id, card);
+        }
+        game.tick();
+        assert_eq!(game.world.resource::<MatchState>().pick_left, 0.0);
+        game.tick();
+        assert!(game.world.resource::<MatchState>().freeze_left < augments::AUGMENT_WAIT);
+    }
+
+    #[test]
+    fn double_time_applies_both_augments() {
+        let mut game = with_augment(Aug::DoubleTime);
+        let e = game.entities[&SHOOTER];
+        assert_eq!(game.world.get::<Perks>(e).unwrap().active.len(), 2);
+        // Both effects really work: a vest and a magnum at once.
+        game.world.get_mut::<Perks>(e).unwrap().active = vec![Aug::Vest, Aug::Magnum];
+        {
+            let mut vitals = game.world.get_mut::<Vitals>(e).unwrap();
+            vitals.alive = false;
+            vitals.hp = 0;
+            vitals.respawn_left = 0.01;
+        }
+        game.tick();
+        assert_eq!(hp(&game, SHOOTER), 200);
+        draw_sidearm(&mut game, SHOOTER);
+        assert_eq!(held(&game, SHOOTER), Kind::Magnum);
+    }
+
+    #[test]
+    fn only_a_card_on_offer_can_be_picked_and_time_picks_for_you() {
+        let mut game = augment_duel();
+        let e = game.entities[&SHOOTER];
+        let offered = game.world.get::<AugmentOffer>(e).unwrap().offered.clone();
+        let absent = [Aug::InfiniteAmmo, Aug::SoulDrain, Aug::Missile, Aug::Rest]
+            .into_iter()
+            .find(|a| !offered.contains(a))
+            .unwrap();
+        game.pick_augment(SHOOTER, absent);
+        assert_eq!(
+            game.world.get::<Perks>(e).unwrap().augment,
+            Aug::Unspecified
+        );
+
+        game.pick_augment(SHOOTER, offered[1]);
+        assert_eq!(game.world.get::<Perks>(e).unwrap().augment, offered[1]);
+
+        for _ in
+            0..((augments::AUGMENT_PICK + augments::AUGMENT_WAIT) * TICK_RATE as f32) as u32 + 2
+        {
+            game.tick();
+        }
+        let v = game.entities[&VICTIM];
+        let victim_pick = game.world.get::<Perks>(v).unwrap().augment;
+        assert_ne!(
+            victim_pick,
+            Aug::Unspecified,
+            "the timer chose for the idle player"
+        );
+        assert_eq!(
+            game.world.get::<Perks>(e).unwrap().augment,
+            offered[1],
+            "a choice stands"
+        );
+    }
+
+    #[test]
+    fn bots_choose_at_random() {
+        let mut chosen = std::collections::HashSet::new();
+        for seed in 1..40 {
+            // The human on red, and each team filled to five with bots.
+            let mut game = Match::with_mode(
+                &[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)],
+                YARD,
+                pb::GameMode::Augment,
+                [4, 5],
+                seed,
+            );
+            let mut query = game.world.query::<(&Player, &Perks)>();
+            for (player, perks) in query.iter(&game.world) {
+                if player.is_bot {
+                    assert_ne!(perks.augment, Aug::Unspecified);
+                    chosen.insert(perks.augment as i32);
+                }
+            }
+        }
+        assert!(chosen.len() >= 12, "only saw {chosen:?}");
+    }
+
+    #[test]
+    fn a_weapon_pick_cant_smuggle_in_augment_weapons() {
+        let mut game = duel();
+        game.select_weapon(SHOOTER, Kind::Missile);
+        assert_eq!(held(&game, SHOOTER), RIFLE);
+        let mut rpg = with_augment(Aug::Missile);
+        rpg.select_weapon(SHOOTER, Kind::Sniper);
+        assert_eq!(held(&rpg, SHOOTER), Kind::Missile);
+    }
+
+    #[test]
+    fn full_augment_matches_run_clean() {
+        for seed in 1..=8 {
+            // The human on red, and each team filled to five with bots.
+            let mut game = Match::with_mode(
+                &[(SHOOTER, "a".into(), pb::Team::Red, RIFLE)],
+                YARD,
+                pb::GameMode::Augment,
+                [4, 5],
+                seed,
+            );
+            for _ in 0..(TICK_RATE * 300) {
+                game.tick();
+                let mut query = game.world.query::<(&Vitals, &Weapon, &Perks)>();
+                for (vitals, weapon, perks) in query.iter(&game.world) {
+                    assert!(vitals.hp <= augments::VEST_MAX_HP && vitals.hp >= 0);
+                    assert!(perks.shield_hp >= 0 && perks.shield_hp <= augments::SHIELD_HP);
+                    assert!(weapon.magazine <= weapons::stats(weapon.kind).magazine.max(1));
+                }
+                if game.winner().is_some() {
+                    break;
+                }
+            }
+            assert!(game.winner().is_some(), "seed {seed} never finished");
+        }
+    }
+
+    #[test]
+    fn a_free_for_all_left_with_one_player_is_theirs() {
+        let mut game = ffa_duel();
+        game.remove_player(VICTIM);
+        assert_eq!(game.winner(), Some(Winner::Player(SHOOTER)));
+        let end = game.end_message(8.0);
+        assert_eq!(
+            (end.winner, end.winner_id, end.red_score, end.blue_score),
+            (NO_TEAM as i32, SHOOTER, 0, 0)
+        );
+    }
+
+    #[test]
+    fn a_free_for_all_with_a_bot_left_goes_on() {
+        let mut game = ffa_with_bots(1, pb::GameMode::Normal);
+        game.remove_player(VICTIM);
+        assert_eq!(game.winner(), None, "the shooter and the bot play on");
+        for _ in 0..(5 * TICK_RATE) {
+            game.tick();
+        }
+        assert_eq!(game.roster().len(), 2);
+        assert_eq!(game.winner(), None);
+    }
+
+    #[test]
+    fn a_free_for_all_forfeit_ends_a_match_that_is_still_choosing_augments() {
+        let mut game = ffa_with_bots(0, pb::GameMode::Augment);
+        assert!(
+            game.world.resource::<MatchState>().pick_left > 0.0,
+            "still choosing"
+        );
+        game.remove_player(SHOOTER);
+        assert_eq!(game.winner(), Some(Winner::Player(VICTIM)));
     }
 }

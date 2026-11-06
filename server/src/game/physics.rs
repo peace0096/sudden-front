@@ -250,3 +250,150 @@ pub fn line_clear(boxes: &[MapBox], from: [f32; 3], to: [f32; 3]) -> bool {
     let dir = [d[0] / len, d[1] / len, d[2] / len];
     ray_world(boxes, from, dir, len).is_none()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn walls_stop_movement() {
+        let map = build_map(YARD).data;
+        let (mut x, mut z) = (-20.0, -3.0);
+        for _ in 0..200 {
+            step_move(&map.boxes, &mut x, &mut z, 0.0, 0.0, -0.1);
+        }
+        // The loading dock's front edge is at z = -5.4.
+        assert!((z - (-5.4 + PLAYER_HALF_WIDTH)).abs() < 1e-3, "z = {z}");
+    }
+
+    #[test]
+    fn a_jump_rises_about_a_metre_and_a_third_and_comes_back_down() {
+        let (mut y, mut vy) = (0.0f32, 0.0f32);
+        step_vertical(&[], 0.0, 0.0, &mut y, &mut vy, true);
+        let (mut apex, mut steps) = (y, 1);
+        while y > 0.0 {
+            step_vertical(&[], 0.0, 0.0, &mut y, &mut vy, false);
+            apex = apex.max(y);
+            steps += 1;
+            assert!(steps < 200, "never landed");
+        }
+        assert!((1.3..1.4).contains(&apex), "apex {apex}");
+        assert_eq!((y, vy), (0.0, 0.0));
+        // About three quarters of a second in the air.
+        assert!((40..50).contains(&steps), "{steps} steps");
+    }
+
+    #[test]
+    fn a_jump_clears_a_crate_lands_on_it_and_walking_off_falls_to_the_floor() {
+        let boxes = [crate_box()];
+        let (mut x, mut z, mut y, mut vy) = (-1.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let step = 5.0 * CMD_DT;
+        let mut stood = false;
+        for i in 0..120 {
+            step_move(&boxes, &mut x, &mut z, y, step, 0.0);
+            step_vertical(&boxes, x, z, &mut y, &mut vy, i == 0);
+            // Over the crate (with the collision's 1 mm of slack) the feet are never below its top.
+            let over = x + PLAYER_HALF_WIDTH - 0.001 > 0.0 && x - PLAYER_HALF_WIDTH + 0.001 < 1.2;
+            assert!(
+                !over || y >= 1.19,
+                "step {i}: inside the crate at x {x}, y {y}"
+            );
+            stood |= over && y == 1.2 && vy == 0.0;
+        }
+        assert!(stood, "never stood on the crate");
+        assert!(
+            x > 1.2 + PLAYER_HALF_WIDTH && y == 0.0 && vy == 0.0,
+            "x {x}, y {y}, vy {vy}"
+        );
+    }
+
+    #[test]
+    fn a_crate_too_high_to_clear_stops_the_player_at_its_side() {
+        let tall = pb::MapBox {
+            max_y: 2.6,
+            ..crate_box()
+        };
+        let (mut x, mut z, mut y, mut vy) = (-1.0f32, 0.0f32, 0.0f32, 0.0f32);
+        for i in 0..90 {
+            step_move(&[tall], &mut x, &mut z, y, 5.0 * CMD_DT, 0.0);
+            step_vertical(&[tall], x, z, &mut y, &mut vy, i == 0);
+        }
+        assert!((x - (0.0 - PLAYER_HALF_WIDTH)).abs() < 1e-4, "x {x}");
+        assert_eq!((y, vy), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_box_overhead_stops_a_jump() {
+        // The warehouse vent tunnel's lid starts 2.3 m up: a head 1.8 m up has 0.5 m to rise.
+        let lid = pb::MapBox {
+            min_x: -1.0,
+            max_x: 1.0,
+            min_y: 2.3,
+            max_y: 2.6,
+            min_z: -1.0,
+            max_z: 1.0,
+            ..Default::default()
+        };
+        let (mut y, mut vy) = (0.0f32, 0.0f32);
+        let mut apex = 0.0f32;
+        for i in 0..60 {
+            step_vertical(&[lid], 0.0, 0.0, &mut y, &mut vy, i == 0);
+            apex = apex.max(y);
+        }
+        assert!((apex - 0.5).abs() < 1e-4, "apex {apex}");
+        assert_eq!((y, vy), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_jump_takes_off_only_from_the_ground() {
+        // Holding jump in the air adds nothing: the next jump waits for the landing.
+        let (mut y, mut vy) = (0.0f32, 0.0f32);
+        let mut apex = 0.0f32;
+        for _ in 0..40 {
+            step_vertical(&[], 0.0, 0.0, &mut y, &mut vy, true);
+            apex = apex.max(y);
+        }
+        assert!(apex < 1.4, "apex {apex}");
+    }
+
+    #[test]
+    fn sliding_along_any_wall_never_teleports() {
+        // Rounding can leave a player at `wall + radius` looking a hair inside the
+        // wall. Moving sideways must not treat that as a collision.
+        for id in [pb::MapId::SupplyYard, pb::MapId::Warehouse] {
+            let map = build_map(id).data;
+            for kind in weapons::ALL {
+                let step = weapons::stats(kind).move_speed * CMD_DT;
+                for b in map.boxes.iter().filter(|b| blocks(b)) {
+                    // Each of the four faces: (start x, start z, along x, along z, into x, into z).
+                    let r = PLAYER_HALF_WIDTH;
+                    let faces = [
+                        (b.min_x, b.max_z + r, step, 0.0, 0.0, -step),
+                        (b.max_x, b.min_z - r, -step, 0.0, 0.0, step),
+                        (b.min_x - r, b.min_z, 0.0, step, step, 0.0),
+                        (b.max_x + r, b.max_z, 0.0, -step, -step, 0.0),
+                    ];
+                    for (mut x, mut z, along_x, along_z, into_x, into_z) in faces {
+                        for _ in 0..60 {
+                            let (old_x, old_z) = (x, z);
+                            step_move(
+                                &map.boxes,
+                                &mut x,
+                                &mut z,
+                                0.0,
+                                along_x + into_x,
+                                along_z + into_z,
+                            );
+                            let moved = (x - old_x).abs().max((z - old_z).abs());
+                            assert!(
+                                moved <= step * 1.5,
+                                "{id:?}: jumped {moved} from ({old_x},{old_z}) to ({x},{z})"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -166,3 +166,183 @@ pub(super) fn fly_grenades(
         true
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn slot_4_holds_one_grenade_a_life_and_a_throw_goes_back_to_the_gun() {
+        let mut game = duel();
+        let yaw = -std::f32::consts::FRAC_PI_2;
+        place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+        assert_eq!(grenades_left(&mut game, SHOOTER), 1);
+
+        let seq = draw_grenade(&mut game, SHOOTER, 1);
+        assert_eq!(held(&game, SHOOTER), Kind::Grenade);
+        assert_eq!(weapon(&game, SHOOTER), (1, 0, false));
+        // A grenade's stats come to the client like any weapon's, for its name and the throw's timing.
+        assert!(weapons::all_stats()
+            .iter()
+            .any(|w| w.kind == Kind::Grenade as i32 && w.magazine == 1 && w.splash_radius > 0.0));
+
+        let events = throw(&mut game, SHOOTER, seq, yaw, 0.2);
+        assert_eq!(thrown(&events), 1);
+        assert_eq!(game.shared_snapshot().grenades.len(), 1);
+        assert_eq!(grenades_left(&mut game, SHOOTER), 0);
+        // Straight back to the rifle and its magazine, which has to be drawn before it fires.
+        assert_eq!(held(&game, SHOOTER), RIFLE);
+        assert_eq!(weapon(&game, SHOOTER), (30, 120, false));
+        let w = game.world.get::<Weapon>(game.entities[&SHOOTER]).unwrap();
+        assert!(
+            w.cooldown >= weapons::stats(Kind::Grenade).fire_interval - 0.05,
+            "cooldown {}",
+            w.cooldown
+        );
+
+        // With none left, slot 4 is nothing to switch to.
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 4,
+                ..cmd(seq + 1, tick_now(&game))
+            }],
+        );
+        game.tick();
+        assert_eq!(held(&game, SHOOTER), RIFLE);
+    }
+
+    #[test]
+    fn a_throw_goes_back_to_the_slot_held_before_the_grenade() {
+        let mut game = duel();
+        let yaw = -std::f32::consts::FRAC_PI_2;
+        place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                slot: 3,
+                ..cmd(1, tick_now(&game))
+            }],
+        );
+        game.tick();
+        assert_eq!(held(&game, SHOOTER), Kind::Knife);
+        let seq = draw_grenade(&mut game, SHOOTER, 2);
+        throw(&mut game, SHOOTER, seq, yaw, 0.2);
+        assert_eq!(held(&game, SHOOTER), Kind::Knife);
+    }
+
+    #[test]
+    fn a_grenade_goes_off_three_seconds_after_the_throw_where_it_lies() {
+        let mut game = duel();
+        let yaw = -std::f32::consts::FRAC_PI_2;
+        place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+        place(&mut game, VICTIM, 40.0, 0.0, 0.0);
+        let seq = draw_grenade(&mut game, SHOOTER, 1);
+        throw(&mut game, SHOOTER, seq, yaw, 0.3);
+        let thrown_at = tick_now(&game) - 1;
+        let mut last = game.shared_snapshot().grenades[0];
+        let went_off = loop {
+            game.tick();
+            let snapshot = game.shared_snapshot();
+            if let Some(blast) = explosions(&snapshot.events).pop() {
+                assert!(snapshot.grenades.is_empty());
+                break (tick_now(&game) - 1, blast);
+            }
+            last = snapshot.grenades[0];
+            assert!(tick_now(&game) < thrown_at + 200, "never went off");
+        };
+        let (tick, blast) = went_off;
+        assert_eq!(
+            tick - thrown_at,
+            (GRENADE_FUSE * TICK_RATE as f32) as u32,
+            "fuse"
+        );
+        // Thrown forward, it came to rest on the floor before going off, where it lay.
+        assert!(last.x > -40.0, "landed at {}", last.x);
+        assert_eq!(
+            (last.vx, last.vy, last.vz),
+            (0.0, 0.0, 0.0),
+            "still moving: {last:?}"
+        );
+        assert!(
+            (last.y - GRENADE_RADIUS).abs() < 0.01,
+            "not on the floor: {}",
+            last.y
+        );
+        assert_eq!((blast.x, blast.y, blast.z), (last.x, last.y, last.z));
+    }
+
+    #[test]
+    fn a_grenade_bounces_off_a_wall_and_settles_on_the_floor_never_inside_anything() {
+        let wall = pb::MapBox {
+            min_x: 2.0,
+            max_x: 3.0,
+            min_y: 0.0,
+            max_y: 3.0,
+            min_z: -5.0,
+            max_z: 5.0,
+            ..Default::default()
+        };
+        let (mut pos, mut vel) = ([0.0f32, 1.4, 0.0], [12.0f32, 2.0, 1.0]);
+        let mut back = false;
+        for tick in 0..(4 * TICK_RATE) {
+            roll_grenade(&[wall], 50.0, 50.0, &mut pos, &mut vel);
+            assert!(
+                pos[0] < wall.min_x - GRENADE_RADIUS + 0.01,
+                "tick {tick}: in the wall at {pos:?}"
+            );
+            assert!(
+                pos[1] > GRENADE_RADIUS - 0.01,
+                "tick {tick}: under the floor at {pos:?}"
+            );
+            back |= vel[0] < 0.0;
+        }
+        assert!(back, "never bounced off the wall");
+        assert!(pos[0] < 2.0, "{pos:?}");
+        assert_eq!(vel, [0.0; 3], "still rolling");
+        assert!((pos[1] - GRENADE_RADIUS).abs() < 0.01, "{pos:?}");
+    }
+
+    #[test]
+    fn a_grenade_lobbed_over_the_perimeter_wall_stays_in_the_map() {
+        let map = build_map(YARD).data;
+        let (mut pos, mut vel) = ([47.0f32, 1.4, 0.0], [9.0f32, 15.0, 0.0]);
+        let mut back = false;
+        for tick in 0..(4 * TICK_RATE) {
+            roll_grenade(&map.boxes, map.half_x, map.half_z, &mut pos, &mut vel);
+            assert!(
+                pos[0] < map.half_x - GRENADE_RADIUS + 0.01,
+                "tick {tick}: out of the map at {pos:?}"
+            );
+            back |= vel[0] < 0.0;
+        }
+        assert!(back, "never turned back at the map's edge");
+    }
+
+    #[test]
+    fn a_grenade_comes_back_with_each_life() {
+        let mut game = duel();
+        let yaw = -std::f32::consts::FRAC_PI_2;
+        place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+        let seq = draw_grenade(&mut game, SHOOTER, 1);
+        throw(&mut game, SHOOTER, seq, yaw, 0.2);
+        assert_eq!(grenades_left(&mut game, SHOOTER), 0);
+        {
+            let mut vitals = game
+                .world
+                .get_mut::<Vitals>(game.entities[&SHOOTER])
+                .unwrap();
+            vitals.alive = false;
+            vitals.respawn_left = TICK_DT;
+        }
+        game.tick();
+        assert!(
+            game.world
+                .get::<Vitals>(game.entities[&SHOOTER])
+                .unwrap()
+                .alive
+        );
+        assert_eq!(grenades_left(&mut game, SHOOTER), 1);
+    }
+}

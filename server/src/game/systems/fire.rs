@@ -536,3 +536,761 @@ pub fn fire_weapons(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn a_player_in_the_air_is_hit_where_they_are() {
+        // The victim 4 m away hangs 0.6 m up: a shot at that height plus a standing head's middle
+        // (1.63 m) is a headshot, one at a standing head misses over their shoulder.
+        let shoot = |raised: f32, aim_height: f32| -> i32 {
+            let mut game = duel();
+            let yaw = -std::f32::consts::FRAC_PI_2;
+            place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+            place(&mut game, VICTIM, -42.0, 0.0, 0.0);
+            game.world
+                .get_mut::<Pose>(game.entities[&VICTIM])
+                .unwrap()
+                .y = raised;
+            game.tick(); // History holds the raised victim.
+            let shot = pb::InputCmd {
+                fire: true,
+                yaw,
+                pitch: (aim_height - EYE_HEIGHT).atan2(4.0),
+                ..cmd(1, tick_now(&game))
+            };
+            game.push_inputs(SHOOTER, vec![shot]);
+            game.tick();
+            100 - hp(&game, VICTIM)
+        };
+        assert_eq!(shoot(0.6, 0.6 + 1.63), weapons::stats(RIFLE).damage_head);
+        assert_eq!(shoot(0.6, 0.6 + 0.4), weapons::stats(RIFLE).damage_legs);
+        assert_eq!(shoot(0.0, 0.6 + 1.63), 0, "over a standing player's head");
+    }
+
+    #[test]
+    fn firing_consumes_ammo_at_fire_rate_and_reload_refills_from_reserve() {
+        let mut game = duel();
+        place(&mut game, SHOOTER, -45.0, 28.0, std::f32::consts::PI);
+        // Hold fire for one second: 600 rpm means 10 shots at most.
+        for seq in 0..TICK_RATE {
+            game.push_inputs(
+                SHOOTER,
+                vec![pb::InputCmd {
+                    fire: true,
+                    ..cmd(seq * 2 + 1, tick_now(&game))
+                }],
+            );
+            game.tick();
+        }
+        let (mag, reserve, _) = weapon(&game, SHOOTER);
+        assert_eq!(mag, 20);
+        assert_eq!(reserve, 120);
+
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                reload: true,
+                ..cmd(100, 0)
+            }],
+        );
+        game.tick();
+        assert!(weapon(&game, SHOOTER).2, "reload should have started");
+        // Can't fire during the reload.
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                fire: true,
+                ..cmd(101, 0)
+            }],
+        );
+        game.tick();
+        assert_eq!(weapon(&game, SHOOTER).0, 20);
+
+        for _ in 0..(weapons::stats(RIFLE).reload_time * TICK_RATE as f32) as u32 + 2 {
+            game.tick();
+        }
+        assert_eq!(weapon(&game, SHOOTER), (30, 110, false));
+    }
+
+    #[test]
+    fn cannot_fire_on_empty_magazine() {
+        let mut game = duel();
+        game.world
+            .get_mut::<Weapon>(game.entities[&SHOOTER])
+            .unwrap()
+            .magazine = 0;
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                fire: true,
+                ..cmd(1, 0)
+            }],
+        );
+        game.tick();
+        assert_eq!(weapon(&game, SHOOTER).0, 0);
+        let shot = game
+            .shared_snapshot()
+            .events
+            .iter()
+            .any(|e| matches!(e.event, Some(pb::game_event::Event::Shot(_))));
+        assert!(!shot);
+    }
+
+    #[test]
+    fn headshot_kills_and_scores_for_the_team() {
+        let mut game = duel();
+        let shot = line_up(&mut game, 0.03);
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        let snapshot = game.shared_snapshot();
+        assert_eq!(snapshot.red_score, 1);
+        let kill = snapshot.events.iter().find_map(|e| match &e.event {
+            Some(pb::game_event::Event::Kill(k)) => Some(k.clone()),
+            _ => None,
+        });
+        let kill = kill.expect("kill event");
+        assert!(kill.headshot);
+        assert_eq!(kill.victim_id, VICTIM);
+        let victim = game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap();
+        assert!(!victim.alive);
+    }
+
+    #[test]
+    fn body_shot_does_partial_damage() {
+        let mut game = duel();
+        let shot = line_up(&mut game, -0.1);
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        let victim = game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap();
+        assert_eq!(victim.hp, MAX_HP - weapons::stats(RIFLE).damage_body);
+        assert!(victim.alive);
+    }
+
+    #[test]
+    fn walls_block_bullets() {
+        let mut game = duel();
+        // Either side of the walk-through warehouse's solid north wall.
+        let yaw = std::f32::consts::PI;
+        place(&mut game, SHOOTER, -31.0, 5.0, yaw);
+        place(&mut game, VICTIM, -31.0, 8.0, 0.0);
+        game.tick();
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                fire: true,
+                yaw,
+                pitch: -0.1,
+                ..cmd(1, tick_now(&game))
+            }],
+        );
+        game.tick();
+        let victim = game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap();
+        assert_eq!(victim.hp, MAX_HP);
+    }
+
+    #[test]
+    fn no_friendly_fire() {
+        let mut game = Match::new(
+            &[
+                (SHOOTER, "a".into(), pb::Team::Red, RIFLE),
+                (VICTIM, "b".into(), pb::Team::Red, RIFLE),
+            ],
+            YARD,
+            false,
+            9,
+        );
+        let shot = line_up(&mut game, -0.1);
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        let mate = game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap();
+        assert_eq!(mate.hp, MAX_HP);
+    }
+
+    #[test]
+    fn lag_compensation_hits_where_the_client_saw_the_target() {
+        let mut game = duel();
+        let shot = line_up(&mut game, -0.1);
+        let seen_at = shot.render_tick;
+        // Tick along so the sighting is in the past, then move the victim away.
+        game.tick();
+        game.tick();
+        let entity = game.entities[&VICTIM];
+        game.world.get_mut::<Pose>(entity).unwrap().z = 10.0;
+        game.push_inputs(
+            SHOOTER,
+            vec![pb::InputCmd {
+                render_tick: seen_at,
+                ..shot
+            }],
+        );
+        game.tick();
+        let victim = game.world.get::<Vitals>(entity).unwrap();
+        assert_eq!(victim.hp, MAX_HP - weapons::stats(RIFLE).damage_body);
+    }
+
+    #[test]
+    fn spawn_protection_blocks_damage_until_it_expires() {
+        let mut game = duel();
+        let shot = line_up(&mut game, -0.1);
+        let entity = game.entities[&VICTIM];
+        game.world.get_mut::<Vitals>(entity).unwrap().protect_left = 1.0;
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        assert_eq!(game.world.get::<Vitals>(entity).unwrap().hp, MAX_HP);
+    }
+
+    #[test]
+    fn sniper_body_shot_kills_in_one_hit() {
+        let mut game = duel();
+        game.select_weapon(SHOOTER, pb::WeaponKind::Sniper);
+        let shot = line_up(&mut game, -0.1);
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        assert!(
+            !game
+                .world
+                .get::<Vitals>(game.entities[&VICTIM])
+                .unwrap()
+                .alive
+        );
+    }
+
+    #[test]
+    fn knife_hits_in_reach_for_high_damage_without_ammo() {
+        let (mut game, swing) = melee_setup(duel(), 1.5);
+        game.push_inputs(SHOOTER, vec![swing]);
+        game.tick();
+        let victim = game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap();
+        assert_eq!(
+            victim.hp,
+            MAX_HP - weapons::stats(pb::WeaponKind::Knife).damage_body
+        );
+        assert_eq!(weapon(&game, SHOOTER).0, 0);
+    }
+
+    #[test]
+    fn knife_cannot_reach_far_targets() {
+        let (mut game, swing) = melee_setup(duel(), 4.0);
+        game.push_inputs(SHOOTER, vec![swing]);
+        game.tick();
+        assert_eq!(
+            game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap().hp,
+            MAX_HP
+        );
+        let melee_shot = game.shared_snapshot().events.iter().any(|e| {
+        matches!(&e.event, Some(pb::game_event::Event::Shot(s)) if s.melee && s.hit_player_id == 0)
+    });
+        assert!(
+            melee_shot,
+            "the swing still happens and is reported as melee"
+        );
+    }
+
+    #[test]
+    fn knife_never_triggers_a_reload_or_empty_state() {
+        let (mut game, _) = melee_setup(duel(), 1.5);
+        for _ in 0..10 {
+            game.tick();
+        }
+        assert!(!weapon(&game, SHOOTER).2);
+    }
+
+    #[test]
+    fn a_level_crosshair_hits_the_body_and_a_head_needs_raised_aim() {
+        let damage_at = |pitch: f32| {
+            let mut game = duel();
+            let shot = line_up(&mut game, pitch);
+            game.push_inputs(SHOOTER, vec![shot]);
+            game.tick();
+            MAX_HP - game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap().hp
+        };
+        let rifle = weapons::stats(RIFLE);
+        assert_eq!(damage_at(0.0), rifle.damage_body);
+        // The target stands 4 m away; aim at the middle of the head.
+        assert_eq!(
+            damage_at((1.63f32 - EYE_HEIGHT).atan2(4.0)),
+            rifle.damage_head
+        );
+    }
+
+    #[test]
+    fn crouching_tightens_real_shots() {
+        let (standing, crouched) = (mean_spread(false), mean_spread(true));
+        assert!(
+            crouched < standing * 0.7,
+            "standing {standing}, crouched {crouched}"
+        );
+    }
+
+    #[test]
+    fn crouched_hitboxes_drop_with_the_player() {
+        let rifle = weapons::stats(RIFLE);
+        assert_eq!(
+            shot_at_crouched(false, EYE_HEIGHT),
+            0,
+            "passes over a crouched player"
+        );
+        assert_eq!(shot_at_crouched(false, 1.13), rifle.damage_head);
+        assert_eq!(shot_at_crouched(false, 0.7), rifle.damage_body);
+        assert_eq!(shot_at_crouched(false, 0.2), rifle.damage_legs);
+        assert_eq!(
+            shot_at_crouched(true, CROUCH_EYE_HEIGHT),
+            rifle.damage_body,
+            "level from a crouch"
+        );
+    }
+
+    #[test]
+    fn lag_compensation_rewinds_the_stance() {
+        let mut game = duel();
+        let mut shot = line_up(&mut game, 0.0);
+        // History labels the sample just recorded one tick before the current tick.
+        let seen_at = tick_now(&game) - 1;
+        game.push_inputs(VICTIM, vec![crouch_cmd(1, 0)]);
+        game.tick();
+        // The shooter was still rendering the victim standing when firing.
+        shot.render_tick = seen_at;
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        let victim = game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap();
+        assert_eq!(victim.hp, MAX_HP - weapons::stats(RIFLE).damage_body);
+    }
+
+    #[test]
+    fn sustained_fire_really_spreads_shots() {
+        let angles = sustained_fire_angles();
+        assert!(angles.len() >= 25, "fired {}", angles.len());
+        let mean = |a: &[f32]| a.iter().sum::<f32>() / a.len() as f32;
+        let (early, late) = (mean(&angles[..3]), mean(&angles[12..]));
+        assert!(late > early * 3.0, "early {early}, late {late}");
+        assert!(late > weapons::stats(RIFLE).bloom_max * 0.4, "late {late}");
+    }
+
+    #[test]
+    fn magnum_and_no_recoil_have_no_spread_even_on_the_move() {
+        let mut magnum = with_augment(Aug::Magnum);
+        draw_sidearm(&mut magnum, SHOOTER);
+        let errors = aim_errors(&mut magnum);
+        assert!(!errors.is_empty());
+        assert!(errors.iter().all(|e| *e < 1e-4), "{errors:?}");
+
+        let mut steady = with_augment(Aug::NoRecoil);
+        let errors = aim_errors(&mut steady);
+        assert!(!errors.is_empty());
+        assert!(errors.iter().all(|e| *e < 1e-4), "{errors:?}");
+
+        let mut rifle = with_augment(Aug::SoulDrain);
+        assert!(
+            aim_errors(&mut rifle).iter().any(|e| *e > 1e-3),
+            "a rifle still spreads"
+        );
+    }
+
+    #[test]
+    fn soul_drain_heals_50_up_to_the_cap() {
+        let mut game = with_augment(Aug::SoulDrain);
+        let e = game.entities[&SHOOTER];
+        game.world.get_mut::<Vitals>(e).unwrap().hp = 100;
+        kill_victim(&mut game, 1);
+        assert_eq!(hp(&game, SHOOTER), 150);
+        game.world.get_mut::<Vitals>(e).unwrap().hp = 60;
+        kill_victim(&mut game, 3);
+        assert_eq!(hp(&game, SHOOTER), 110);
+        game.world.get_mut::<Vitals>(e).unwrap().hp = 145;
+        kill_victim(&mut game, 2);
+        assert_eq!(hp(&game, SHOOTER), 150);
+    }
+
+    #[test]
+    fn upgraded_pistol_bursts_three_rounds_per_trigger_and_fires_faster() {
+        let shots_over = |augment: Aug, ticks: u32, hold: bool| {
+            let mut game = with_augment(augment);
+            let yaw = -std::f32::consts::FRAC_PI_2;
+            place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+            place(&mut game, VICTIM, -46.0, -8.0, 0.0);
+            let e = game.entities[&SHOOTER];
+            {
+                let mut w = game.world.get_mut::<Weapon>(e).unwrap();
+                w.switch_to(2);
+                w.cooldown = 0.0;
+                w.reserve = 200;
+                w.magazine = 12;
+            }
+            let mut fired = 0;
+            for seq in 1..=ticks {
+                let trigger = hold || seq == 1;
+                game.push_inputs(
+                    SHOOTER,
+                    vec![pb::InputCmd {
+                        fire: trigger,
+                        yaw,
+                        ..cmd(seq, tick_now(&game))
+                    }],
+                );
+                game.tick();
+                fired += shot_events(&game.shared_snapshot().events);
+            }
+            fired
+        };
+        assert_eq!(
+            shots_over(Aug::PistolUpgrade, 15, false),
+            3,
+            "one pull, one burst"
+        );
+        assert_eq!(
+            shots_over(Aug::InfiniteAmmo, 15, false),
+            1,
+            "an ordinary pistol fires once"
+        );
+        let (fast, slow) = (
+            shots_over(Aug::PistolUpgrade, 30, true),
+            shots_over(Aug::InfiniteAmmo, 30, true),
+        );
+        assert!(fast >= slow * 2, "upgraded {fast}, ordinary {slow}");
+    }
+
+    #[test]
+    fn shotgun_fires_six_pellets_for_one_round_and_hits_hard_up_close() {
+        let mut game = with_augment(Aug::Shotgun);
+        assert_eq!(held(&game, SHOOTER), RIFLE, "it's the sidearm now");
+        draw_sidearm(&mut game, SHOOTER);
+        assert_eq!(held(&game, SHOOTER), Kind::Shotgun);
+        assert_eq!(weapon(&game, SHOOTER), (6, 36, false));
+        let events = shoot_once(&mut game, 1);
+        assert_eq!(shot_events(&events), 6);
+        assert_eq!(weapon(&game, SHOOTER).0, 5);
+        let dealt = 150 - hp(&game, VICTIM);
+        assert!(
+            dealt >= weapons::stats(RIFLE).damage_body * 2,
+            "dealt {dealt} at 4 m"
+        );
+    }
+
+    #[test]
+    fn shield_soaks_frontal_fire_but_not_shots_from_behind() {
+        // The shooter is on the -X side, firing along +X.
+        let facing_shooter = std::f32::consts::FRAC_PI_2;
+        let mut game = shielded_target(facing_shooter);
+        game.tick();
+        let v = game.entities[&VICTIM];
+        let body = weapons::stats(RIFLE).damage_body;
+        assert_eq!(
+            game.world.get::<Perks>(v).unwrap().shield_hp,
+            augments::SHIELD_HP - body
+        );
+        assert_eq!(hp(&game, VICTIM), 150);
+
+        let mut game = shielded_target(-facing_shooter);
+        game.tick();
+        let v = game.entities[&VICTIM];
+        assert_eq!(
+            game.world.get::<Perks>(v).unwrap().shield_hp,
+            augments::SHIELD_HP,
+            "behind the shield"
+        );
+        assert_eq!(hp(&game, VICTIM), 150 - body);
+    }
+
+    #[test]
+    fn shield_only_works_with_the_pistol_in_hand() {
+        // Same frontal shot as above, but the bearer holds the primary.
+        let facing_shooter = std::f32::consts::FRAC_PI_2;
+        let mut game = shielded_target(facing_shooter);
+        let v = game.entities[&VICTIM];
+        game.world.get_mut::<Weapon>(v).unwrap().switch_to(1);
+        assert_eq!(held(&game, VICTIM), RIFLE, "every weapon is usable");
+        game.tick();
+        assert_eq!(
+            game.world.get::<Perks>(v).unwrap().shield_hp,
+            augments::SHIELD_HP
+        );
+        assert_eq!(hp(&game, VICTIM), 150 - weapons::stats(RIFLE).damage_body);
+    }
+
+    #[test]
+    fn magnum_is_a_hard_hitting_sidearm() {
+        let mut game = with_augment(Aug::Magnum);
+        draw_sidearm(&mut game, SHOOTER);
+        assert_eq!(held(&game, SHOOTER), Kind::Magnum);
+        assert_eq!(weapon(&game, SHOOTER), (6, 30, false));
+        shoot_once(&mut game, 1);
+        assert_eq!(
+            150 - hp(&game, VICTIM),
+            weapons::stats(Kind::Magnum).damage_body
+        );
+        let magnum = weapons::stats(Kind::Magnum);
+        assert!(magnum.move_speed > weapons::stats(RIFLE).move_speed);
+        assert!(magnum.fire_interval > weapons::stats(Kind::Pistol).fire_interval);
+    }
+
+    #[test]
+    fn big_head_grows_the_victims_head_additively_for_every_contributor() {
+        let mut game = with_augment(Aug::BigHead);
+        let v = game.entities[&VICTIM];
+        let scale = |game: &Match| game.world.get::<Perks>(v).unwrap().head_scale;
+        assert_eq!(scale(&game), 1.0);
+        kill_victim(&mut game, 1);
+        assert!((scale(&game) - (1.0 + augments::BIG_HEAD_STEP)).abs() < 1e-4);
+        kill_victim(&mut game, 2);
+        assert!(
+            (scale(&game) - (1.0 + 2.0 * augments::BIG_HEAD_STEP)).abs() < 1e-4,
+            "adds up over deaths"
+        );
+        // It stops growing at the cap, however many more deaths follow.
+        for seq in 3..20 {
+            kill_victim(&mut game, seq);
+        }
+        assert_eq!(scale(&game), augments::BIG_HEAD_MAX);
+
+        // An assist counts: the killer has no such augment, a helper who hurt the victim does.
+        let mut game = Match::with_mode(
+            &[
+                (SHOOTER, "a".into(), pb::Team::Red, RIFLE),
+                (VICTIM, "b".into(), pb::Team::Blue, RIFLE),
+                (77, "c".into(), pb::Team::Red, RIFLE),
+            ],
+            YARD,
+            pb::GameMode::Augment,
+            [0, 0],
+            42,
+        );
+        game.apply_augment(SHOOTER, Aug::SoulDrain);
+        game.apply_augment(VICTIM, Aug::QuickReload);
+        game.apply_augment(77, Aug::BigHead);
+        game.world.resource_mut::<MatchState>().freeze_left = 0.0;
+        let v = game.entities[&VICTIM];
+        kill_victim(&mut game, 1);
+        assert_eq!(
+            game.world.get::<Perks>(v).unwrap().head_scale,
+            1.0,
+            "the holder didn't help"
+        );
+        let helper = game.entities[&77];
+        game.world
+            .get_mut::<Perks>(v)
+            .unwrap()
+            .damaged_by
+            .push(helper);
+        kill_victim(&mut game, 2);
+        assert!(
+            (game.world.get::<Perks>(v).unwrap().head_scale - (1.0 + augments::BIG_HEAD_STEP))
+                .abs()
+                < 1e-4
+        );
+    }
+
+    #[test]
+    fn a_bigger_head_is_easier_to_hit() {
+        let damage = |head_scale: f32| {
+            let mut game = with_augment(Aug::SoulDrain);
+            let v = game.entities[&VICTIM];
+            game.world.get_mut::<Perks>(v).unwrap().head_scale = head_scale;
+            let shot = line_up(&mut game, (1.9f32 - EYE_HEIGHT).atan2(4.0));
+            game.push_inputs(SHOOTER, vec![shot]);
+            game.tick();
+            150 - hp(&game, VICTIM)
+        };
+        assert_eq!(damage(1.0), 0);
+        assert_eq!(damage(2.0), weapons::stats(RIFLE).damage_head);
+    }
+
+    #[test]
+    fn a_small_head_is_harder_to_hit() {
+        // At 4 m, aimed at 1.70: inside a normal head, above a small one.
+        let damage = |augment: Aug| {
+            let mut game = augment_duel();
+            game.apply_augment(SHOOTER, Aug::SoulDrain);
+            game.apply_augment(VICTIM, augment);
+            game.world.resource_mut::<MatchState>().freeze_left = 0.0;
+            let shot = line_up(&mut game, (1.7f32 - EYE_HEIGHT).atan2(4.0));
+            game.push_inputs(SHOOTER, vec![shot]);
+            game.tick();
+            150 - hp(&game, VICTIM)
+        };
+        assert_eq!(damage(Aug::Rest), weapons::stats(RIFLE).damage_head);
+        assert_eq!(damage(Aug::SmallHead), 0);
+    }
+
+    #[test]
+    fn possession_always_resets_hp_to_150_and_takes_the_victims_primary() {
+        let mut game = with_augment(Aug::Possession);
+        let (e, v) = (game.entities[&SHOOTER], game.entities[&VICTIM]);
+        game.world
+            .get_mut::<Weapon>(v)
+            .unwrap()
+            .set_primary(Kind::Sniper);
+        game.world.get_mut::<Weapon>(v).unwrap().cooldown = 0.0;
+        game.world.get_mut::<Weapon>(v).unwrap().switch_to(2);
+
+        game.world.get_mut::<Vitals>(e).unwrap().hp = 20;
+        kill_victim(&mut game, 1);
+        assert_eq!(hp(&game, SHOOTER), 150);
+        assert_eq!(held(&game, SHOOTER), Kind::Sniper);
+        assert_eq!(weapon(&game, SHOOTER), (5, 20, false));
+        assert_eq!(game.world.get::<Loadout>(e).unwrap().0, Kind::Sniper);
+
+        for i in 0..10 {
+            game.world.get_mut::<Vitals>(e).unwrap().hp = 20;
+            game.world
+                .get_mut::<Weapon>(v)
+                .unwrap()
+                .set_primary(Kind::AkimboSmg);
+            kill_victim(&mut game, 2 + i);
+            assert_eq!(hp(&game, SHOOTER), 150, "no decay");
+        }
+        assert_eq!(
+            held(&game, SHOOTER),
+            Kind::Smg,
+            "a taken akimbo is a plain SMG"
+        );
+    }
+
+    #[test]
+    fn no_recoil_keeps_sustained_fire_tight() {
+        let mut game = with_augment(Aug::NoRecoil);
+        let yaw = -std::f32::consts::FRAC_PI_2;
+        place(&mut game, SHOOTER, -46.0, 0.0, yaw);
+        place(&mut game, VICTIM, -46.0, -8.0, 0.0);
+        for seq in 1..=45 {
+            let tick = tick_now(&game);
+            game.push_inputs(
+                SHOOTER,
+                vec![pb::InputCmd {
+                    fire: true,
+                    yaw,
+                    ..cmd(seq, tick)
+                }],
+            );
+            game.tick();
+        }
+        let e = game.entities[&SHOOTER];
+        assert!(weapon(&game, SHOOTER).0 < 25, "it did fire");
+        assert_eq!(game.world.get::<Weapon>(e).unwrap().bloom, 0.0);
+    }
+
+    #[test]
+    fn taser_paralyses_for_5_seconds_without_hurting() {
+        let mut game = with_augment(Aug::Taser);
+        assert_eq!(held(&game, SHOOTER), RIFLE);
+        draw_sidearm(&mut game, SHOOTER);
+        assert_eq!(held(&game, SHOOTER), Kind::Taser);
+        assert_eq!(weapon(&game, SHOOTER), (1, 6, false));
+        shoot_once(&mut game, 1);
+        let v = game.entities[&VICTIM];
+        assert_eq!(hp(&game, VICTIM), 150, "non-lethal");
+        assert!((game.world.get::<Vitals>(v).unwrap().stun_left - 5.0).abs() < 0.1);
+
+        let start = game.world.get::<Pose>(v).unwrap().x;
+        let magazine = weapon(&game, VICTIM).0;
+        let mut seq = 1;
+        for _ in 0..(4 * TICK_RATE) {
+            seq += 1;
+            game.push_inputs(
+                VICTIM,
+                vec![pb::InputCmd {
+                    forward: true,
+                    fire: true,
+                    slot: 2,
+                    yaw: 1.0,
+                    ..cmd(seq, tick_now(&game))
+                }],
+            );
+            game.tick();
+        }
+        let pose = *game.world.get::<Pose>(v).unwrap();
+        assert_eq!(pose.x, start, "can't move");
+        assert_eq!(pose.yaw, 1.0, "can look around");
+        assert_eq!(weapon(&game, VICTIM).0, magazine, "can't fire");
+        assert_eq!(held(&game, VICTIM), RIFLE, "can't switch");
+
+        for _ in 0..(TICK_RATE + 5) {
+            seq += 1;
+            game.push_inputs(
+                VICTIM,
+                vec![pb::InputCmd {
+                    forward: true,
+                    yaw: 1.0,
+                    ..cmd(seq, tick_now(&game))
+                }],
+            );
+            game.tick();
+        }
+        assert_eq!(game.world.get::<Vitals>(v).unwrap().stun_left, 0.0);
+        assert_ne!(game.world.get::<Pose>(v).unwrap().x, start, "moves again");
+    }
+
+    #[test]
+    fn a_shield_stops_a_taser() {
+        let mut game = shielded_target(std::f32::consts::FRAC_PI_2);
+        let e = game.entities[&SHOOTER];
+        let mut weapon = Weapon::equipped(RIFLE, &[Aug::Taser]);
+        weapon.switch_to(2);
+        weapon.cooldown = 0.0;
+        *game.world.get_mut::<Weapon>(e).unwrap() = weapon;
+        game.tick();
+        let v = game.entities[&VICTIM];
+        assert_eq!(game.world.get::<Vitals>(v).unwrap().stun_left, 0.0);
+    }
+
+    #[test]
+    fn in_a_free_for_all_anyone_can_shoot_anyone_and_no_team_scores() {
+        let mut game = ffa_duel();
+        let shot = line_up(&mut game, 0.03);
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        assert!(
+            !game
+                .world
+                .get::<Vitals>(game.entities[&VICTIM])
+                .unwrap()
+                .alive
+        );
+        let snapshot = game.shared_snapshot();
+        assert_eq!((snapshot.red_score, snapshot.blue_score), (0, 0));
+        let kills: Vec<(u32, u32)> = snapshot.players.iter().map(|p| (p.id, p.kills)).collect();
+        assert_eq!(kills, [(SHOOTER, 1), (VICTIM, 0)]);
+        assert_eq!(game.winner(), None);
+    }
+
+    #[test]
+    fn in_a_free_for_all_the_knife_cuts_anyone() {
+        let (mut game, swing) = melee_setup(ffa_duel(), 1.5);
+        game.push_inputs(SHOOTER, vec![swing]);
+        game.tick();
+        assert_eq!(
+            hp(&game, VICTIM),
+            MAX_HP - weapons::stats(Kind::Knife).damage_body
+        );
+    }
+
+    #[test]
+    fn the_first_player_to_the_target_wins_a_free_for_all() {
+        let mut game = ffa_duel();
+        game.set_kills_to_win(10);
+        game.world
+            .get_mut::<Stats>(game.entities[&SHOOTER])
+            .unwrap()
+            .kills = 9;
+        let shot = line_up(&mut game, 0.03);
+        assert_eq!(game.winner(), None);
+        game.push_inputs(SHOOTER, vec![shot]);
+        game.tick();
+        assert_eq!(game.winner(), Some(Winner::Player(SHOOTER)));
+        let end = game.end_message(8.0);
+        assert_eq!((end.winner, end.winner_id), (NO_TEAM as i32, SHOOTER));
+        assert_eq!((end.red_score, end.blue_score), (0, 0));
+        assert_eq!(
+            (end.scoreboard[0].id, end.scoreboard[0].kills),
+            (SHOOTER, 10)
+        );
+        assert!(end.scoreboard.iter().all(|s| s.team == NO_TEAM as i32));
+        // It is over: the clock no longer runs.
+        let frozen = tick_now(&game);
+        game.tick();
+        assert_eq!(tick_now(&game), frozen);
+    }
+}

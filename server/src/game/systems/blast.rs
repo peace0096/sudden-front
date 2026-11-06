@@ -77,3 +77,100 @@ pub(super) fn blast(
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn a_missile_blast_catches_people_beside_it_but_not_behind_walls() {
+        let yaw = std::f32::consts::PI;
+        let dealt = |z: f32| {
+            let mut game = with_augment(Aug::Missile);
+            place(&mut game, SHOOTER, -31.0, 4.0, yaw);
+            place(&mut game, VICTIM, -29.0, z, 0.0);
+            game.tick();
+            game.push_inputs(
+                SHOOTER,
+                vec![pb::InputCmd {
+                    fire: true,
+                    yaw,
+                    ..cmd(1, tick_now(&game))
+                }],
+            );
+            for _ in 0..30 {
+                game.tick();
+            }
+            150 - hp(&game, VICTIM)
+        };
+        assert!(dealt(5.0) > 0);
+        assert_eq!(dealt(8.5), 0, "behind the wall");
+    }
+
+    #[test]
+    fn a_grenade_hurts_enemies_around_it_but_not_its_thrower_or_teammates() {
+        let mut game = Match::new(
+            &[
+                (SHOOTER, "a".into(), pb::Team::Red, RIFLE),
+                (VICTIM, "b".into(), pb::Team::Blue, RIFLE),
+                (MATE, "c".into(), pb::Team::Red, RIFLE),
+            ],
+            YARD,
+            false,
+            42,
+        );
+        place(&mut game, SHOOTER, -44.0, 0.0, 0.0);
+        place(&mut game, VICTIM, -42.5, 0.0, 0.0);
+        place(&mut game, MATE, -44.0, 1.0, 0.0);
+        drop_grenade(&mut game, SHOOTER, -44.0, 0.5);
+        assert!(kills_in_two_ticks(&mut game).is_empty());
+        // 1.5 m off along the floor, 1.14 m below the torso: 1.88 m from it, 74 % of the damage.
+        let dealt = 100 - hp(&game, VICTIM);
+        assert!((75..=85).contains(&dealt), "dealt {dealt}");
+        assert_eq!(hp(&game, SHOOTER), 100, "no damage to yourself");
+        assert_eq!(hp(&game, MATE), 100, "no friendly fire");
+
+        // Further out it hurts less, and past its radius not at all.
+        let at = |distance: f32| {
+            let mut game = duel();
+            place(&mut game, SHOOTER, -44.0, 10.0, 0.0);
+            place(&mut game, VICTIM, -44.0, 0.0, 0.0);
+            drop_grenade(&mut game, SHOOTER, -44.0 + distance, 0.0);
+            kills_in_two_ticks(&mut game);
+            100 - hp(&game, VICTIM)
+        };
+        assert!(at(1.0) > at(3.0) && at(3.0) > 0, "{} {}", at(1.0), at(3.0));
+        assert_eq!(at(5.5), 0);
+
+        // A blast that finishes someone off is the grenade's kill.
+        game.world
+            .get_mut::<Vitals>(game.entities[&VICTIM])
+            .unwrap()
+            .hp = 10;
+        drop_grenade(&mut game, SHOOTER, -42.5, 1.0);
+        let kills = kills_in_two_ticks(&mut game);
+        assert_eq!(kills.len(), 1);
+        assert_eq!(
+            (kills[0].killer_id, kills[0].victim_id, kills[0].weapon),
+            (SHOOTER, VICTIM, Kind::Grenade as i32)
+        );
+        assert_eq!(game.shared_snapshot().red_score, 1);
+    }
+
+    #[test]
+    fn walls_shelter_from_a_grenade() {
+        // The walk-through warehouse's north wall (z 7 to 7.5) between the grenade and the victim.
+        let dealt = |victim_z: f32| {
+            let mut game = duel();
+            place(&mut game, SHOOTER, -46.0, 0.0, 0.0);
+            place(&mut game, VICTIM, -30.0, victim_z, 0.0);
+            drop_grenade(&mut game, SHOOTER, -30.0, 6.0);
+            kills_in_two_ticks(&mut game);
+            100 - hp(&game, VICTIM)
+        };
+        assert!(dealt(4.5) > 0);
+        // Inside, between the wall and the container along it.
+        assert_eq!(dealt(8.0), 0, "behind the wall");
+    }
+}

@@ -217,3 +217,27 @@ impl Match {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn a_free_for_all_tells_its_players_there_are_no_teams() {
+        let start = ffa_with_bots(3, pb::GameMode::Normal).start_message(SHOOTER);
+        let config = start.config.unwrap();
+        assert_eq!(
+            (config.match_type, config.kills_to_win),
+            (pb::MatchType::FreeForAll as i32, KILLS_TO_WIN_FFA)
+        );
+        assert_eq!(start.roster.len(), 5);
+        assert!(start.roster.iter().all(|r| r.team == NO_TEAM as i32));
+
+        let config = duel().start_message(SHOOTER).config.unwrap();
+        assert_eq!(
+            (config.match_type, config.kills_to_win),
+            (pb::MatchType::TeamDeathmatch as i32, KILLS_TO_WIN)
+        );
+    }
+}

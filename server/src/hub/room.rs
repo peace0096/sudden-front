@@ -72,3 +72,172 @@ impl Room {
         Some(TEAMS[team])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::TEAM_SIZE;
+
+    const RED: usize = 0;
+    const BLUE: usize = 1;
+
+    fn room_with(bots: bool) -> Room {
+        Room {
+            id: 1,
+            name: "room".into(),
+            host: 0,
+            map: pb::MapId::SupplyYard,
+            mode: pb::GameMode::Normal,
+            match_type: pb::MatchType::TeamDeathmatch,
+            kills_to_win: crate::game::KILLS_TO_WIN,
+            seats: Seats::new(bots),
+            members: Vec::new(),
+            game: None,
+            results_left: None,
+        }
+    }
+
+    fn ffa_room_with(bots: bool) -> Room {
+        Room {
+            match_type: pb::MatchType::FreeForAll,
+            kills_to_win: crate::game::KILLS_TO_WIN_FFA,
+            ..room_with(bots)
+        }
+    }
+
+    #[test]
+    fn newcomers_go_to_the_team_with_fewer_humans_red_on_a_tie() {
+        let mut room = room_with(true);
+        assert!(room.seat_newcomer(1));
+        assert_eq!(room.seats.find(1), Some((RED, 0)));
+        assert!(room.seat_newcomer(2));
+        assert_eq!(room.seats.find(2), Some((BLUE, 0)));
+        // Level again, and red has no open seat: its first bot gives way.
+        assert!(room.seat_newcomer(3));
+        assert_eq!(room.seats.find(3), Some((RED, 1)));
+        assert_eq!(room.seats.bot_count(), 7);
+    }
+
+    #[test]
+    fn a_team_with_an_open_seat_comes_before_displacing_a_bot_when_the_humans_are_level() {
+        let mut room = room_with(false);
+        assert!(room.seat_newcomer(1));
+        // The host puts bots in red's seats 2 to 5.
+        for slot in 1..TEAM_SIZE {
+            room.seats.set_bot(RED, slot, true);
+        }
+        assert!(room.seat_newcomer(2));
+        assert_eq!(room.seats.find(2), Some((BLUE, 0)));
+        // Level again: red has no open seat and blue has, so no red bot is removed.
+        assert!(room.seat_newcomer(3));
+        assert_eq!(room.seats.find(3), Some((BLUE, 1)));
+        assert_eq!(room.seats.bots(RED), 4);
+    }
+
+    #[test]
+    fn fewer_humans_decide_even_when_a_bot_has_to_give_way() {
+        let mut room = room_with(false);
+        room.seats.sit(RED, 1);
+        room.seats.sit(RED, 2);
+        room.seats.sit(BLUE, 3);
+        for slot in 1..TEAM_SIZE {
+            room.seats.set_bot(BLUE, slot, true);
+        }
+        assert!(room.seat_newcomer(4));
+        assert_eq!(room.seats.find(4), Some((BLUE, 1)));
+        assert_eq!(room.seats.bots(BLUE), 3);
+    }
+
+    #[test]
+    fn a_room_of_ten_humans_seats_no_eleventh() {
+        let mut room = room_with(false);
+        for id in 1..=10 {
+            assert!(room.seat_newcomer(id));
+        }
+        assert_eq!((room.seats.humans(RED), room.seats.humans(BLUE)), (5, 5));
+        assert!(!room.seat_newcomer(11));
+    }
+
+    #[test]
+    fn a_free_for_all_newcomer_takes_the_first_open_seat_before_any_bot() {
+        let mut room = ffa_room_with(true);
+        // The host takes bots out of seats 7 and 3.
+        room.seats.set_bot(BLUE, 2, false);
+        room.seats.set_bot(RED, 3, false);
+        for id in 1..=3 {
+            assert!(room.seat_newcomer(id));
+        }
+        assert_eq!(room.seats.find(1), Seats::at(3));
+        assert_eq!(room.seats.find(2), Seats::at(7));
+        // No open seat is left: the first bot gives way, whatever team its seat was on.
+        assert_eq!(room.seats.find(3), Seats::at(0));
+        assert_eq!(room.seats.bot_count(), 7);
+    }
+
+    #[test]
+    fn a_free_for_all_room_of_ten_humans_seats_them_in_order_and_no_eleventh() {
+        let mut room = ffa_room_with(false);
+        for id in 1..=10 {
+            assert!(room.seat_newcomer(id));
+            assert_eq!(room.seats.find(id), Seats::at(id as usize - 1));
+        }
+        assert!(!room.seat_newcomer(11));
+    }
+
+    #[test]
+    fn a_running_match_seats_a_newcomer_on_the_team_with_fewer_players_then_fewer_humans_then_red()
+    {
+        let mut room = room_with(false);
+        room.seats.sit(RED, 1);
+        room.seats.sit(BLUE, 2);
+        // Level in players and in humans: red.
+        assert_eq!(room.seat_mid_match(3), Some(pb::Team::Red));
+        assert_eq!(room.seats.find(3), Some((RED, 1)));
+
+        // Three bots beside blue's human: blue has fewer humans, but red has fewer players.
+        for slot in 1..4 {
+            room.seats.set_bot(BLUE, slot, true);
+        }
+        assert_eq!(room.seat_mid_match(4), Some(pb::Team::Red));
+        assert_eq!(room.seat_mid_match(5), Some(pb::Team::Red));
+        assert_eq!(room.seats.find(5), Some((RED, 3)));
+        // Four players each: the team with fewer humans.
+        assert_eq!(room.seat_mid_match(6), Some(pb::Team::Blue));
+        assert_eq!(room.seats.find(6), Some((BLUE, 4)));
+        assert_eq!(room.seats.bots(BLUE), 3, "no bot gave way");
+    }
+
+    #[test]
+    fn a_running_match_seats_a_newcomer_only_where_a_seat_is_open() {
+        // Humans and bots hold every seat.
+        let mut room = room_with(true);
+        for id in 1..=3 {
+            assert!(room.seat_newcomer(id));
+        }
+        assert_eq!(room.seat_mid_match(4), None);
+        assert_eq!(room.seats.find(4), None);
+
+        // A player leaves, and their seat is the only one a newcomer can take.
+        room.seats.leave(2);
+        assert_eq!(room.seat_mid_match(4), Some(pb::Team::Blue));
+        assert_eq!(room.seats.find(4), Some((BLUE, 0)));
+        assert_eq!(room.seat_mid_match(5), None);
+        assert_eq!(room.seats.bot_count(), 7, "no bot gave way");
+    }
+
+    #[test]
+    fn a_running_free_for_all_seats_a_newcomer_in_the_first_open_seat_by_number() {
+        let mut room = ffa_room_with(true);
+        assert!(room.seat_newcomer(1));
+        // The host takes bots out of seats 7 and 3.
+        room.seats.set_bot(BLUE, 2, false);
+        room.seats.set_bot(RED, 3, false);
+        assert_eq!(room.seat_mid_match(2), Some(pb::Team::Unspecified));
+        assert_eq!(room.seats.find(2), Seats::at(3));
+        assert_eq!(room.seat_mid_match(3), Some(pb::Team::Unspecified));
+        assert_eq!(room.seats.find(3), Seats::at(7));
+        // Only bots' seats are left.
+        assert_eq!(room.seat_mid_match(4), None);
+        assert_eq!(room.seats.bot_count(), 7);
+    }
+}

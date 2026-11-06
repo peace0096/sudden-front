@@ -129,3 +129,65 @@ pub fn roll_double(rng: &mut GameRng) -> Vec<Augment> {
     active.extend(deal_one(rng, &mut seen));
     active
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::game::test_support::*;
+
+    #[test]
+    fn grades_roll_at_40_35_25() {
+        let mut rng = GameRng(12345);
+        let mut counts = [0u32; 3];
+        let total = 100_000;
+        for _ in 0..total {
+            counts[augments::roll_grade(&mut rng) as usize - 1] += 1;
+        }
+        for (count, expected) in counts.iter().zip([0.4, 0.35, 0.25]) {
+            let share = *count as f64 / total as f64;
+            assert!((share - expected).abs() < 0.01, "{counts:?}");
+        }
+    }
+
+    #[test]
+    fn double_time_draws_two_that_dont_clash_at_the_usual_odds() {
+        let slot_one = [Aug::Missile, Aug::Akimbo, Aug::Possession];
+        let slot_two = [
+            Aug::Shotgun,
+            Aug::Magnum,
+            Aug::PistolUpgrade,
+            Aug::Shield,
+            Aug::Taser,
+        ];
+        let mut rng = GameRng(99);
+        let mut prism = 0;
+        let total = 20_000;
+        for _ in 0..total {
+            let active = augments::roll_double(&mut rng);
+            assert_eq!(active.len(), 2);
+            assert_ne!(active[0], active[1]);
+            assert!(!active.contains(&Aug::DoubleTime));
+            for group in [&slot_one[..], &slot_two[..]] {
+                assert!(
+                    active.iter().filter(|a| group.contains(a)).count() <= 1,
+                    "{active:?}"
+                );
+            }
+            if [
+                Aug::Wallhack,
+                Aug::NoRecoil,
+                Aug::Borrow,
+                Aug::Missile,
+                Aug::Akimbo,
+            ]
+            .contains(&active[0])
+            {
+                prism += 1;
+            }
+        }
+        let share = prism as f64 / total as f64;
+        assert!(
+            (share - 0.25).abs() < 0.02,
+            "first draw prism share {share}"
+        );
+    }
+}

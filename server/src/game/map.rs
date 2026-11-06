@@ -532,3 +532,155 @@ fn warehouse() -> MapDef {
         ],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::test_support::*;
+
+    #[test]
+    fn every_map_is_fully_connected_and_spawns_are_clear() {
+        // Nothing may be over a free-for-all spawn below this, which keeps them out of doorways
+        // and the warehouse's vent tunnel.
+        const HEADROOM: f32 = 4.0;
+        for id in [pb::MapId::SupplyYard, pb::MapId::Warehouse] {
+            let def = build_map(id);
+            let map = &def.data;
+            let nav = NavGrid::new(&map.boxes, map.half_x, map.half_z);
+            let total = nav.open_cells();
+            let spawn = def.spawns[0];
+            assert_eq!(
+                nav.reachable_from(spawn.0, spawn.1),
+                total,
+                "{id:?}: isolated area"
+            );
+            assert_eq!(
+                nav.reachable_from(-spawn.0, -spawn.1),
+                total,
+                "{id:?}: isolated area"
+            );
+            for (x, z) in def.spawns.iter().chain(def.lanes.iter()) {
+                for side in [1.0, -1.0] {
+                    let (x, z) = (x * side, z * side);
+                    let inside = map.boxes.iter().any(|b| {
+                        blocks(b)
+                            && x + PLAYER_HALF_WIDTH > b.min_x
+                            && x - PLAYER_HALF_WIDTH < b.max_x
+                            && z + PLAYER_HALF_WIDTH > b.min_z
+                            && z - PLAYER_HALF_WIDTH < b.max_z
+                    });
+                    assert!(!inside, "{id:?}: point ({x},{z}) is inside a collider");
+                }
+            }
+            // Free-for-all spawns are in world coordinates, and include both teams' spawns.
+            for &(x, z) in &def.ffa_spawns {
+                assert_eq!(
+                    nav.reachable_from(x, z),
+                    total,
+                    "{id:?}: free-for-all spawn ({x},{z}) is cut off"
+                );
+                let covered = map.boxes.iter().any(|b| {
+                    b.min_y < HEADROOM
+                        && x + PLAYER_HALF_WIDTH > b.min_x
+                        && x - PLAYER_HALF_WIDTH < b.max_x
+                        && z + PLAYER_HALF_WIDTH > b.min_z
+                        && z - PLAYER_HALF_WIDTH < b.max_z
+                });
+                assert!(
+                    !covered,
+                    "{id:?}: free-for-all spawn ({x},{z}) is inside or under something"
+                );
+            }
+            for &(x, z) in &def.spawns {
+                for point in [(x, z), (-x, -z)] {
+                    assert!(
+                        def.ffa_spawns.contains(&point),
+                        "{id:?}: team spawn {point:?} is no free-for-all spawn"
+                    );
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- climbing
+
+    #[test]
+    fn every_warehouse_container_with_crates_beside_it_can_be_climbed() {
+        let map = build_map(pb::MapId::Warehouse).data;
+        let step = weapons::stats(RIFLE).move_speed * CMD_DT;
+        for (x, z, dx, dz) in WAREHOUSE_CLIMBS {
+            for side in [1.0, -1.0] {
+                let (x, z, dx, dz) = (x * side, z * side, dx * side, dz * side);
+                // From the floor beyond the single crate, straight at the container, jump held.
+                let (mut px, mut pz) = (x + dx * 3.2, z + dz * 3.2);
+                let (mut y, mut vy) = (0.0f32, 0.0f32);
+                let mut on_top = false;
+                for _ in 0..(5 * 60) {
+                    step_move(&map.boxes, &mut px, &mut pz, y, -dx * step, -dz * step);
+                    step_vertical(&map.boxes, px, pz, &mut y, &mut vy, true);
+                    if y == 2.6 && vy == 0.0 {
+                        on_top = true;
+                        break;
+                    }
+                }
+                assert!(on_top, "the container behind the crates at ({x}, {z}) is out of reach: stopped at ({px}, {pz}) {y} m up");
+            }
+        }
+    }
+
+    #[test]
+    fn the_leaning_container_collides_where_it_is_drawn_not_as_one_tall_box() {
+        let map = build_map(pb::MapId::Warehouse).data;
+        let slices: Vec<&pb::MapBox> = map
+            .boxes
+            .iter()
+            .filter(|b| b.kind == pb::BoxKind::Invisible as i32)
+            .collect();
+        assert_eq!(slices.len() % 2, 0, "one set for each half");
+        // The container tips its east end up: its slices climb with it, from about 2 m to about 3.9 m.
+        let west: Vec<&&pb::MapBox> = slices.iter().filter(|b| b.max_x < 0.0).collect();
+        let (low, high) = (
+            west.iter().map(|b| b.max_y).fold(f32::MAX, f32::min),
+            west.iter().map(|b| b.max_y).fold(f32::MIN, f32::max),
+        );
+        assert!(
+            (1.9..2.3).contains(&low) && (3.8..4.0).contains(&high),
+            "tops from {low} to {high}"
+        );
+        // Up the slope in steps under 0.2 m to its top corner, and down the container's east end after it.
+        let mut by_x = west.clone();
+        by_x.sort_by(|a, b| a.min_x.total_cmp(&b.min_x));
+        let peak = by_x.iter().position(|b| b.max_y == high).unwrap();
+        assert!(
+            by_x[..=peak]
+                .windows(2)
+                .all(|pair| pair[1].max_y > pair[0].max_y && pair[1].max_y - pair[0].max_y < 0.2),
+            "not a steady climb"
+        );
+        assert!(
+            by_x[peak..]
+                .windows(2)
+                .all(|pair| pair[1].max_y < pair[0].max_y),
+            "no way down the end"
+        );
+
+        // A level shot 2.5 m up across the container's low west end flies on; one at 1.5 m stops at its side.
+        let shot = |height: f32| {
+            crate::game::physics::ray_world(&map.boxes, [-10.0, height, 12.0], [0.0, 0.0, 1.0], 4.5)
+        };
+        assert_eq!(shot(2.5), None, "stopped above the container");
+        assert!(
+            shot(1.5).is_some_and(|t| (t - 2.0).abs() < 0.01),
+            "{:?}",
+            shot(1.5)
+        );
+        // Over its high east end the same shot at 2.5 m hits it.
+        assert!(crate::game::physics::ray_world(
+            &map.boxes,
+            [-6.0, 2.5, 12.0],
+            [0.0, 0.0, 1.0],
+            4.5
+        )
+        .is_some());
+    }
+}
