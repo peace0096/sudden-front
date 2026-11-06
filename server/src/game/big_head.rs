@@ -14,12 +14,12 @@ pub const COMEBACK_LEVEL: i32 = 1;
 pub const KING_END_LEVEL: i32 = 0;
 /// Seconds a reign lasts: invulnerable, a little faster (the hammer's move speed) and with nothing
 /// but the hammer. Counted in whole ticks, so it is exact.
-pub const KING_TIME: f32 = 20.0;
+pub const KING_TIME: f32 = 15.0;
 pub const KING_TICKS: u32 = (KING_TIME * TICK_RATE as f32) as u32;
 /// Head size, of the model and of its hitbox, at each level from MIN_LEVEL to MAX_LEVEL: 1 at level 0,
 /// a dot at the bottom, the King's at the top. Within augments.rs BIG_HEAD_MAX, which bounds the
 /// character model (client/src/game/art/hitbox.ts HEAD_SCALE_MAX).
-const HEAD_SCALES: [f32; (MAX_LEVEL - MIN_LEVEL + 1) as usize] = [0.4, 0.5, 0.6, 0.7, 0.85, 1.0, 1.25, 1.55, 2.6];
+const HEAD_SCALES: [f32; (MAX_LEVEL - MIN_LEVEL + 1) as usize] = [0.4, 0.5, 0.6, 0.7, 0.85, 1.0, 2.0, 3.5, 5.0];
 
 /// The head's size at `level`, clamped into the levels there are.
 pub fn head_scale(level: i32) -> f32 {
