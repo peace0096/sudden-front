@@ -1,8 +1,13 @@
 //! Lobby and room management. Owns every match and drives them at a fixed tick.
 
-use crate::game::{weapons, Match, TEAM_SIZE, TICK_RATE};
+mod room;
+mod seats;
+
+use crate::game::{weapons, Match, TICK_RATE};
 use crate::pb::{self, client_message::Payload as In, server_message::Payload as Out};
 use prost::Message;
+use room::{Member, Room};
+use seats::{Seat, Seats};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -10,17 +15,23 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
 
 pub const MAX_PLAYERS: usize = 10;
+
 /// Both teams, in the order the seats are indexed.
 const TEAMS: [pb::Team; 2] = [pb::Team::Red, pb::Team::Blue];
+
 /// The game modes and maps a room can be set to.
 const MODES: [pb::GameMode; 3] = [
     pb::GameMode::Normal,
     pb::GameMode::Augment,
     pb::GameMode::BigHead,
 ];
+
 const MAPS: [pb::MapId; 2] = [pb::MapId::SupplyYard, pb::MapId::Warehouse];
+
 const RESULTS_SECONDS: f32 = 8.0;
+
 const MAX_NAME_CHARS: usize = 16;
+
 const MAX_ROOM_NAME_CHARS: usize = 24;
 
 pub enum Inbound {
@@ -34,212 +45,6 @@ struct Client {
     name: String,
     hello: bool,
     room: Option<u32>,
-}
-
-struct Member {
-    id: u32,
-    weapon: pb::WeaponKind,
-    /// Pressed ready in the waiting room. The host's is never set: they start the match instead.
-    ready: bool,
-}
-
-/// Who holds a seat.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Seat {
-    Open,
-    Bot,
-    Human(u32),
-}
-
-/// A room's seats: five on each team, indexed `[red, blue][slot]`. A seat keeps its position,
-/// so when someone leaves it just becomes open and nobody shifts. A free-for-all room has no
-/// teams and numbers the same seats 0 to 9 instead: seat `i` is `[i / 5][i % 5]`.
-#[derive(Debug)]
-struct Seats([[Seat; TEAM_SIZE]; 2]);
-
-// A free-for-all room's seats are exactly the two teams' seats.
-const _: () = assert!(MAX_PLAYERS == 2 * TEAM_SIZE);
-
-impl Seats {
-    /// Every seat starts as a bot, or open.
-    fn new(bots: bool) -> Self {
-        Self([[if bots { Seat::Bot } else { Seat::Open }; TEAM_SIZE]; 2])
-    }
-
-    /// `(team, slot)` of the seat a free-for-all room numbers `index`, if there is one.
-    fn at(index: usize) -> Option<(usize, usize)> {
-        (index < MAX_PLAYERS).then_some((index / TEAM_SIZE, index % TEAM_SIZE))
-    }
-
-    /// Every seat as `(team, slot, seat)`, red first, which is also the order of the
-    /// free-for-all numbering.
-    fn iter(&self) -> impl Iterator<Item = (usize, usize, Seat)> + '_ {
-        self.0.iter().enumerate().flat_map(|(team, seats)| {
-            seats
-                .iter()
-                .enumerate()
-                .map(move |(slot, seat)| (team, slot, *seat))
-        })
-    }
-
-    fn find(&self, id: u32) -> Option<(usize, usize)> {
-        self.iter()
-            .find(|(_, _, seat)| *seat == Seat::Human(id))
-            .map(|(team, slot, _)| (team, slot))
-    }
-
-    fn humans(&self, team: usize) -> usize {
-        self.0[team]
-            .iter()
-            .filter(|seat| matches!(seat, Seat::Human(_)))
-            .count()
-    }
-
-    fn bots(&self, team: usize) -> usize {
-        self.0[team]
-            .iter()
-            .filter(|seat| **seat == Seat::Bot)
-            .count()
-    }
-
-    fn bot_count(&self) -> usize {
-        self.bots(0) + self.bots(1)
-    }
-
-    fn has_open(&self, team: usize) -> bool {
-        self.0[team].contains(&Seat::Open)
-    }
-
-    /// The seat a newcomer to `team` would take, and what it holds now: the first open seat, or
-    /// else the first bot's. `None` when the team is all humans.
-    fn free_seat(&self, team: usize) -> Option<(usize, Seat)> {
-        let seats = &self.0[team];
-        [Seat::Open, Seat::Bot]
-            .into_iter()
-            .find_map(|kind| Some((seats.iter().position(|seat| *seat == kind)?, kind)))
-    }
-
-    /// Seats `id` on `team`; a bot in the seat gives it up. `None` when the team is all humans.
-    fn sit(&mut self, team: usize, id: u32) -> Option<usize> {
-        let (slot, _) = self.free_seat(team)?;
-        self.0[team][slot] = Seat::Human(id);
-        Some(slot)
-    }
-
-    /// Seats `id` in the first open seat of `team`; no bot gives way. `None` when it has none.
-    fn sit_open(&mut self, team: usize, id: u32) -> Option<usize> {
-        let slot = self.0[team].iter().position(|seat| *seat == Seat::Open)?;
-        self.0[team][slot] = Seat::Human(id);
-        Some(slot)
-    }
-
-    /// Seats `id` in a free-for-all room: the first open seat by number, or else the first bot's,
-    /// which the bot gives up. Returns the seat's number; `None` when every seat holds a human.
-    fn sit_first(&mut self, id: u32) -> Option<usize> {
-        let index = [Seat::Open, Seat::Bot]
-            .into_iter()
-            .find_map(|kind| self.iter().position(|(_, _, seat)| seat == kind))?;
-        let (team, slot) = Self::at(index)?;
-        self.0[team][slot] = Seat::Human(id);
-        Some(index)
-    }
-
-    /// Moves `id` to the other team, as a newcomer would sit there. What they displace takes
-    /// their old seat: an open seat stays open and a bot moves over, so both teams keep their size.
-    /// `false` when `id` has no seat or the other team is all humans.
-    fn switch(&mut self, id: u32) -> bool {
-        let Some((team, slot)) = self.find(id) else {
-            return false;
-        };
-        let Some((new_slot, displaced)) = self.free_seat(1 - team) else {
-            return false;
-        };
-        self.0[1 - team][new_slot] = Seat::Human(id);
-        self.0[team][slot] = displaced;
-        true
-    }
-
-    /// Frees the seat of `id`.
-    fn leave(&mut self, id: u32) {
-        if let Some((team, slot)) = self.find(id) {
-            self.0[team][slot] = Seat::Open;
-        }
-    }
-
-    /// Puts a bot in a seat or takes it out. `false` when nothing changed: there is no such seat,
-    /// a human holds it, or it already was so.
-    fn set_bot(&mut self, team: usize, slot: usize, bot: bool) -> bool {
-        let wanted = if bot { Seat::Bot } else { Seat::Open };
-        match self.0.get_mut(team).and_then(|seats| seats.get_mut(slot)) {
-            Some(seat) if !matches!(seat, Seat::Human(_)) && *seat != wanted => {
-                *seat = wanted;
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
-struct Room {
-    id: u32,
-    name: String,
-    host: u32,
-    map: pb::MapId,
-    mode: pb::GameMode,
-    /// Fixed when the room is made: the seats mean something else in each.
-    match_type: pb::MatchType,
-    kills_to_win: u32,
-    seats: Seats,
-    /// Everyone in the room, longest first: the first takes over as host. Each holds a seat.
-    members: Vec<Member>,
-    game: Option<Match>,
-    results_left: Option<f32>,
-}
-
-impl Room {
-    fn ffa(&self) -> bool {
-        self.match_type == pb::MatchType::FreeForAll
-    }
-
-    /// Seats a newcomer on the team with fewer humans, or else on the other one. When the humans
-    /// are level, a team with an open seat is preferred. A free-for-all room takes the first open
-    /// seat, or else the first bot's. `false` when every seat a newcomer could take holds a human.
-    fn seat_newcomer(&mut self, id: u32) -> bool {
-        if self.ffa() {
-            return self.seats.sit_first(id).is_some();
-        }
-        let first = match self.seats.humans(0).cmp(&self.seats.humans(1)) {
-            Ordering::Less => 0,
-            Ordering::Greater => 1,
-            // Level: a team with an open seat comes before one where a bot would have to give way.
-            Ordering::Equal if !self.seats.has_open(0) && self.seats.has_open(1) => 1,
-            Ordering::Equal => 0,
-        };
-        for team in [first, 1 - first] {
-            if self.seats.sit(team, id).is_some() {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Seats a newcomer to a running match, in an open seat only: bots keep theirs until the match
-    /// is over. A team room takes the team with fewer players, bots included, then the one with
-    /// fewer humans, then red. A free-for-all room takes the first open seat by number. Returns the
-    /// team they play for, `Unspecified` in a free-for-all; `None` when no seat is open.
-    fn seat_mid_match(&mut self, id: u32) -> Option<pb::Team> {
-        if self.ffa() {
-            // Red's seats are the first in the numbering.
-            (0..2).find_map(|team| self.seats.sit_open(team, id))?;
-            return Some(pb::Team::Unspecified);
-        }
-        let seats = &self.seats;
-        let team = (0..2)
-            .filter(|&team| seats.has_open(team))
-            .min_by_key(|&team| (seats.humans(team) + seats.bots(team), seats.humans(team)))?;
-        self.seats.sit_open(team, id)?;
-        Some(TEAMS[team])
-    }
 }
 
 #[derive(Default)]
@@ -1012,6 +817,7 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::TEAM_SIZE;
     use tokio::sync::mpsc::{channel, Receiver};
 
     const RED: usize = 0;

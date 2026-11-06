@@ -1,6 +1,6 @@
 //! The weapon table. The rifle is the baseline every other stat is judged against.
 
-use super::components::GameRng;
+use super::resources::GameRng;
 use crate::pb::{self, WeaponKind};
 
 pub struct Stats {

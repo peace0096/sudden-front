@@ -2,7 +2,8 @@ use super::components::*;
 use super::map::build_map;
 use super::nav::NavGrid;
 use super::physics::{blocks, step_move, step_vertical};
-use super::systems::{roll_grenade, GRENADE_FUSE, GRENADE_RADIUS};
+use super::resources::*;
+use super::systems::grenade::{roll_grenade, GRENADE_FUSE, GRENADE_RADIUS};
 use super::*;
 use crate::pb;
 use pb::Augment as Aug;
@@ -829,13 +830,13 @@ fn scope_needs_a_moment_and_only_counts_for_scoped_weapons() {
     use pb::WeaponKind::*;
     let sniper = weapons::stats(Sniper);
     assert!(
-        systems::shot_cone(sniper, true, false, 0.0)
-            < systems::shot_cone(sniper, false, false, 0.0) / 10.0
+        systems::fire::shot_cone(sniper, true, false, 0.0)
+            < systems::fire::shot_cone(sniper, false, false, 0.0) / 10.0
     );
     let rifle = weapons::stats(Rifle);
     assert_eq!(
-        systems::shot_cone(rifle, true, false, 0.0),
-        systems::shot_cone(rifle, false, false, 0.0)
+        systems::fire::shot_cone(rifle, true, false, 0.0),
+        systems::fire::shot_cone(rifle, false, false, 0.0)
     );
 
     let mut game = duel();
@@ -852,7 +853,7 @@ fn scope_needs_a_moment_and_only_counts_for_scoped_weapons() {
         game.tick();
     }
     let early = game.world.get::<Weapon>(entity).unwrap().aim_time;
-    assert!(early < systems::SCOPE_READY_TIME);
+    assert!(early < systems::fire::SCOPE_READY_TIME);
     for seq in 3..12 {
         game.push_inputs(
             SHOOTER,
@@ -863,7 +864,7 @@ fn scope_needs_a_moment_and_only_counts_for_scoped_weapons() {
         );
         game.tick();
     }
-    assert!(game.world.get::<Weapon>(entity).unwrap().aim_time >= systems::SCOPE_READY_TIME);
+    assert!(game.world.get::<Weapon>(entity).unwrap().aim_time >= systems::fire::SCOPE_READY_TIME);
 }
 
 #[test]
@@ -2617,7 +2618,7 @@ fn a_shield_stops_a_taser() {
 #[test]
 fn bots_fire_their_taser_once_then_use_their_gun() {
     assert_eq!(
-        systems::issue_weapons(RIFLE, &[Aug::Taser], true).kind,
+        systems::weapon::issue_weapons(RIFLE, &[Aug::Taser], true).kind,
         Kind::Taser
     );
     let mut game = Match::new(
@@ -2628,7 +2629,7 @@ fn bots_fire_their_taser_once_then_use_their_gun() {
     );
     let mut query = game.world.query_filtered::<Entity, With<BotBrain>>();
     let bot = query.iter(&game.world).next().unwrap();
-    let mut weapon = systems::issue_weapons(RIFLE, &[Aug::Taser], true);
+    let mut weapon = systems::weapon::issue_weapons(RIFLE, &[Aug::Taser], true);
     weapon.magazine = 0;
     *game.world.get_mut::<Weapon>(bot).unwrap() = weapon;
     game.tick();

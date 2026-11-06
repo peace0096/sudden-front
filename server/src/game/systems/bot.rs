@@ -1,9 +1,11 @@
 //! Bots feed ordinary `InputCmd`s into the same queue as humans, so they obey
 //! exactly the same movement, ammo and fire-rate rules.
 
-use super::components::*;
-use super::physics::line_clear;
-use super::*;
+use super::grenade::{GRENADE_GRAVITY, THROW_LIFT, THROW_SPEED};
+use crate::game::components::*;
+use crate::game::physics::line_clear;
+use crate::game::resources::*;
+use crate::game::*;
 use crate::pb;
 use bevy_ecs::prelude::*;
 use std::f32::consts::{PI, TAU};
@@ -49,14 +51,14 @@ fn yaw_to(dx: f32, dz: f32) -> f32 {
 /// distance x with T the tangent of the angle it leaves at, it is x·T − k(1 + T²) up, where
 /// k = g·x²/(2v²).
 fn lob_pitch(distance: f32, rise: f32) -> Option<f32> {
-    let (speed, gravity) = (systems::THROW_SPEED, systems::GRENADE_GRAVITY);
+    let (speed, gravity) = (THROW_SPEED, GRENADE_GRAVITY);
     let k = gravity * distance * distance / (2.0 * speed * speed);
     let room = distance * distance - 4.0 * k * (rise + k);
     if k <= 0.0 || room < 0.0 {
         return None;
     }
     let tangent = (distance - room.sqrt()) / (2.0 * k);
-    Some(tangent.atan() - systems::THROW_LIFT)
+    Some(tangent.atan() - THROW_LIFT)
 }
 
 struct Seen {

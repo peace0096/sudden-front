@@ -1,6 +1,6 @@
 //! Augment mode: the card pool and how hands are dealt.
 
-use super::components::GameRng;
+use super::resources::GameRng;
 use crate::pb::{Augment, AugmentGrade};
 
 pub const AUGMENT_MAX_HP: i32 = 150;
