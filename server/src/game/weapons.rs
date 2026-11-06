@@ -350,8 +350,16 @@ pub fn reload_time(stats: &Stats, active: &[pb::Augment]) -> f32 {
     if active.contains(&pb::Augment::Borrow) {
         return 0.0;
     }
-    let quick = if active.contains(&pb::Augment::QuickReload) { 0.5 } else { 1.0 };
-    let slow = if active.contains(&pb::Augment::NoRecoil) { 2.0 } else { 1.0 };
+    let quick = if active.contains(&pb::Augment::QuickReload) {
+        0.5
+    } else {
+        1.0
+    };
+    let slow = if active.contains(&pb::Augment::NoRecoil) {
+        2.0
+    } else {
+        1.0
+    };
     stats.reload_time * quick * slow
 }
 
@@ -441,7 +449,11 @@ pub fn primary_for(kind: WeaponKind, active: &[pb::Augment]) -> WeaponKind {
 
 /// The ordinary weapon behind an augment's version of it.
 pub fn base_primary(kind: WeaponKind) -> WeaponKind {
-    if kind == WeaponKind::AkimboSmg { WeaponKind::Smg } else { kind }
+    if kind == WeaponKind::AkimboSmg {
+        WeaponKind::Smg
+    } else {
+        kind
+    }
 }
 
 pub fn all_stats() -> Vec<pb::WeaponStats> {

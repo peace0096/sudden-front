@@ -79,7 +79,15 @@ pub fn bot_think(
     state: Res<MatchState>,
     mut rng: ResMut<GameRng>,
     others: Query<(Entity, &Player, &Pose, &Vitals, &Perks)>,
-    mut bots: Query<(Entity, &mut BotBrain, &mut Inputs, &mut Weapon, &Pose, &Player, &Vitals)>,
+    mut bots: Query<(
+        Entity,
+        &mut BotBrain,
+        &mut Inputs,
+        &mut Weapon,
+        &Pose,
+        &Player,
+        &Vitals,
+    )>,
 ) {
     let living: Vec<Seen> = others
         .iter()
@@ -90,7 +98,12 @@ pub fn bot_think(
             x: pose.x,
             z: pose.z,
             // A player in the air or on a box top carries their chest up with them.
-            aim_y: pose.y + if pose.crouching { AIM_CHEST_Y_CROUCHED } else { AIM_CHEST_Y },
+            aim_y: pose.y
+                + if pose.crouching {
+                    AIM_CHEST_Y_CROUCHED
+                } else {
+                    AIM_CHEST_Y
+                },
             feet: pose.y,
             king: perks.king(),
         })
@@ -121,7 +134,9 @@ pub fn bot_think(
         let melee = stats.melee_range > 0.0;
         // Nobody can hurt a King, so a bot only goes for one while it is a King itself.
         let king = weapon.kind == pb::WeaponKind::Hammer;
-        let prey = |o: &&Seen| rules.hostile(player.team, o.team) && o.entity != entity && (king || !o.king);
+        let prey = |o: &&Seen| {
+            rules.hostile(player.team, o.team) && o.entity != entity && (king || !o.king)
+        };
 
         let eye = [pose.x, pose.y + EYE_HEIGHT, pose.z];
         let mut best: Option<(&Seen, f32)> = None;
@@ -168,7 +183,8 @@ pub fn bot_think(
             brain.aim_error_pitch *= settle;
 
             let wobble = AIM_WOBBLE * (state.tick as f32 * 0.17 + entity.index_u32() as f32).sin();
-            let want_yaw = yaw_to(enemy.x - pose.x, enemy.z - pose.z) + brain.aim_error_yaw + wobble;
+            let want_yaw =
+                yaw_to(enemy.x - pose.x, enemy.z - pose.z) + brain.aim_error_yaw + wobble;
             let want_pitch = (enemy.aim_y - eye[1]).atan2(dist) + brain.aim_error_pitch;
             cmd.yaw = turn_towards(pose.yaw, want_yaw, TURN_RATE * TICK_DT);
             cmd.pitch = want_pitch.clamp(-MAX_PITCH, MAX_PITCH);
@@ -221,7 +237,11 @@ pub fn bot_think(
             } else if on_target && weapon.magazine > 0 {
                 if brain.burst_left == 0 {
                     // A bolt-action fires single aimed shots.
-                    brain.burst_left = if stats.has_scope { 1 } else { 4 + rng.index(6) as u32 };
+                    brain.burst_left = if stats.has_scope {
+                        1
+                    } else {
+                        4 + rng.index(6) as u32
+                    };
                 }
                 cmd.fire = true;
                 if weapon.cooldown <= 0.0 && !weapon.reloading() {
@@ -258,7 +278,11 @@ pub fn bot_think(
                 };
                 brain.path = arena.nav.path((pose.x, pose.z), goal);
                 brain.path_index = 0;
-                brain.repath_in = if king { rng.range(1.5, 3.0) } else { rng.range(5.0, 10.0) };
+                brain.repath_in = if king {
+                    rng.range(1.5, 3.0)
+                } else {
+                    rng.range(5.0, 10.0)
+                };
             }
 
             while let Some(&(wx, wz)) = brain.path.get(brain.path_index) {

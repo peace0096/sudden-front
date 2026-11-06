@@ -47,7 +47,10 @@ fn assemble(
     let mut all_props: Vec<MapProp> = props.iter().map(mirror_prop).collect();
     all_props.extend(props);
     // A leaning container collides as slices that follow it.
-    for p in all_props.iter().filter(|p| p.kind == PropKind::TiltedContainer as i32) {
+    for p in all_props
+        .iter()
+        .filter(|p| p.kind == PropKind::TiltedContainer as i32)
+    {
         boxes.extend(lean_slices(p));
     }
     MapData {
@@ -102,23 +105,37 @@ fn lean_slices(p: &MapProp) -> Vec<MapBox> {
     let (half_length, half_height, half_depth) = (p.width / 2.0, CONTAINER_H / 2.0, p.height / 2.0);
     let (sin, cos) = p.tilt.sin_cos();
     // The container's side tipped over, as (along, up) corners in order round it.
-    let corners: Vec<(f32, f32)> = [(-half_length, -half_height), (half_length, -half_height), (half_length, half_height), (-half_length, half_height)]
-        .into_iter()
-        .map(|(u, v)| (u * cos - v * sin, u * sin + v * cos))
-        .collect();
+    let corners: Vec<(f32, f32)> = [
+        (-half_length, -half_height),
+        (half_length, -half_height),
+        (half_length, half_height),
+        (-half_length, half_height),
+    ]
+    .into_iter()
+    .map(|(u, v)| (u * cos - v * sin, u * sin + v * cos))
+    .collect();
     let start = corners.iter().map(|c| c.0).fold(f32::MAX, f32::min);
     let end = corners.iter().map(|c| c.0).fold(f32::MIN, f32::max);
     let count = ((end - start) / LEAN_SLICE).ceil().max(1.0) as usize;
     let length = (end - start) / count as f32;
     // Turned about +Y as three.js turns the model: x' = x cos + z sin, z' = −x sin + z cos.
     let (yaw_sin, yaw_cos) = p.rotation.sin_cos();
-    let world = |u: f32, w: f32| (p.x + u * yaw_cos + w * yaw_sin, p.z - u * yaw_sin + w * yaw_cos);
+    let world = |u: f32, w: f32| {
+        (
+            p.x + u * yaw_cos + w * yaw_sin,
+            p.z - u * yaw_sin + w * yaw_cos,
+        )
+    };
     (0..count)
         .filter_map(|i| {
             let (u0, u1) = (start + length * i as f32, start + length * (i + 1) as f32);
             // The heights the side reaches across the slice: its corners within it, and where its
             // edges cross the slice's ends.
-            let mut heights: Vec<f32> = corners.iter().filter(|c| (u0..=u1).contains(&c.0)).map(|c| c.1).collect();
+            let mut heights: Vec<f32> = corners
+                .iter()
+                .filter(|c| (u0..=u1).contains(&c.0))
+                .map(|c| c.1)
+                .collect();
             for k in 0..corners.len() {
                 let ((ua, va), (ub, vb)) = (corners[k], corners[(k + 1) % corners.len()]);
                 for cut in [u0, u1] {
@@ -129,10 +146,29 @@ fn lean_slices(p: &MapProp) -> Vec<MapBox> {
             }
             let low = heights.iter().copied().reduce(f32::min)?;
             let high = heights.iter().copied().reduce(f32::max)?;
-            let ends = [world(u0, -half_depth), world(u0, half_depth), world(u1, -half_depth), world(u1, half_depth)];
-            let (x0, x1) = (ends.iter().map(|e| e.0).fold(f32::MAX, f32::min), ends.iter().map(|e| e.0).fold(f32::MIN, f32::max));
-            let (z0, z1) = (ends.iter().map(|e| e.1).fold(f32::MAX, f32::min), ends.iter().map(|e| e.1).fold(f32::MIN, f32::max));
-            Some(bx(BoxKind::Invisible, x0, x1, (p.y + low).max(0.0), p.y + high, z0, z1))
+            let ends = [
+                world(u0, -half_depth),
+                world(u0, half_depth),
+                world(u1, -half_depth),
+                world(u1, half_depth),
+            ];
+            let (x0, x1) = (
+                ends.iter().map(|e| e.0).fold(f32::MAX, f32::min),
+                ends.iter().map(|e| e.0).fold(f32::MIN, f32::max),
+            );
+            let (z0, z1) = (
+                ends.iter().map(|e| e.1).fold(f32::MAX, f32::min),
+                ends.iter().map(|e| e.1).fold(f32::MIN, f32::max),
+            );
+            Some(bx(
+                BoxKind::Invisible,
+                x0,
+                x1,
+                (p.y + low).max(0.0),
+                p.y + high,
+                z0,
+                z1,
+            ))
         })
         .collect()
 }
@@ -276,7 +312,15 @@ fn supply_yard() -> MapDef {
         (-46.0, 24.0),
     ];
     MapDef {
-        data: assemble(MapId::SupplyYard, "SUPPLY YARD", 50.0, 32.0, yard_boxes(), centre, yard_props()),
+        data: assemble(
+            MapId::SupplyYard,
+            "SUPPLY YARD",
+            50.0,
+            32.0,
+            yard_boxes(),
+            centre,
+            yard_props(),
+        ),
         ffa_spawns: ffa_spawns(
             &spawns,
             &[
@@ -334,8 +378,13 @@ pub const WAREHOUSE_CLIMBS: [(f32, f32, f32, f32); 6] = [
 /// The three crates of one of `WAREHOUSE_CLIMBS`.
 fn climb((x, z, dx, dz): (f32, f32, f32, f32)) -> [MapBox; 3] {
     let r = CRATE_H / 2.0;
-    let at = |x: f32, z: f32, y0: f32| bx(BoxKind::Crate, x - r, x + r, y0, y0 + CRATE_H, z - r, z + r);
-    [at(x, z, 0.0), at(x, z, CRATE_H), at(x + dx * CRATE_H, z + dz * CRATE_H, 0.0)]
+    let at =
+        |x: f32, z: f32, y0: f32| bx(BoxKind::Crate, x - r, x + r, y0, y0 + CRATE_H, z - r, z + r);
+    [
+        at(x, z, 0.0),
+        at(x, z, CRATE_H),
+        at(x + dx * CRATE_H, z + dz * CRATE_H, 0.0),
+    ]
 }
 
 fn warehouse_boxes() -> Vec<MapBox> {
@@ -393,7 +442,15 @@ fn warehouse_props() -> Vec<MapProp> {
     }];
     // Roof trusses and lights over each half, louvered vents high on the end wall.
     for x in [-26.0, -18.0, -10.0, -2.0] {
-        props.push(prop(Truss, x, WH_CEILING - 1.5, 0.0, 0.0, WH_HALF_Z * 2.0, 1.4));
+        props.push(prop(
+            Truss,
+            x,
+            WH_CEILING - 1.5,
+            0.0,
+            0.0,
+            WH_HALF_Z * 2.0,
+            1.4,
+        ));
     }
     for (x, z) in [(-22.0, -10.0), (-22.0, 10.0), (-8.0, -10.0), (-8.0, 10.0)] {
         props.push(prop(CeilingLight, x, WH_CEILING - 2.3, z, 0.0, 0.0, 0.0));
@@ -414,7 +471,15 @@ fn warehouse() -> MapDef {
     use BoxKind::*;
     let crate_h = 1.2;
     let centre = vec![
-        bx(Roof, -WH_HALF_X - 1.0, WH_HALF_X + 1.0, WH_CEILING, WH_CEILING + 0.4, -WH_HALF_Z - 1.0, WH_HALF_Z + 1.0),
+        bx(
+            Roof,
+            -WH_HALF_X - 1.0,
+            WH_HALF_X + 1.0,
+            WH_CEILING,
+            WH_CEILING + 0.4,
+            -WH_HALF_Z - 1.0,
+            WH_HALF_Z + 1.0,
+        ),
         bx(Crate, -1.2, 0.0, 0.0, crate_h, 0.0, 1.2),
         bx(Crate, 0.0, 1.2, 0.0, crate_h, -1.2, 0.0),
         bx(Crate, -0.6, 0.6, crate_h, crate_h * 2.0, -0.6, 0.6),
@@ -429,11 +494,26 @@ fn warehouse() -> MapDef {
         (-25.0, 16.0),
     ];
     MapDef {
-        data: assemble(MapId::Warehouse, "WAREHOUSE", WH_HALF_X, WH_HALF_Z, warehouse_boxes(), centre, warehouse_props()),
+        data: assemble(
+            MapId::Warehouse,
+            "WAREHOUSE",
+            WH_HALF_X,
+            WH_HALF_Z,
+            warehouse_boxes(),
+            centre,
+            warehouse_props(),
+        ),
         // The hall: the bots' lanes but the two in the vent tunnel, and beside the tilted container.
         ffa_spawns: ffa_spawns(
             &spawns,
-            &[(-5.0, 0.0), (-19.0, -10.0), (-19.0, 8.0), (-8.0, -12.0), (-10.0, 4.0), (-3.0, 16.0)],
+            &[
+                (-5.0, 0.0),
+                (-19.0, -10.0),
+                (-19.0, 8.0),
+                (-8.0, -12.0),
+                (-10.0, 4.0),
+                (-3.0, 16.0),
+            ],
         ),
         spawns,
         lanes: vec![

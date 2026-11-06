@@ -69,9 +69,10 @@ impl NavGrid {
 
     /// Cell-centre waypoints from start to goal, excluding the start cell.
     pub fn path(&self, from: (f32, f32), to: (f32, f32)) -> Vec<(f32, f32)> {
-        let (Some(start), Some(goal)) =
-            (self.nearest_open(from.0, from.1), self.nearest_open(to.0, to.1))
-        else {
+        let (Some(start), Some(goal)) = (
+            self.nearest_open(from.0, from.1),
+            self.nearest_open(to.0, to.1),
+        ) else {
             return Vec::new();
         };
         let index = |c: (i32, i32)| (c.1 * self.width + c.0) as usize;
@@ -97,7 +98,10 @@ impl NavGrid {
                     continue;
                 }
                 // No cutting corners past walls.
-                if dx != 0 && dz != 0 && !(self.is_open(cell.0 + dx, cell.1) && self.is_open(cell.0, cell.1 + dz)) {
+                if dx != 0
+                    && dz != 0
+                    && !(self.is_open(cell.0 + dx, cell.1) && self.is_open(cell.0, cell.1 + dz))
+                {
                     continue;
                 }
                 parent[index(next)] = index(cell) as i32;

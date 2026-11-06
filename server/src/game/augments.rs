@@ -59,7 +59,11 @@ const PRISM: [Augment; 5] = [
 ];
 
 pub fn max_hp(base: i32, active: &[Augment]) -> i32 {
-    if active.contains(&Augment::Vest) { VEST_MAX_HP } else { base }
+    if active.contains(&Augment::Vest) {
+        VEST_MAX_HP
+    } else {
+        base
+    }
 }
 
 fn pool(grade: AugmentGrade) -> &'static [Augment] {
@@ -87,9 +91,18 @@ pub fn roll_grade(rng: &mut GameRng) -> AugmentGrade {
 /// back to the next one that has, which only matters once most of the pool is gone.
 pub fn deal_one(rng: &mut GameRng, seen: &mut Vec<Augment>) -> Option<Augment> {
     let first = roll_grade(rng);
-    let order = [first, AugmentGrade::Silver, AugmentGrade::Gold, AugmentGrade::Prism];
+    let order = [
+        first,
+        AugmentGrade::Silver,
+        AugmentGrade::Gold,
+        AugmentGrade::Prism,
+    ];
     let card = order.iter().find_map(|&grade| {
-        let fresh: Vec<Augment> = pool(grade).iter().copied().filter(|a| !seen.contains(a)).collect();
+        let fresh: Vec<Augment> = pool(grade)
+            .iter()
+            .copied()
+            .filter(|a| !seen.contains(a))
+            .collect();
         (!fresh.is_empty()).then(|| fresh[rng.index(fresh.len())])
     })?;
     seen.push(card);

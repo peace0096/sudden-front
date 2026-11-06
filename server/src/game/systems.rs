@@ -1,7 +1,9 @@
 //! Server-authoritative game rules, run in order every tick.
 
 use super::components::*;
-use super::physics::{line_clear, ray_aabb, ray_world, step_move, step_vertical, sweep_ball, view_dir};
+use super::physics::{
+    line_clear, ray_aabb, ray_world, step_move, step_vertical, sweep_ball, view_dir,
+};
 use super::weapons::{self, Stats as WeaponStats};
 use super::*;
 use crate::pb;
@@ -89,7 +91,11 @@ pub fn consume_inputs(
                 continue;
             }
 
-            let yaw = if cmd.yaw.is_finite() { cmd.yaw } else { pose.yaw };
+            let yaw = if cmd.yaw.is_finite() {
+                cmd.yaw
+            } else {
+                pose.yaw
+            };
             let pitch = if cmd.pitch.is_finite() {
                 cmd.pitch.clamp(-MAX_PITCH, MAX_PITCH)
             } else {
@@ -148,7 +154,11 @@ pub fn consume_inputs(
 }
 
 fn load_rounds(weapon: &mut Weapon, wanted: u32, infinite: bool) {
-    let moved = if infinite { wanted } else { wanted.min(weapon.reserve) };
+    let moved = if infinite {
+        wanted
+    } else {
+        wanted.min(weapon.reserve)
+    };
     weapon.magazine += moved;
     if !infinite {
         weapon.reserve -= moved;
@@ -205,7 +215,8 @@ pub fn update_weapons(
         } else {
             // An empty magazine reloads by itself; R reloads early.
             let wants_reload = intent.reload || weapon.magazine == 0;
-            if wants_reload && weapon.magazine < stats.magazine && (infinite || weapon.reserve > 0) {
+            if wants_reload && weapon.magazine < stats.magazine && (infinite || weapon.reserve > 0)
+            {
                 log.push(Event::Reload(pb::ReloadEvent {
                     player_id: player.id,
                 }));
@@ -230,13 +241,27 @@ pub fn update_weapons(
 
 /// (zone, min, max) of a player's hitboxes, standing on `feet` (their height above the floor).
 /// `pad` widens them, which keeps melee from demanding pixel-perfect aim.
-fn hitboxes(x: f32, feet: f32, z: f32, pad: f32, crouching: bool, head_scale: f32) -> [(pb::HitZone, [f32; 3], [f32; 3]); 3] {
+fn hitboxes(
+    x: f32,
+    feet: f32,
+    z: f32,
+    pad: f32,
+    crouching: bool,
+    head_scale: f32,
+) -> [(pb::HitZone, [f32; 3], [f32; 3]); 3] {
     let boxed = |hw: f32, y0: f32, y1: f32| {
-        ([x - hw - pad, feet + y0, z - hw - pad], [x + hw + pad, feet + y1, z + hw + pad])
+        (
+            [x - hw - pad, feet + y0, z - hw - pad],
+            [x + hw + pad, feet + y1, z + hw + pad],
+        )
     };
     let drop = if crouching { CROUCH_DROP } else { 0.0 };
     // A resized head still sits on the same neck.
-    let head = boxed(0.125 * head_scale, 1.5 - drop, 1.5 + 0.26 * head_scale - drop);
+    let head = boxed(
+        0.125 * head_scale,
+        1.5 - drop,
+        1.5 + 0.26 * head_scale - drop,
+    );
     let body = boxed(0.28, 0.85 - drop, 1.5 - drop);
     let legs = boxed(0.22, 0.0, 0.85 - drop);
     [
@@ -247,7 +272,15 @@ fn hitboxes(x: f32, feet: f32, z: f32, pad: f32, crouching: bool, head_scale: f3
 }
 
 /// Distance along a ray to a player's shield, which stands in front of them on `feet`.
-fn ray_shield(origin: [f32; 3], dir: [f32; 3], x: f32, feet: f32, z: f32, yaw: f32, crouching: bool) -> Option<f32> {
+fn ray_shield(
+    origin: [f32; 3],
+    dir: [f32; 3],
+    x: f32,
+    feet: f32,
+    z: f32,
+    yaw: f32,
+    crouching: bool,
+) -> Option<f32> {
     // Into the player's frame, where they face -Z and stand at height 0.
     let (sin, cos) = yaw.sin_cos();
     let local = |dx: f32, dz: f32| (dx * cos - dz * sin, dx * sin + dz * cos);
@@ -264,14 +297,17 @@ fn ray_shield(origin: [f32; 3], dir: [f32; 3], x: f32, feet: f32, z: f32, yaw: f
 
 /// The slot 1 weapon an augment comes with, which the player can't change.
 pub fn forced_primary(active: &[pb::Augment]) -> Option<pb::WeaponKind> {
-    active.contains(&pb::Augment::Missile).then_some(pb::WeaponKind::Missile)
+    active
+        .contains(&pb::Augment::Missile)
+        .then_some(pb::WeaponKind::Missile)
 }
 
 /// A spawning player's weapons. Bots never change slot, so those whose augment
 /// lives in slot 2 start with it in hand.
 pub fn issue_weapons(primary: pb::WeaponKind, active: &[pb::Augment], is_bot: bool) -> Weapon {
     let mut weapon = Weapon::equipped(primary, active);
-    if is_bot && (weapon.sidearm != pb::WeaponKind::Pistol || active.contains(&pb::Augment::Shield)) {
+    if is_bot && (weapon.sidearm != pb::WeaponKind::Pistol || active.contains(&pb::Augment::Shield))
+    {
         weapon.switch_to(2);
         weapon.cooldown = 0.0;
     }
@@ -281,7 +317,12 @@ pub fn issue_weapons(primary: pb::WeaponKind, active: &[pb::Augment], is_bot: bo
 /// Half-angle in radians of the random cone a shot leaves in.
 pub fn shot_cone(stats: &WeaponStats, scoped: bool, moving: bool, bloom: f32) -> f32 {
     if scoped && stats.has_scope {
-        stats.scoped_spread_still + if moving { stats.scoped_spread_moving } else { 0.0 }
+        stats.scoped_spread_still
+            + if moving {
+                stats.scoped_spread_moving
+            } else {
+                0.0
+            }
     } else {
         stats.spread_still + if moving { stats.spread_moving } else { 0.0 } + bloom
     }
@@ -338,16 +379,32 @@ fn blast(
 ) {
     let stats = weapons::stats(source.weapon);
     for target in targets.iter().filter(|s| blast_target(rules, source, s)) {
-        let (x, feet, z, crouching, yaw) = (target.pose.x, target.pose.y, target.pose.z, target.pose.crouching, target.pose.yaw);
+        let (x, feet, z, crouching, yaw) = (
+            target.pose.x,
+            target.pose.y,
+            target.pose.z,
+            target.pose.crouching,
+            target.pose.yaw,
+        );
         let torso = [x, feet + if crouching { 0.7 } else { 1.2 }, z];
-        let d = [torso[0] - center[0], torso[1] - center[1], torso[2] - center[2]];
+        let d = [
+            torso[0] - center[0],
+            torso[1] - center[1],
+            torso[2] - center[2],
+        ];
         let distance = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
         if distance >= stats.splash_radius || !line_clear(boxes, center, torso) {
             continue;
         }
         let falloff = 1.0 - SPLASH_FALLOFF * distance / stats.splash_radius;
-        let to_torso = [d[0] / distance.max(1e-4), d[1] / distance.max(1e-4), d[2] / distance.max(1e-4)];
-        let shield = target.shielded && ray_shield(center, to_torso, x, feet, z, yaw, crouching).is_some_and(|t| t < distance);
+        let to_torso = [
+            d[0] / distance.max(1e-4),
+            d[1] / distance.max(1e-4),
+            d[2] / distance.max(1e-4),
+        ];
+        let shield = target.shielded
+            && ray_shield(center, to_torso, x, feet, z, yaw, crouching)
+                .is_some_and(|t| t < distance);
         hits.push(Hit {
             attacker: source.owner,
             attacker_id: source.owner_id,
@@ -403,7 +460,11 @@ fn fly_missiles(
         }
         // Just short of the surface, so the blast isn't on its far side.
         let t = if contact { (t - 0.05).max(0.0) } else { t };
-        missile.pos = [pos[0] + dir[0] * t, pos[1] + dir[1] * t, pos[2] + dir[2] * t];
+        missile.pos = [
+            pos[0] + dir[0] * t,
+            pos[1] + dir[1] * t,
+            pos[2] + dir[2] * t,
+        ];
         missile.life -= TICK_DT;
         if contact {
             let [x, y, z] = missile.pos;
@@ -428,10 +489,18 @@ fn throw_grenade(
 ) {
     weapon.magazine -= 1;
     weapon.cooldown += weapons::stats(pb::WeaponKind::Grenade).fire_interval;
-    let eye = if pose.crouching { CROUCH_EYE_HEIGHT } else { EYE_HEIGHT };
+    let eye = if pose.crouching {
+        CROUCH_EYE_HEIGHT
+    } else {
+        EYE_HEIGHT
+    };
     // Within the thrower's own column, which no box reaches into, so it starts in the open.
     let (sin, cos) = aim.yaw.sin_cos();
-    let pos = [pose.x - sin * THROW_REACH, pose.y + eye, pose.z - cos * THROW_REACH];
+    let pos = [
+        pose.x - sin * THROW_REACH,
+        pose.y + eye,
+        pose.z - cos * THROW_REACH,
+    ];
     let dir = view_dir(aim.yaw, (aim.pitch + THROW_LIFT).min(MAX_PITCH));
     grenades.next_id += 1;
     grenades.live.push(Grenade {
@@ -443,7 +512,9 @@ fn throw_grenade(
         vel: dir.map(|d| d * THROW_SPEED),
         fuse_ticks: FUSE_TICKS,
     });
-    log.push(Event::GrenadeThrown(pb::ThrowEvent { player_id: player.id }));
+    log.push(Event::GrenadeThrown(pb::ThrowEvent {
+        player_id: player.id,
+    }));
     if weapon.magazine == 0 {
         weapon.switch_to(weapon.slot_before_grenade());
     }
@@ -451,12 +522,19 @@ fn throw_grenade(
 
 /// One tick of a grenade's flight: gravity, then the move, bouncing off whatever it touches. Off a
 /// floor or box top slow enough it stays down and rolls, slowed by every touch, until it lies still.
-pub fn roll_grenade(boxes: &[pb::MapBox], half_x: f32, half_z: f32, pos: &mut [f32; 3], vel: &mut [f32; 3]) {
+pub fn roll_grenade(
+    boxes: &[pb::MapBox],
+    half_x: f32,
+    half_z: f32,
+    pos: &mut [f32; 3],
+    vel: &mut [f32; 3],
+) {
     vel[1] -= GRENADE_GRAVITY * TICK_DT;
     let mut left = TICK_DT;
     for _ in 0..GRENADE_CONTACTS {
         let delta = vel.map(|v| v * left);
-        let Some((t, axis, sign)) = sweep_ball(boxes, *pos, delta, GRENADE_RADIUS, half_x, half_z) else {
+        let Some((t, axis, sign)) = sweep_ball(boxes, *pos, delta, GRENADE_RADIUS, half_x, half_z)
+        else {
             for a in 0..3 {
                 pos[a] += delta[a];
             }
@@ -507,7 +585,13 @@ fn fly_grenades(
             return false;
         }
         grenade.fuse_ticks -= 1;
-        roll_grenade(&map.boxes, map.half_x, map.half_z, &mut grenade.pos, &mut grenade.vel);
+        roll_grenade(
+            &map.boxes,
+            map.half_x,
+            map.half_z,
+            &mut grenade.pos,
+            &mut grenade.vel,
+        );
         true
     });
 }
@@ -539,26 +623,32 @@ pub fn fire_weapons(
     // Copied up front because shooters mutate their weapons while reading targets.
     let world_view: Vec<TargetView> = players
         .iter()
-        .map(|(entity, player, pose, _, weapon, vitals, _, history, perks, _)| TargetView {
-            entity,
-            id: player.id,
-            team: player.team,
-            pose: *pose,
-            samples: History {
-                samples: history.samples.clone(),
+        .map(
+            |(entity, player, pose, _, weapon, vitals, _, history, perks, _)| TargetView {
+                entity,
+                id: player.id,
+                team: player.team,
+                pose: *pose,
+                samples: History {
+                    samples: history.samples.clone(),
+                },
+                hittable: vitals.alive && vitals.protect_left <= 0.0,
+                head_scale: perks.head_scale,
+                // The shield comes out with the pistol.
+                shielded: perks.shield_hp > 0 && weapon.kind == pb::WeaponKind::Pistol,
             },
-            hittable: vitals.alive && vitals.protect_left <= 0.0,
-            head_scale: perks.head_scale,
-            // The shield comes out with the pistol.
-            shielded: perks.shield_hp > 0 && weapon.kind == pb::WeaponKind::Pistol,
-        })
+        )
         .collect();
 
     let mut hits: Vec<Hit> = Vec::new();
 
     for (entity, player, pose, intent, mut weapon, mut vitals, _, _, mut perks, _) in &mut players {
         // A burst finishes by itself once started.
-        let fire = intent.fire.or(if weapon.burst_left > 0 { weapon.burst_fire } else { None });
+        let fire = intent.fire.or(if weapon.burst_left > 0 {
+            weapon.burst_fire
+        } else {
+            None
+        });
         let Some(fire) = fire else {
             continue;
         };
@@ -572,7 +662,15 @@ pub fn fire_weapons(
         // One throw at a time; like a shot, it ends spawn protection and Rest's quiet.
         if weapon.kind == pb::WeaponKind::Grenade {
             if weapon.cooldown <= COOLDOWN_SLACK && weapon.magazine > 0 {
-                throw_grenade(&mut grenades, entity, player, pose, fire, &mut weapon, &mut log);
+                throw_grenade(
+                    &mut grenades,
+                    entity,
+                    player,
+                    pose,
+                    fire,
+                    &mut weapon,
+                    &mut log,
+                );
                 vitals.protect_left = 0.0;
                 perks.idle = 0.0;
             }
@@ -593,7 +691,10 @@ pub fn fire_weapons(
         let no_recoil = perks.has(pb::Augment::NoRecoil);
 
         let mut shots = 0;
-        while weapon.cooldown <= COOLDOWN_SLACK && (melee || weapon.magazine > 0) && shots < MAX_SHOTS_PER_TICK {
+        while weapon.cooldown <= COOLDOWN_SLACK
+            && (melee || weapon.magazine > 0)
+            && shots < MAX_SHOTS_PER_TICK
+        {
             shots += 1;
             weapon.reload_left = 0.0;
             if !melee {
@@ -607,7 +708,11 @@ pub fn fire_weapons(
                     weapon.burst_left -= 1;
                 }
                 let burst_on = weapon.burst_left > 0 && weapon.magazine > 0;
-                weapon.cooldown += if burst_on { weapons::BURST_GAP } else { weapons::BURST_RECOVERY };
+                weapon.cooldown += if burst_on {
+                    weapons::BURST_GAP
+                } else {
+                    weapons::BURST_RECOVERY
+                };
             } else {
                 weapon.cooldown += stats.fire_interval;
             }
@@ -617,7 +722,11 @@ pub fn fire_weapons(
             vitals.protect_left = 0.0;
             perks.idle = 0.0;
 
-            let stance = if pose.crouching { CROUCH_SPREAD_FACTOR } else { 1.0 };
+            let stance = if pose.crouching {
+                CROUCH_SPREAD_FACTOR
+            } else {
+                1.0
+            };
             // A shotgun's pattern is what it is, not recoil.
             let cone = if no_recoil && stats.pellets == 0 {
                 0.0
@@ -629,7 +738,11 @@ pub fn fire_weapons(
                 weapon.bloom_hold = stats.fire_interval + BLOOM_HOLD_EXTRA;
             }
 
-            let eye = if pose.crouching { CROUCH_EYE_HEIGHT } else { EYE_HEIGHT };
+            let eye = if pose.crouching {
+                CROUCH_EYE_HEIGHT
+            } else {
+                EYE_HEIGHT
+            };
             let origin = [pose.x, pose.y + eye, pose.z];
             let rewind_tick = fire
                 .render_tick
@@ -648,7 +761,10 @@ pub fn fire_weapons(
                 // Random cone around the aim direction.
                 let angle = rng.range(0.0, std::f32::consts::TAU);
                 let radius = cone * rng.next_f32().sqrt();
-                let dir = view_dir(fire.yaw + radius * angle.cos(), fire.pitch + radius * angle.sin());
+                let dir = view_dir(
+                    fire.yaw + radius * angle.cos(),
+                    fire.pitch + radius * angle.sin(),
+                );
 
                 if stats.splash_radius > 0.0 {
                     missiles.next_id += 1;
@@ -681,12 +797,12 @@ pub fn fire_weapons(
                 let mut hit_player = None;
 
                 // Targets are rewound to what this client was rendering when it fired.
-                for target in world_view
-                    .iter()
-                    .filter(|s| s.hittable && rules.hostile(player.team, s.team) && s.entity != entity)
-                {
+                for target in world_view.iter().filter(|s| {
+                    s.hittable && rules.hostile(player.team, s.team) && s.entity != entity
+                }) {
                     let (x, feet, z, crouching, yaw) = rewound(target);
-                    for (zone, min, max) in hitboxes(x, feet, z, pad, crouching, target.head_scale) {
+                    for (zone, min, max) in hitboxes(x, feet, z, pad, crouching, target.head_scale)
+                    {
                         if let Some(t) = ray_aabb(origin, dir, min, max) {
                             if t < best_t {
                                 best_t = t;
@@ -698,7 +814,8 @@ pub fn fire_weapons(
                         if let Some(t) = ray_shield(origin, dir, x, feet, z, yaw, crouching) {
                             if t < best_t {
                                 best_t = t;
-                                hit_player = Some((target.entity, target.id, pb::HitZone::Body, true));
+                                hit_player =
+                                    Some((target.entity, target.id, pb::HitZone::Body, true));
                             }
                         }
                     }
@@ -736,8 +853,22 @@ pub fn fire_weapons(
         }
     }
 
-    fly_missiles(&arena.map.boxes, &rules, &mut missiles, &world_view, &mut log, &mut hits);
-    fly_grenades(&arena, &rules, &mut grenades, &world_view, &mut log, &mut hits);
+    fly_missiles(
+        &arena.map.boxes,
+        &rules,
+        &mut missiles,
+        &world_view,
+        &mut log,
+        &mut hits,
+    );
+    fly_grenades(
+        &arena,
+        &rules,
+        &mut grenades,
+        &world_view,
+        &mut log,
+        &mut hits,
+    );
 
     for hit in hits {
         if state.winner.is_some() {
@@ -811,7 +942,10 @@ pub fn fire_weapons(
             pb::SpecialKill::Unspecified
         } else if hit.weapon == pb::WeaponKind::Hammer {
             pb::SpecialKill::CuteShot
-        } else if hit.zone == pb::HitZone::Head && victim_level < 0 && players.iter().all(|p| p.8.level >= victim_level) {
+        } else if hit.zone == pb::HitZone::Head
+            && victim_level < 0
+            && players.iter().all(|p| p.8.level >= victim_level)
+        {
             pb::SpecialKill::DotShot
         } else {
             pb::SpecialKill::Unspecified
@@ -891,7 +1025,10 @@ pub fn update_perks(rules: Res<Rules>, mut players: Query<(&Pose, &mut Vitals, &
 /// Big Head mode: runs each King's reign down a tick. When it is over the player is back at
 /// big_head::KING_END_LEVEL, the hammer gone, with a fresh set of their own weapons (full
 /// ammunition, the primary in hand, as at a respawn).
-pub fn update_kings(rules: Res<Rules>, mut players: Query<(&Player, &mut Perks, &mut Weapon, &Loadout)>) {
+pub fn update_kings(
+    rules: Res<Rules>,
+    mut players: Query<(&Player, &mut Perks, &mut Weapon, &Loadout)>,
+) {
     if !rules.big_head {
         return;
     }
@@ -922,7 +1059,11 @@ pub fn choose_spawn(
 
 /// Of `points`, the one furthest from the nearest of `enemies`, or any when there are none.
 /// A free-for-all chooses from all its points this way, with everyone else as an enemy.
-pub fn furthest_spawn(points: &[(f32, f32)], enemies: &[(f32, f32)], rng: &mut GameRng) -> (f32, f32) {
+pub fn furthest_spawn(
+    points: &[(f32, f32)],
+    enemies: &[(f32, f32)],
+    rng: &mut GameRng,
+) -> (f32, f32) {
     if enemies.is_empty() {
         return points[rng.index(points.len())];
     }
@@ -979,7 +1120,9 @@ pub fn respawn_players(
         .map(|(player, pose, _, _, _, _, _)| (player.team, pose.x, pose.z))
         .collect();
 
-    for (player, mut pose, mut vitals, mut weapon, mut loadout, mut history, mut perks) in &mut players {
+    for (player, mut pose, mut vitals, mut weapon, mut loadout, mut history, mut perks) in
+        &mut players
+    {
         if vitals.alive {
             vitals.protect_left = (vitals.protect_left - TICK_DT).max(0.0);
             vitals.stun_left = (vitals.stun_left - TICK_DT).max(0.0);
@@ -1035,7 +1178,11 @@ pub fn respawn_players(
         perks.damaged_by.clear();
         perks.idle = 0.0;
         perks.regen = 0.0;
-        perks.shield_hp = if perks.has(pb::Augment::Shield) { augments::SHIELD_HP } else { 0 };
+        perks.shield_hp = if perks.has(pb::Augment::Shield) {
+            augments::SHIELD_HP
+        } else {
+            0
+        };
         // Big Head mode: a player who reached the top level while down is crowned as they come back.
         if rules.big_head && perks.level >= big_head::MAX_LEVEL && !perks.king() {
             big_head::crown(&mut perks, &mut vitals, &mut weapon, rules.max_hp);
@@ -1050,7 +1197,9 @@ pub fn respawn_players(
 
 pub fn record_history(state: Res<MatchState>, mut players: Query<(&Pose, &mut History)>) {
     for (pose, mut history) in &mut players {
-        history.samples.push_back((state.tick, pose.x, pose.y, pose.z, pose.crouching, pose.yaw));
+        history
+            .samples
+            .push_back((state.tick, pose.x, pose.y, pose.z, pose.crouching, pose.yaw));
         while history.samples.len() > (MAX_REWIND_TICKS + 2) as usize {
             history.samples.pop_front();
         }

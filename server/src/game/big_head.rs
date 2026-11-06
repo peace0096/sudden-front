@@ -19,7 +19,8 @@ pub const KING_TICKS: u32 = (KING_TIME * TICK_RATE as f32) as u32;
 /// Head size, of the model and of its hitbox, at each level from MIN_LEVEL to MAX_LEVEL: 1 at level 0,
 /// a dot at the bottom, the King's at the top. Within augments.rs BIG_HEAD_MAX, which bounds the
 /// character model (client/src/game/art/hitbox.ts HEAD_SCALE_MAX).
-const HEAD_SCALES: [f32; (MAX_LEVEL - MIN_LEVEL + 1) as usize] = [0.4, 0.5, 0.6, 0.7, 0.85, 1.0, 2.0, 3.5, 5.0];
+const HEAD_SCALES: [f32; (MAX_LEVEL - MIN_LEVEL + 1) as usize] =
+    [0.4, 0.5, 0.6, 0.7, 0.85, 1.0, 2.0, 3.5, 5.0];
 
 /// The head's size at `level`, clamped into the levels there are.
 pub fn head_scale(level: i32) -> f32 {
@@ -28,7 +29,11 @@ pub fn head_scale(level: i32) -> f32 {
 
 /// The level a kill takes a player to: up one to MAX_LEVEL, or from below 0 to COMEBACK_LEVEL.
 pub fn after_kill(level: i32) -> i32 {
-    if level < 0 { COMEBACK_LEVEL } else { (level + 1).min(MAX_LEVEL) }
+    if level < 0 {
+        COMEBACK_LEVEL
+    } else {
+        (level + 1).min(MAX_LEVEL)
+    }
 }
 
 /// The level a death takes a player to: down one, to MIN_LEVEL.

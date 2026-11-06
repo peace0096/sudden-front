@@ -124,7 +124,10 @@ pub fn ray_aabb(origin: [f32; 3], dir: [f32; 3], min: [f32; 3], max: [f32; 3]) -
             }
         } else {
             let inv = 1.0 / dir[axis];
-            let (mut t0, mut t1) = ((min[axis] - origin[axis]) * inv, (max[axis] - origin[axis]) * inv);
+            let (mut t0, mut t1) = (
+                (min[axis] - origin[axis]) * inv,
+                (max[axis] - origin[axis]) * inv,
+            );
             if t0 > t1 {
                 std::mem::swap(&mut t0, &mut t1);
             }

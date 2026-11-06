@@ -13,7 +13,11 @@ pub const MAX_PLAYERS: usize = 10;
 /// Both teams, in the order the seats are indexed.
 const TEAMS: [pb::Team; 2] = [pb::Team::Red, pb::Team::Blue];
 /// The game modes and maps a room can be set to.
-const MODES: [pb::GameMode; 3] = [pb::GameMode::Normal, pb::GameMode::Augment, pb::GameMode::BigHead];
+const MODES: [pb::GameMode; 3] = [
+    pb::GameMode::Normal,
+    pb::GameMode::Augment,
+    pb::GameMode::BigHead,
+];
 const MAPS: [pb::MapId; 2] = [pb::MapId::SupplyYard, pb::MapId::Warehouse];
 const RESULTS_SECONDS: f32 = 8.0;
 const MAX_NAME_CHARS: usize = 16;
@@ -356,7 +360,9 @@ impl Hub {
             In::SetBotSlot(set) => self.on_set_bot_slot(id, set),
             In::SetReady(set) => self.on_set_ready(id, set.ready),
             In::PickAugment(pick) => {
-                if let (Ok(augment), Some(game)) = (pb::Augment::try_from(pick.augment), self.game_of(id)) {
+                if let (Ok(augment), Some(game)) =
+                    (pb::Augment::try_from(pick.augment), self.game_of(id))
+                {
                     game.pick_augment(id, augment);
                 }
             }
@@ -392,7 +398,10 @@ impl Hub {
         let name = client.name.clone();
         self.send(
             id,
-            Out::Welcome(pb::Welcome { player_id: id, name }),
+            Out::Welcome(pb::Welcome {
+                player_id: id,
+                name,
+            }),
         );
         let list = self.room_list();
         self.send(id, list);
@@ -516,7 +525,12 @@ impl Hub {
             weapon,
             ready: false,
         });
-        let others: Vec<u32> = room.members.iter().map(|m| m.id).filter(|&m| m != id).collect();
+        let others: Vec<u32> = room
+            .members
+            .iter()
+            .map(|m| m.id)
+            .filter(|&m| m != id)
+            .collect();
         let game = room.game.as_mut().unwrap();
         let roster = game.add_player(id, name, team, weapon);
         let start = game.start_message(id);
@@ -636,7 +650,10 @@ impl Hub {
             self.error(id, "방장만 게임 모드를 바꿀 수 있습니다.");
             return;
         }
-        let Some(mode) = pb::GameMode::try_from(mode).ok().filter(|mode| MODES.contains(mode)) else {
+        let Some(mode) = pb::GameMode::try_from(mode)
+            .ok()
+            .filter(|mode| MODES.contains(mode))
+        else {
             return;
         };
         // As for the kill target: a repeat would only re-broadcast the room list.
@@ -660,7 +677,10 @@ impl Hub {
             self.error(id, "방장만 맵을 바꿀 수 있습니다.");
             return;
         }
-        let Some(map) = pb::MapId::try_from(map).ok().filter(|map| MAPS.contains(map)) else {
+        let Some(map) = pb::MapId::try_from(map)
+            .ok()
+            .filter(|map| MAPS.contains(map))
+        else {
             return;
         };
         if room.game.is_some() || room.map == map {
@@ -721,8 +741,17 @@ impl Hub {
         }
         let ffa = room.ffa();
         if ffa {
-            if room.seats.iter().filter(|(_, _, seat)| *seat != Seat::Open).count() < 2 {
-                self.error(id, "개인전은 사람이나 봇이 2명 이상 있어야 시작할 수 있습니다.");
+            if room
+                .seats
+                .iter()
+                .filter(|(_, _, seat)| *seat != Seat::Open)
+                .count()
+                < 2
+            {
+                self.error(
+                    id,
+                    "개인전은 사람이나 봇이 2명 이상 있어야 시작할 수 있습니다.",
+                );
                 return;
             }
         } else if (0..2).any(|team| room.seats.humans(team) + room.seats.bots(team) == 0) {
@@ -737,12 +766,20 @@ impl Hub {
             .members
             .iter()
             .filter(|m| m.id != room.host && !m.ready)
-            .map(|m| self.clients.get(&m.id).map(|c| c.name.clone()).unwrap_or_default())
+            .map(|m| {
+                self.clients
+                    .get(&m.id)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default()
+            })
             .collect();
         if !waiting.is_empty() {
             self.error(
                 id,
-                &format!("모든 플레이어가 준비해야 시작할 수 있습니다. (준비 안 함: {})", waiting.join(", ")),
+                &format!(
+                    "모든 플레이어가 준비해야 시작할 수 있습니다. (준비 안 함: {})",
+                    waiting.join(", ")
+                ),
             );
             return;
         }
@@ -753,7 +790,11 @@ impl Hub {
             .filter_map(|m| {
                 let (team, _) = room.seats.find(m.id)?;
                 let client = self.clients.get(&m.id)?;
-                let team = if ffa { pb::Team::Unspecified } else { TEAMS[team] };
+                let team = if ffa {
+                    pb::Team::Unspecified
+                } else {
+                    TEAMS[team]
+                };
                 Some((m.id, client.name.clone(), team, m.weapon))
             })
             .collect();
@@ -1184,7 +1225,8 @@ mod tests {
     }
 
     #[test]
-    fn a_running_match_seats_a_newcomer_on_the_team_with_fewer_players_then_fewer_humans_then_red() {
+    fn a_running_match_seats_a_newcomer_on_the_team_with_fewer_players_then_fewer_humans_then_red()
+    {
         let mut room = room_with(false);
         room.seats.sit(RED, 1);
         room.seats.sit(BLUE, 2);
@@ -1305,7 +1347,14 @@ mod tests {
 
         /// The snapshot `id` would be sent of the match running in a room, as it stands now.
         fn snapshot(&mut self, room_id: u32, id: u32) -> pb::Snapshot {
-            let game = self.hub.rooms.get_mut(&room_id).unwrap().game.as_mut().unwrap();
+            let game = self
+                .hub
+                .rooms
+                .get_mut(&room_id)
+                .unwrap()
+                .game
+                .as_mut()
+                .unwrap();
             let mut snapshot = game.shared_snapshot();
             game.fill_personal(id, &mut snapshot);
             snapshot
@@ -1702,20 +1751,29 @@ mod tests {
         h.send(3, join(1));
         h.forget();
         h.send(1, start());
-        assert_eq!(errors(h.take(1)), ["모든 플레이어가 준비해야 시작할 수 있습니다. (준비 안 함: p2, p3)"]);
+        assert_eq!(
+            errors(h.take(1)),
+            ["모든 플레이어가 준비해야 시작할 수 있습니다. (준비 안 함: p2, p3)"]
+        );
         assert!(h.hub.rooms[&1].game.is_none());
 
         h.send(2, ready(true));
         h.forget();
         h.send(1, start());
-        assert_eq!(errors(h.take(1)), ["모든 플레이어가 준비해야 시작할 수 있습니다. (준비 안 함: p3)"]);
+        assert_eq!(
+            errors(h.take(1)),
+            ["모든 플레이어가 준비해야 시작할 수 있습니다. (준비 안 함: p3)"]
+        );
 
         // Readying and then taking it back counts as not ready.
         h.send(3, ready(true));
         h.send(3, ready(false));
         h.forget();
         h.send(1, start());
-        assert_eq!(errors(h.take(1)), ["모든 플레이어가 준비해야 시작할 수 있습니다. (준비 안 함: p3)"]);
+        assert_eq!(
+            errors(h.take(1)),
+            ["모든 플레이어가 준비해야 시작할 수 있습니다. (준비 안 함: p3)"]
+        );
 
         h.send(3, ready(true));
         h.forget();
@@ -1734,8 +1792,17 @@ mod tests {
         h.forget();
 
         h.send(2, ready(true));
-        let shown = |state: pb::RoomState| state.players.iter().map(|p| (p.id, p.ready)).collect::<Vec<_>>();
-        assert_eq!(shown(states(h.take(1)).pop().unwrap()), [(1, false), (2, true)]);
+        let shown = |state: pb::RoomState| {
+            state
+                .players
+                .iter()
+                .map(|p| (p.id, p.ready))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            shown(states(h.take(1)).pop().unwrap()),
+            [(1, false), (2, true)]
+        );
         h.forget();
         // Saying it again changes nothing, so nobody is told.
         h.send(2, ready(true));
@@ -1783,7 +1850,14 @@ mod tests {
         assert_eq!((listed.mode, listed.map), (AUGMENT, WAREHOUSE));
 
         // What already is, UNSPECIFIED and values this server doesn't know change nothing and say nothing.
-        for set in [set_mode(AUGMENT), set_map(WAREHOUSE), set_mode(0), set_mode(99), set_map(0), set_map(99)] {
+        for set in [
+            set_mode(AUGMENT),
+            set_map(WAREHOUSE),
+            set_mode(0),
+            set_mode(99),
+            set_map(0),
+            set_map(99),
+        ] {
             h.send(1, set);
         }
         for id in [1, 2, 3] {
@@ -1793,8 +1867,17 @@ mod tests {
         // A guest is told it is the host's to choose.
         h.send(2, set_mode(pb::GameMode::Normal as i32));
         h.send(2, set_map(pb::MapId::SupplyYard as i32));
-        assert_eq!(errors(h.take(2)), ["방장만 게임 모드를 바꿀 수 있습니다.", "방장만 맵을 바꿀 수 있습니다."]);
-        assert_eq!((h.hub.rooms[&1].mode, h.hub.rooms[&1].map), (pb::GameMode::Augment, pb::MapId::Warehouse));
+        assert_eq!(
+            errors(h.take(2)),
+            [
+                "방장만 게임 모드를 바꿀 수 있습니다.",
+                "방장만 맵을 바꿀 수 있습니다."
+            ]
+        );
+        assert_eq!(
+            (h.hub.rooms[&1].mode, h.hub.rooms[&1].map),
+            (pb::GameMode::Augment, pb::MapId::Warehouse)
+        );
 
         h.send(2, ready(true));
         h.forget();
@@ -1817,7 +1900,10 @@ mod tests {
         for id in [1, 3] {
             assert!(h.take(id).is_empty(), "client {id} was told something");
         }
-        assert_eq!((h.hub.rooms[&1].mode, h.hub.rooms[&1].map), (pb::GameMode::Augment, pb::MapId::Warehouse));
+        assert_eq!(
+            (h.hub.rooms[&1].mode, h.hub.rooms[&1].map),
+            (pb::GameMode::Augment, pb::MapId::Warehouse)
+        );
     }
 
     #[test]
@@ -1832,16 +1918,33 @@ mod tests {
                 ..Default::default()
             }),
         );
-        assert_eq!(states(h.take(1)).pop().unwrap().room.unwrap().mode, BIG_HEAD);
-        assert_eq!(lists(h.take(2)).pop().unwrap().rooms.pop().unwrap().mode, BIG_HEAD);
+        assert_eq!(
+            states(h.take(1)).pop().unwrap().room.unwrap().mode,
+            BIG_HEAD
+        );
+        assert_eq!(
+            lists(h.take(2)).pop().unwrap().rooms.pop().unwrap().mode,
+            BIG_HEAD
+        );
         // The host can leave it and come back to it in the waiting room.
         h.send(1, set_mode(pb::GameMode::Normal as i32));
         h.send(1, set_mode(BIG_HEAD));
         assert_eq!(h.hub.rooms[&1].mode, pb::GameMode::BigHead);
         h.forget();
         h.send(1, start());
-        let config = match_start(h.take(1)).expect("the match starts").config.unwrap();
-        assert_eq!((config.mode, config.min_level, config.max_level, config.king_time), (BIG_HEAD, -5, 3, 20.0));
+        let config = match_start(h.take(1))
+            .expect("the match starts")
+            .config
+            .unwrap();
+        assert_eq!(
+            (
+                config.mode,
+                config.min_level,
+                config.max_level,
+                config.king_time
+            ),
+            (BIG_HEAD, -5, 3, 20.0)
+        );
     }
 
     // ---------------------------------------------------------------- free-for-all rooms
@@ -1864,18 +1967,31 @@ mod tests {
         let room = state.room.unwrap();
         assert_eq!(
             (room.match_type, room.kills_to_win),
-            (pb::MatchType::FreeForAll as i32, crate::game::KILLS_TO_WIN_FFA)
+            (
+                pb::MatchType::FreeForAll as i32,
+                crate::game::KILLS_TO_WIN_FFA
+            )
         );
-        let players: Vec<(u32, i32, u32)> = state.players.iter().map(|p| (p.id, p.team, p.slot)).collect();
+        let players: Vec<(u32, i32, u32)> = state
+            .players
+            .iter()
+            .map(|p| (p.id, p.team, p.slot))
+            .collect();
         assert_eq!(players, [(1, NO_TEAM, 0), (2, NO_TEAM, 1)]);
         let bots: Vec<(i32, u32)> = state.bots.iter().map(|b| (b.team, b.slot)).collect();
-        assert_eq!(bots, (2..10).map(|slot| (NO_TEAM, slot)).collect::<Vec<_>>());
+        assert_eq!(
+            bots,
+            (2..10).map(|slot| (NO_TEAM, slot)).collect::<Vec<_>>()
+        );
 
         // The lobby's list says what kind of room it is.
         let listed = lists(h.take(3)).pop().unwrap().rooms.pop().unwrap();
         assert_eq!(
             (listed.match_type, listed.kills_to_win),
-            (pb::MatchType::FreeForAll as i32, crate::game::KILLS_TO_WIN_FFA)
+            (
+                pb::MatchType::FreeForAll as i32,
+                crate::game::KILLS_TO_WIN_FFA
+            )
         );
     }
 
@@ -1895,7 +2011,10 @@ mod tests {
             let room = states(h.take(id)).pop().unwrap().room.unwrap();
             assert_eq!(
                 (room.match_type, room.kills_to_win),
-                (pb::MatchType::TeamDeathmatch as i32, crate::game::KILLS_TO_WIN)
+                (
+                    pb::MatchType::TeamDeathmatch as i32,
+                    crate::game::KILLS_TO_WIN
+                )
             );
         }
     }
@@ -1922,7 +2041,13 @@ mod tests {
         h.send(1, flip(pb::Team::Unspecified, 7, true));
         assert_eq!(h.hub.rooms[&1].seats.0[BLUE][2], Seat::Bot);
         let state = states(h.take(2)).pop().unwrap();
-        assert_eq!(state.bots, [pb::RoomBot { team: NO_TEAM, slot: 7 }]);
+        assert_eq!(
+            state.bots,
+            [pb::RoomBot {
+                team: NO_TEAM,
+                slot: 7
+            }]
+        );
         h.forget();
 
         // No seat 10, no seat on a team, and no bot in a player's seat.
@@ -1965,7 +2090,10 @@ mod tests {
         let config = start.config.unwrap();
         assert_eq!(
             (config.match_type, config.kills_to_win),
-            (pb::MatchType::FreeForAll as i32, crate::game::KILLS_TO_WIN_FFA)
+            (
+                pb::MatchType::FreeForAll as i32,
+                crate::game::KILLS_TO_WIN_FFA
+            )
         );
         let roster = h.roster(1);
         assert_eq!(roster.len(), 2);
@@ -1994,7 +2122,11 @@ mod tests {
         }
         let back = states(h.take(1)).pop().unwrap();
         assert_eq!(back.room.unwrap().phase, pb::RoomPhase::Waiting as i32);
-        let players: Vec<(u32, i32, u32)> = back.players.iter().map(|p| (p.id, p.team, p.slot)).collect();
+        let players: Vec<(u32, i32, u32)> = back
+            .players
+            .iter()
+            .map(|p| (p.id, p.team, p.slot))
+            .collect();
         assert_eq!(players, [(1, NO_TEAM, 0)]);
 
         // The guest comes back for a second match, and readies again.
@@ -2065,7 +2197,10 @@ mod tests {
         h.send(3, join(1));
         assert_eq!(h.hub.rooms[&1].seats.find(3), Some((BLUE, 1)));
         assert_eq!(h.hub.clients[&3].room, Some(1));
-        assert!(h.hub.rooms[&1].members.iter().any(|m| m.id == 3 && !m.ready));
+        assert!(h.hub.rooms[&1]
+            .members
+            .iter()
+            .any(|m| m.id == 3 && !m.ready));
         // Straight into the match, on blue ...
         let joined = match_start(h.take(3)).expect("the newcomer is sent into the match");
         assert_eq!(joined.your_id, 3);
@@ -2121,12 +2256,18 @@ mod tests {
 
         // Blue's seats are open, but the match is decided ...
         h.send(3, join(1));
-        assert_eq!(errors(h.take(3)), ["경기가 끝나는 중입니다. 잠시 후 다시 들어오세요."]);
+        assert_eq!(
+            errors(h.take(3)),
+            ["경기가 끝나는 중입니다. 잠시 후 다시 들어오세요."]
+        );
         // ... and from the next tick it shows its results.
         h.hub.tick();
         assert!(h.hub.rooms[&1].results_left.is_some());
         h.send(3, join(1));
-        assert_eq!(errors(h.take(3)), ["경기가 끝나는 중입니다. 잠시 후 다시 들어오세요."]);
+        assert_eq!(
+            errors(h.take(3)),
+            ["경기가 끝나는 중입니다. 잠시 후 다시 들어오세요."]
+        );
         assert_eq!(h.hub.clients[&3].room, None);
         assert_eq!(h.hub.rooms[&1].members.len(), 1);
 

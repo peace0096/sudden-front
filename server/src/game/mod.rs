@@ -8,9 +8,9 @@ mod map;
 mod nav;
 mod physics;
 mod systems;
-pub mod weapons;
 #[cfg(test)]
 mod tests;
+pub mod weapons;
 
 use crate::pb;
 use bevy_ecs::prelude::*;
@@ -71,7 +71,11 @@ impl Match {
     ) -> Self {
         let bots = [pb::Team::Red, pb::Team::Blue].map(|team| {
             let have = humans.iter().filter(|h| h.2 == team).count();
-            if fill { TEAM_SIZE.saturating_sub(have) } else { 0 }
+            if fill {
+                TEAM_SIZE.saturating_sub(have)
+            } else {
+                0
+            }
         });
         Self::with_mode(humans, map_id, pb::GameMode::Normal, bots, seed)
     }
@@ -89,7 +93,14 @@ impl Match {
         bots: [usize; 2],
         seed: u64,
     ) -> Self {
-        Self::with_rules(humans, map_id, mode, pb::MatchType::TeamDeathmatch, bots, seed)
+        Self::with_rules(
+            humans,
+            map_id,
+            mode,
+            pb::MatchType::TeamDeathmatch,
+            bots,
+            seed,
+        )
     }
 
     /// `bots` is how many bots each team gets, `[red, blue]`. A free-for-all gets their sum;
@@ -104,20 +115,43 @@ impl Match {
     ) -> Self {
         let augmented = mode == pb::GameMode::Augment;
         let ffa = match_type == pb::MatchType::FreeForAll;
-        let map::MapDef { data: map, spawns, ffa_spawns, lanes } = map::build_map(map_id);
+        let map::MapDef {
+            data: map,
+            spawns,
+            ffa_spawns,
+            lanes,
+        } = map::build_map(map_id);
         let nav = nav::NavGrid::new(&map.boxes, map.half_x, map.half_z);
 
         let mut world = World::new();
-        world.insert_resource(Arena { map, nav, spawns, ffa_spawns, lanes });
+        world.insert_resource(Arena {
+            map,
+            nav,
+            spawns,
+            ffa_spawns,
+            lanes,
+        });
         world.insert_resource(MatchState {
             kills_to_win: if ffa { KILLS_TO_WIN_FFA } else { KILLS_TO_WIN },
-            pick_left: if augmented { augments::AUGMENT_PICK } else { 0.0 },
-            freeze_left: if augmented { augments::AUGMENT_WAIT } else { 0.0 },
+            pick_left: if augmented {
+                augments::AUGMENT_PICK
+            } else {
+                0.0
+            },
+            freeze_left: if augmented {
+                augments::AUGMENT_WAIT
+            } else {
+                0.0
+            },
             ..Default::default()
         });
         world.insert_resource(Rules {
             mode,
-            max_hp: if augmented { augments::AUGMENT_MAX_HP } else { MAX_HP },
+            max_hp: if augmented {
+                augments::AUGMENT_MAX_HP
+            } else {
+                MAX_HP
+            },
             ffa,
             big_head: mode == pb::GameMode::BigHead,
         });
@@ -163,7 +197,10 @@ impl Match {
         if ffa {
             let count = bots[0] + bots[1];
             let seated = humans.len() + count;
-            debug_assert!(seated <= 2 * TEAM_SIZE, "a free-for-all would seat {seated} players");
+            debug_assert!(
+                seated <= 2 * TEAM_SIZE,
+                "a free-for-all would seat {seated} players"
+            );
             for _ in 0..count {
                 game.spawn_bot(pb::Team::Unspecified);
             }
@@ -232,11 +269,15 @@ impl Match {
             return;
         };
         let slot = slot as usize;
-        if slot >= offer.offered.len() || offer.refreshed[slot] || self.world.resource::<MatchState>().pick_left <= 0.0 {
+        if slot >= offer.offered.len()
+            || offer.refreshed[slot]
+            || self.world.resource::<MatchState>().pick_left <= 0.0
+        {
             return;
         }
         let mut seen = offer.seen.clone();
-        let Some(card) = augments::deal_one(&mut self.world.resource_mut::<GameRng>(), &mut seen) else {
+        let Some(card) = augments::deal_one(&mut self.world.resource_mut::<GameRng>(), &mut seen)
+        else {
             return;
         };
         if let Some(mut offer) = self.world.get_mut::<AugmentOffer>(entity) {
@@ -290,8 +331,16 @@ impl Match {
         player.get_mut::<Vitals>().unwrap().hp = max_hp;
         let mut perks = player.get_mut::<Perks>().unwrap();
         perks.augment = augment;
-        perks.shield_hp = if active.contains(&pb::Augment::Shield) { augments::SHIELD_HP } else { 0 };
-        perks.head_scale = if active.contains(&pb::Augment::SmallHead) { 0.5 } else { 1.0 };
+        perks.shield_hp = if active.contains(&pb::Augment::Shield) {
+            augments::SHIELD_HP
+        } else {
+            0
+        };
+        perks.head_scale = if active.contains(&pb::Augment::SmallHead) {
+            0.5
+        } else {
+            1.0
+        };
         perks.active = active;
     }
 
@@ -335,12 +384,28 @@ impl Match {
         }
     }
 
-    fn spawn_player(&mut self, id: u32, name: String, team: pb::Team, is_bot: bool, weapon: pb::WeaponKind) {
+    fn spawn_player(
+        &mut self,
+        id: u32,
+        name: String,
+        team: pb::Team,
+        is_bot: bool,
+        weapon: pb::WeaponKind,
+    ) {
         let (x, z, yaw) = if self.world.resource::<Rules>().ffa {
             // Away from everyone already in, so that the players spread over the map.
-            let others: Vec<(f32, f32)> = self.world.query::<&Pose>().iter(&self.world).map(|p| (p.x, p.z)).collect();
+            let others: Vec<(f32, f32)> = self
+                .world
+                .query::<&Pose>()
+                .iter(&self.world)
+                .map(|p| (p.x, p.z))
+                .collect();
             let points = self.world.resource::<Arena>().ffa_spawns.clone();
-            let (x, z) = systems::furthest_spawn(&points, &others, &mut self.world.resource_mut::<GameRng>());
+            let (x, z) = systems::furthest_spawn(
+                &points,
+                &others,
+                &mut self.world.resource_mut::<GameRng>(),
+            );
             (x, z, systems::ffa_yaw(x, z))
         } else {
             let spawns = self.world.resource::<Arena>().spawns.clone();
@@ -406,7 +471,11 @@ impl Match {
             return;
         };
         let king = self.world.get::<Perks>(entity).is_some_and(|p| p.king());
-        let active = self.world.get::<Perks>(entity).map(|p| p.active.clone()).unwrap_or_default();
+        let active = self
+            .world
+            .get::<Perks>(entity)
+            .map(|p| p.active.clone())
+            .unwrap_or_default();
         // The Missile Launcher augment fills slot 1 itself.
         if !weapons::PRIMARIES.contains(&kind) || systems::forced_primary(&active).is_some() {
             return;
@@ -431,7 +500,13 @@ impl Match {
     /// hand to choose from while the cards are still being chosen; after that one of it is taken
     /// at random at once, as for anyone who didn't choose in time. Their kills and deaths start at
     /// zero and the scores stay as they are. Returns the roster with them in it.
-    pub fn add_player(&mut self, id: u32, name: String, team: pb::Team, weapon: pb::WeaponKind) -> Vec<pb::RosterEntry> {
+    pub fn add_player(
+        &mut self,
+        id: u32,
+        name: String,
+        team: pb::Team,
+        weapon: pb::WeaponKind,
+    ) -> Vec<pb::RosterEntry> {
         // They aren't in yet, so in a free-for-all everyone living counts.
         let enemies: Vec<(f32, f32)> = {
             let mut living = self.world.query::<(&Player, &Pose, &Vitals)>();
@@ -444,16 +519,29 @@ impl Match {
         };
         let (x, z, yaw) = if self.world.resource::<Rules>().ffa {
             let points = self.world.resource::<Arena>().ffa_spawns.clone();
-            let (x, z) = systems::furthest_spawn(&points, &enemies, &mut self.world.resource_mut::<GameRng>());
+            let (x, z) = systems::furthest_spawn(
+                &points,
+                &enemies,
+                &mut self.world.resource_mut::<GameRng>(),
+            );
             (x, z, systems::ffa_yaw(x, z))
         } else {
             let spawns = self.world.resource::<Arena>().spawns.clone();
-            let (x, z) = systems::choose_spawn(&spawns, team, &enemies, &mut self.world.resource_mut::<GameRng>());
+            let (x, z) = systems::choose_spawn(
+                &spawns,
+                team,
+                &enemies,
+                &mut self.world.resource_mut::<GameRng>(),
+            );
             (x, z, systems::spawn_yaw(team))
         };
         self.spawn_player(id, name, team, false, weapon);
         // spawn_player places players for the start of a match; this one goes where it is safe now.
-        if let Some(mut pose) = self.entities.get(&id).and_then(|&entity| self.world.get_mut::<Pose>(entity)) {
+        if let Some(mut pose) = self
+            .entities
+            .get(&id)
+            .and_then(|&entity| self.world.get_mut::<Pose>(entity))
+        {
             (pose.x, pose.z, pose.yaw) = (x, z, yaw);
         }
         if self.world.resource::<Rules>().mode == pb::GameMode::Augment {
@@ -488,7 +576,10 @@ impl Match {
             }
         } else {
             let teams: Vec<pb::Team> = query.iter(&self.world).map(|p| p.team).collect();
-            match (teams.contains(&pb::Team::Red), teams.contains(&pb::Team::Blue)) {
+            match (
+                teams.contains(&pb::Team::Red),
+                teams.contains(&pb::Team::Blue),
+            ) {
                 (true, false) => Some(Winner::Team(pb::Team::Red)),
                 (false, true) => Some(Winner::Team(pb::Team::Blue)),
                 _ => None,
@@ -589,32 +680,34 @@ impl Match {
             .query::<(&Player, &Pose, &Vitals, &Intent, &Weapon, &Stats, &Perks)>();
         let mut players: Vec<pb::PlayerState> = query
             .iter(&self.world)
-            .map(|(player, pose, vitals, intent, weapon, stats, perks)| pb::PlayerState {
-                id: player.id,
-                x: pose.x,
-                y: pose.y,
-                z: pose.z,
-                vy: pose.vy,
-                yaw: pose.yaw,
-                pitch: pose.pitch,
-                hp: vitals.hp,
-                alive: vitals.alive,
-                moving: intent.moving,
-                crouching: pose.crouching,
-                reloading: weapon.reloading(),
-                protected: vitals.protect_left > 0.0,
-                respawn_in: vitals.respawn_left.max(0.0),
-                kills: stats.kills,
-                deaths: stats.deaths,
-                weapon: weapon.kind as i32,
-                augment: perks.augment as i32,
-                shield_hp: perks.shield_hp,
-                head_scale: perks.head_scale,
-                active: perks.active.iter().map(|a| *a as i32).collect(),
-                stun_left: vitals.stun_left,
-                level: perks.level,
-                king_left: perks.king_ticks as f32 * TICK_DT,
-            })
+            .map(
+                |(player, pose, vitals, intent, weapon, stats, perks)| pb::PlayerState {
+                    id: player.id,
+                    x: pose.x,
+                    y: pose.y,
+                    z: pose.z,
+                    vy: pose.vy,
+                    yaw: pose.yaw,
+                    pitch: pose.pitch,
+                    hp: vitals.hp,
+                    alive: vitals.alive,
+                    moving: intent.moving,
+                    crouching: pose.crouching,
+                    reloading: weapon.reloading(),
+                    protected: vitals.protect_left > 0.0,
+                    respawn_in: vitals.respawn_left.max(0.0),
+                    kills: stats.kills,
+                    deaths: stats.deaths,
+                    weapon: weapon.kind as i32,
+                    augment: perks.augment as i32,
+                    shield_hp: perks.shield_hp,
+                    head_scale: perks.head_scale,
+                    active: perks.active.iter().map(|a| *a as i32).collect(),
+                    stun_left: vitals.stun_left,
+                    level: perks.level,
+                    king_left: perks.king_ticks as f32 * TICK_DT,
+                },
+            )
             .collect();
         players.sort_by_key(|p| p.id);
         let state = self.world.resource::<MatchState>();
@@ -678,7 +771,12 @@ impl Match {
         }
         if let Some(offer) = self.world.get::<AugmentOffer>(entity) {
             snapshot.offered = offer.offered.iter().map(|a| *a as i32).collect();
-            snapshot.refreshable = offer.offered.iter().zip(offer.refreshed).map(|(_, used)| !used).collect();
+            snapshot.refreshable = offer
+                .offered
+                .iter()
+                .zip(offer.refreshed)
+                .map(|(_, used)| !used)
+                .collect();
         }
         if let Some(inputs) = self.world.get::<Inputs>(entity) {
             snapshot.last_input_seq = inputs.last_seq;
