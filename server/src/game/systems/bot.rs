@@ -242,12 +242,12 @@ pub fn bot_think(
                     brain.burst_left = if stats.has_scope {
                         1
                     } else {
-                        4 + rng.index(6) as u32
+                        (rng.index(6) as u32).saturating_add(4)
                     };
                 }
                 cmd.fire = true;
                 if weapon.cooldown <= 0.0 && !weapon.reloading() {
-                    brain.burst_left -= 1;
+                    brain.burst_left = brain.burst_left.saturating_sub(1);
                     if brain.burst_left == 0 {
                         brain.burst_pause = rng.range(0.35, 0.8);
                     }
@@ -289,7 +289,7 @@ pub fn bot_think(
 
             while let Some(&(wx, wz)) = brain.path.get(brain.path_index) {
                 if (wx - pose.x).powi(2) + (wz - pose.z).powi(2) < 0.6 * 0.6 {
-                    brain.path_index += 1;
+                    brain.path_index = brain.path_index.saturating_add(1);
                 } else {
                     break;
                 }

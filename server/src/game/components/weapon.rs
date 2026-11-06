@@ -153,7 +153,7 @@ impl Weapon {
 
     /// The slot (1 to 3) a throw goes back to.
     pub fn slot_before_grenade(&self) -> u32 {
-        self.last_slot as u32 + 1
+        (self.last_slot as u32).saturating_add(1)
     }
 }
 

@@ -55,6 +55,10 @@ struct Hub {
     match_seed: u64,
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "a clock reading plus one 33 ms tick is nowhere near the limit of Instant"
+)]
 pub fn run(rx: Receiver<Inbound>) {
     let mut hub = Hub::default();
     let tick = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
@@ -223,7 +227,7 @@ impl Hub {
         if name.is_empty() {
             name = format!("{}의 방", client.name);
         }
-        self.next_room_id += 1;
+        self.next_room_id = self.next_room_id.wrapping_add(1);
         let room_id = self.next_room_id;
         let match_type = match pb::MatchType::try_from(create.match_type) {
             Ok(pb::MatchType::FreeForAll) => pb::MatchType::FreeForAll,
@@ -559,7 +563,7 @@ impl Hub {
                 );
                 return;
             }
-        } else if (0..2).any(|team| room.seats.humans(team) + room.seats.bots(team) == 0) {
+        } else if (0..2).any(|team| room.seats.players(team) == 0) {
             self.error(
                 id,
                 "양 팀에 사람이나 봇이 최소 1명씩 있어야 시작할 수 있습니다.",

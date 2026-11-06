@@ -24,7 +24,7 @@ const HEAD_SCALES: [f32; (MAX_LEVEL - MIN_LEVEL + 1) as usize] =
 
 /// The head's size at `level`, clamped into the levels there are.
 pub fn head_scale(level: i32) -> f32 {
-    HEAD_SCALES[(level.clamp(MIN_LEVEL, MAX_LEVEL) - MIN_LEVEL) as usize]
+    HEAD_SCALES[level.clamp(MIN_LEVEL, MAX_LEVEL).abs_diff(MIN_LEVEL) as usize]
 }
 
 /// The level a kill takes a player to: up one to MAX_LEVEL, or from below 0 to COMEBACK_LEVEL.
@@ -32,13 +32,13 @@ pub fn after_kill(level: i32) -> i32 {
     if level < 0 {
         COMEBACK_LEVEL
     } else {
-        (level + 1).min(MAX_LEVEL)
+        level.saturating_add(1).min(MAX_LEVEL)
     }
 }
 
 /// The level a death takes a player to: down one, to MIN_LEVEL.
 pub fn after_death(level: i32) -> i32 {
-    (level - 1).max(MIN_LEVEL)
+    level.saturating_sub(1).max(MIN_LEVEL)
 }
 
 /// Crowns a living player at MAX_LEVEL: the reign's clock starts, health is full, a paralysis ends

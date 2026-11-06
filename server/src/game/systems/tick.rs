@@ -4,5 +4,5 @@ use crate::game::resources::*;
 use bevy_ecs::prelude::*;
 
 pub fn advance_tick(mut state: ResMut<MatchState>) {
-    state.tick += 1;
+    state.tick = state.tick.saturating_add(1);
 }

@@ -35,7 +35,7 @@ impl MatchState {
         } else {
             &mut self.blue_score
         };
-        *score += 1;
+        *score = score.saturating_add(1);
         if *score >= self.kills_to_win && self.winner.is_none() {
             self.winner = Some(Winner::Team(team));
         }

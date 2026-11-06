@@ -23,7 +23,7 @@ pub fn update_perks(rules: Res<Rules>, mut players: Query<(&Pose, &mut Vitals, &
         perks.regen += augments::REST_HEAL_PER_SECOND * TICK_DT;
         let whole = perks.regen as i32;
         perks.regen -= whole as f32;
-        vitals.hp = (vitals.hp + whole).min(cap);
+        vitals.hp = vitals.hp.saturating_add(whole).min(cap);
     }
 }
 

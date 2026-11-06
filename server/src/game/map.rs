@@ -128,7 +128,10 @@ fn lean_slices(p: &MapProp) -> Vec<MapBox> {
     };
     (0..count)
         .filter_map(|i| {
-            let (u0, u1) = (start + length * i as f32, start + length * (i + 1) as f32);
+            let (u0, u1) = (
+                start + length * i as f32,
+                start + length * i.saturating_add(1) as f32,
+            );
             // The heights the side reaches across the slice: its corners within it, and where its
             // edges cross the slice's ends.
             let mut heights: Vec<f32> = corners
@@ -136,8 +139,8 @@ fn lean_slices(p: &MapProp) -> Vec<MapBox> {
                 .filter(|c| (u0..=u1).contains(&c.0))
                 .map(|c| c.1)
                 .collect();
-            for k in 0..corners.len() {
-                let ((ua, va), (ub, vb)) = (corners[k], corners[(k + 1) % corners.len()]);
+            // Each edge: a corner and the next, the last joining back to the first.
+            for (&(ua, va), &(ub, vb)) in corners.iter().zip(corners.iter().cycle().skip(1)) {
                 for cut in [u0, u1] {
                     if ua != ub && (ua - cut) * (ub - cut) <= 0.0 {
                         heights.push(va + (vb - va) * (cut - ua) / (ub - ua));
@@ -190,7 +193,7 @@ fn mirror_prop(p: &MapProp) -> MapProp {
         x: -p.x,
         z: -p.z,
         rotation: p.rotation + PI,
-        ..p.clone()
+        ..*p
     }
 }
 

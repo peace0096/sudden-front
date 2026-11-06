@@ -20,6 +20,15 @@ pub(super) struct Seats(pub(super) [[Seat; TEAM_SIZE]; 2]);
 // A free-for-all room's seats are exactly the two teams' seats.
 const _: () = assert!(MAX_PLAYERS == 2 * TEAM_SIZE);
 
+/// The index of the team that isn't `team`.
+pub(super) fn other_team(team: usize) -> usize {
+    if team == 0 {
+        1
+    } else {
+        0
+    }
+}
+
 impl Seats {
     /// Every seat starts as a bot, or open.
     pub(super) fn new(bots: bool) -> Self {
@@ -62,8 +71,13 @@ impl Seats {
             .count()
     }
 
+    /// Humans and bots on `team`.
+    pub(super) fn players(&self, team: usize) -> usize {
+        self.humans(team).saturating_add(self.bots(team))
+    }
+
     pub(super) fn bot_count(&self) -> usize {
-        self.bots(0) + self.bots(1)
+        self.bots(0).saturating_add(self.bots(1))
     }
 
     pub(super) fn has_open(&self, team: usize) -> bool {
@@ -111,10 +125,10 @@ impl Seats {
         let Some((team, slot)) = self.find(id) else {
             return false;
         };
-        let Some((new_slot, displaced)) = self.free_seat(1 - team) else {
+        let Some((new_slot, displaced)) = self.free_seat(other_team(team)) else {
             return false;
         };
-        self.0[1 - team][new_slot] = Seat::Human(id);
+        self.0[other_team(team)][new_slot] = Seat::Human(id);
         self.0[team][slot] = displaced;
         true
     }

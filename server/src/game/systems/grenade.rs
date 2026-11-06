@@ -58,7 +58,7 @@ pub(super) fn throw_grenade(
     weapon: &mut Weapon,
     log: &mut EventLog,
 ) {
-    weapon.magazine -= 1;
+    weapon.magazine = weapon.magazine.saturating_sub(1);
     weapon.cooldown += weapons::stats(pb::WeaponKind::Grenade).fire_interval;
     let eye = if pose.crouching {
         CROUCH_EYE_HEIGHT
@@ -73,7 +73,7 @@ pub(super) fn throw_grenade(
         pose.z - cos * THROW_REACH,
     ];
     let dir = view_dir(aim.yaw, (aim.pitch + THROW_LIFT).min(MAX_PITCH));
-    grenades.next_id += 1;
+    grenades.next_id = grenades.next_id.wrapping_add(1);
     grenades.live.push(Grenade {
         id: grenades.next_id,
         owner,
@@ -155,7 +155,7 @@ pub(super) fn fly_grenades(
             blast(&map.boxes, rules, grenade.pos, &source, targets, hits);
             return false;
         }
-        grenade.fuse_ticks -= 1;
+        grenade.fuse_ticks = grenade.fuse_ticks.saturating_sub(1);
         roll_grenade(
             &map.boxes,
             map.half_x,

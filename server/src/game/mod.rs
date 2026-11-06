@@ -181,8 +181,8 @@ impl Match {
             }
         }
         if ffa {
-            let count = bots[0] + bots[1];
-            let seated = humans.len() + count;
+            let count = bots[0].saturating_add(bots[1]);
+            let seated = humans.len().saturating_add(count);
             debug_assert!(
                 seated <= 2 * TEAM_SIZE,
                 "a free-for-all would seat {seated} players"
@@ -193,7 +193,11 @@ impl Match {
             return game;
         }
         for (team, count) in [pb::Team::Red, pb::Team::Blue].into_iter().zip(bots) {
-            let seated = humans.iter().filter(|h| h.2 == team).count() + count;
+            let seated = humans
+                .iter()
+                .filter(|h| h.2 == team)
+                .count()
+                .saturating_add(count);
             debug_assert!(seated <= TEAM_SIZE, "{team:?} would seat {seated} players");
             for _ in 0..count {
                 game.spawn_bot(team);
@@ -204,8 +208,8 @@ impl Match {
 
     fn spawn_bot(&mut self, team: pb::Team) {
         let id = self.next_bot_id;
-        self.next_bot_id += 1;
-        let name = format!("BOT_{}", id - FIRST_BOT_ID + 1);
+        self.next_bot_id = self.next_bot_id.wrapping_add(1);
+        let name = format!("BOT_{}", id.saturating_sub(FIRST_BOT_ID).saturating_add(1));
         let weapon = {
             let mut rng = self.world.resource_mut::<GameRng>();
             weapons::random_for_bot(&mut rng)
@@ -351,8 +355,8 @@ impl Match {
             .iter(&self.world)
             .any(|offer| !offer.offered.is_empty());
         let mut state = self.world.resource_mut::<MatchState>();
-        state.tick += 1;
-        state.frozen_ticks += 1;
+        state.tick = state.tick.saturating_add(1);
+        state.frozen_ticks = state.frozen_ticks.saturating_add(1);
         if state.pick_left <= 0.0 {
             state.freeze_left = (state.freeze_left - TICK_DT).max(0.0);
             return;

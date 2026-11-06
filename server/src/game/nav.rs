@@ -15,6 +15,10 @@ pub struct NavGrid {
     open: Vec<bool>,
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "cell coordinates and indices stay inside the grid, at most 100 by 64 cells"
+)]
 impl NavGrid {
     pub fn new(boxes: &[MapBox], half_x: f32, half_z: f32) -> Self {
         let width = (half_x * 2.0) as i32;

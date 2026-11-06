@@ -20,7 +20,7 @@ pub fn update_kings(
         if !perks.king() {
             continue;
         }
-        perks.king_ticks -= 1;
+        perks.king_ticks = perks.king_ticks.saturating_sub(1);
         if perks.king() {
             continue;
         }

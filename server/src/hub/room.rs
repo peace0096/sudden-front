@@ -1,5 +1,6 @@
 //! A room: its settings, its members and the seat each one holds, and its match.
 
+use super::seats::other_team;
 use super::*;
 use crate::game::Match;
 use crate::pb;
@@ -46,7 +47,7 @@ impl Room {
             Ordering::Equal if !self.seats.has_open(0) && self.seats.has_open(1) => 1,
             Ordering::Equal => 0,
         };
-        for team in [first, 1 - first] {
+        for team in [first, other_team(first)] {
             if self.seats.sit(team, id).is_some() {
                 return true;
             }
@@ -67,7 +68,7 @@ impl Room {
         let seats = &self.seats;
         let team = (0..2)
             .filter(|&team| seats.has_open(team))
-            .min_by_key(|&team| (seats.humans(team) + seats.bots(team), seats.humans(team)))?;
+            .min_by_key(|&team| (seats.players(team), seats.humans(team)))?;
         self.seats.sit_open(team, id)?;
         Some(TEAMS[team])
     }

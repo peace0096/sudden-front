@@ -115,12 +115,12 @@ pub fn shots_in_one_second(kind: pb::WeaponKind) -> u32 {
             SHOOTER,
             vec![pb::InputCmd {
                 fire: true,
-                ..cmd(seq + 1, tick_now(&game))
+                ..cmd(seq.saturating_add(1), tick_now(&game))
             }],
         );
         game.tick();
     }
-    start - weapon(&game, SHOOTER).0
+    start.saturating_sub(weapon(&game, SHOOTER).0)
 }
 
 /// The shooter in `game` with the knife drawn, ready to attack, and the victim `dist` away along +x.
@@ -136,7 +136,7 @@ pub fn melee_setup(mut game: Match, dist: f32) -> (Match, pb::InputCmd) {
             ..cmd(1, 0)
         }],
     );
-    for _ in 0..(DRAW_TIME * TICK_RATE as f32) as u32 + 2 {
+    for _ in 0..((DRAW_TIME * TICK_RATE as f32) as u32).saturating_add(2) {
         game.tick();
     }
     let swing = pb::InputCmd {
@@ -163,7 +163,7 @@ pub fn mean_spread(crouch: bool) -> f32 {
     place(&mut game, SHOOTER, -46.0, 0.0, yaw);
     place(&mut game, VICTIM, -46.0, -8.0, 0.0);
     let aim = super::physics::view_dir(yaw, 0.0);
-    let (mut total, mut count) = (0.0, 0);
+    let (mut total, mut count): (f32, u32) = (0.0, 0);
     for seq in 1..=90 {
         let tick = tick_now(&game);
         game.push_inputs(
@@ -182,7 +182,7 @@ pub fn mean_spread(crouch: bool) -> f32 {
                 let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
                 let dot = (d[0] * aim[0] + d[1] * aim[1] + d[2] * aim[2]) / len;
                 total += dot.clamp(-1.0, 1.0).acos();
-                count += 1;
+                count = count.saturating_add(1);
             }
         }
     }
@@ -207,7 +207,7 @@ pub fn shot_at_crouched(shooter_crouched: bool, aim_y: f32) -> i32 {
     shot.render_tick = tick_now(&game);
     game.push_inputs(SHOOTER, vec![shot]);
     game.tick();
-    MAX_HP - game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap().hp
+    MAX_HP.saturating_sub(game.world.get::<Vitals>(game.entities[&VICTIM]).unwrap().hp)
 }
 
 /// Angle between the aim and each shot of a rifle magazine held on one spot.
@@ -358,13 +358,13 @@ pub fn reload_seconds(augment: Aug) -> f32 {
             ..cmd(1, 0)
         }],
     );
-    let mut ticks = 0;
+    let mut ticks: u32 = 0;
     loop {
         game.tick();
         if weapon(&game, SHOOTER).0 == 30 {
             return ticks as f32 * TICK_DT;
         }
-        ticks += 1;
+        ticks = ticks.saturating_add(1);
         assert!(ticks < 600);
     }
 }
@@ -501,7 +501,7 @@ pub fn draw_grenade(game: &mut Match, id: u32, seq: u32) -> u32 {
     for _ in 0..=(DRAW_TIME * TICK_RATE as f32).ceil() as u32 {
         game.tick();
     }
-    seq + 1
+    seq.saturating_add(1)
 }
 
 /// Throws what is in hand along (yaw, pitch); the tick's events.
@@ -524,7 +524,7 @@ pub fn drop_grenade(game: &mut Match, owner: u32, x: f32, z: f32) {
     let entity = game.entities[&owner];
     let team = game.world.get::<Player>(entity).unwrap().team;
     let mut grenades = game.world.resource_mut::<Grenades>();
-    grenades.next_id += 1;
+    grenades.next_id = grenades.next_id.wrapping_add(1);
     let id = grenades.next_id;
     grenades.live.push(Grenade {
         id,

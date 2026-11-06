@@ -226,22 +226,22 @@ pub fn fire_weapons(
         let bursts = weapon.kind == pb::WeaponKind::PistolPlus;
         let no_recoil = perks.has(pb::Augment::NoRecoil);
 
-        let mut shots = 0;
+        let mut shots: u32 = 0;
         while weapon.cooldown <= COOLDOWN_SLACK
             && (melee || weapon.magazine > 0)
             && shots < MAX_SHOTS_PER_TICK
         {
-            shots += 1;
+            shots = shots.saturating_add(1);
             weapon.reload_left = 0.0;
             if !melee {
-                weapon.magazine -= 1;
+                weapon.magazine = weapon.magazine.saturating_sub(1);
             }
             if bursts {
                 if weapon.burst_left == 0 {
                     weapon.burst_left = weapons::BURST_ROUNDS - 1;
                     weapon.burst_fire = Some(fire);
                 } else {
-                    weapon.burst_left -= 1;
+                    weapon.burst_left = weapon.burst_left.saturating_sub(1);
                 }
                 let burst_on = weapon.burst_left > 0 && weapon.magazine > 0;
                 weapon.cooldown += if burst_on {
@@ -303,7 +303,7 @@ pub fn fire_weapons(
                 );
 
                 if stats.splash_radius > 0.0 {
-                    missiles.next_id += 1;
+                    missiles.next_id = missiles.next_id.wrapping_add(1);
                     let id = missiles.next_id;
                     missiles.live.push(Missile {
                         id,
@@ -430,7 +430,7 @@ pub fn fire_weapons(
         let victim_id = victim_player.id;
         // Once earlier pellets break it, what's left reaches the player.
         if hit.shield && perks.shield_hp > 0 {
-            perks.shield_hp = (perks.shield_hp - hit.amount).max(0);
+            perks.shield_hp = perks.shield_hp.saturating_sub(hit.amount).max(0);
             log.push(Event::Damage(pb::DamageEvent {
                 attacker_id: hit.attacker_id,
                 victim_id,
@@ -443,7 +443,7 @@ pub fn fire_weapons(
         if hit.stun > 0.0 {
             vitals.stun_left = hit.stun;
         }
-        vitals.hp -= hit.amount;
+        vitals.hp = vitals.hp.saturating_sub(hit.amount);
         log.push(Event::Damage(pb::DamageEvent {
             attacker_id: hit.attacker_id,
             victim_id,
@@ -458,7 +458,7 @@ pub fn fire_weapons(
         vitals.alive = false;
         vitals.stun_left = 0.0;
         vitals.respawn_left = RESPAWN_TIME;
-        stats.deaths += 1;
+        stats.deaths = stats.deaths.saturating_add(1);
         perks.shield_hp = 0;
         let victim_primary = victim_weapon.primary;
         let victim_level = perks.level;
@@ -507,7 +507,7 @@ pub fn fire_weapons(
         else {
             continue;
         };
-        stats.kills += 1;
+        stats.kills = stats.kills.saturating_add(1);
         if rules.ffa && stats.kills >= state.kills_to_win && state.winner.is_none() {
             state.winner = Some(Winner::Player(hit.attacker_id));
         }
@@ -526,7 +526,7 @@ pub fn fire_weapons(
         }
         if perks.has(pb::Augment::SoulDrain) {
             let cap = augments::max_hp(rules.max_hp, &perks.active);
-            vitals.hp = (vitals.hp + augments::SOUL_DRAIN_HEAL).min(cap);
+            vitals.hp = vitals.hp.saturating_add(augments::SOUL_DRAIN_HEAL).min(cap);
         }
         if perks.has(pb::Augment::Possession) {
             let taken = weapons::base_primary(victim_primary);
@@ -649,7 +649,7 @@ mod tests {
         let snapshot = game.shared_snapshot();
         assert_eq!(snapshot.red_score, 1);
         let kill = snapshot.events.iter().find_map(|e| match &e.event {
-            Some(pb::game_event::Event::Kill(k)) => Some(k.clone()),
+            Some(pb::game_event::Event::Kill(k)) => Some(*k),
             _ => None,
         });
         let kill = kill.expect("kill event");

@@ -15,9 +15,9 @@ fn load_rounds(weapon: &mut Weapon, wanted: u32, infinite: bool) {
     } else {
         wanted.min(weapon.reserve)
     };
-    weapon.magazine += moved;
+    weapon.magazine = weapon.magazine.saturating_add(moved);
     if !infinite {
-        weapon.reserve -= moved;
+        weapon.reserve = weapon.reserve.saturating_sub(moved);
     }
 }
 
@@ -64,7 +64,7 @@ pub fn update_weapons(
                         }));
                     }
                 } else {
-                    let wanted = stats.magazine - weapon.magazine;
+                    let wanted = stats.magazine.saturating_sub(weapon.magazine);
                     load_rounds(&mut weapon, wanted, infinite);
                 }
             }
@@ -77,7 +77,7 @@ pub fn update_weapons(
                     player_id: player.id,
                 }));
                 if reload_time <= 0.0 {
-                    let wanted = stats.magazine - weapon.magazine;
+                    let wanted = stats.magazine.saturating_sub(weapon.magazine);
                     load_rounds(&mut weapon, wanted, infinite);
                 } else {
                     weapon.reload_left = reload_time;

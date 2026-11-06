@@ -17,3 +17,11 @@ protoc-bin-vendored = "3"
 
 [profile.release]
 opt-level = 3
+
+# Harness rules (server/AGENTS.md): no unsafe code, and integer arithmetic that can overflow must say how
+# it handles that (checked_/saturating_/wrapping_, or an #[expect] with the reason it cannot overflow).
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+arithmetic_side_effects = "warn"

@@ -14,13 +14,25 @@ const CMD_BUDGET_CAP: u32 = 8;
 
 const MAX_QUEUED_CMDS: usize = 32;
 
+/// -1, 0 or 1 along an axis whose keys are `plus` and `minus`; both held cancel out.
+fn axis(plus: bool, minus: bool) -> i32 {
+    match (plus, minus) {
+        (true, false) => 1,
+        (false, true) => -1,
+        _ => 0,
+    }
+}
+
 pub fn consume_inputs(
     arena: Res<Arena>,
     mut players: Query<(&mut Pose, &mut Inputs, &mut Intent, &Vitals, &mut Weapon)>,
 ) {
     for (mut pose, mut inputs, mut intent, vitals, mut weapon) in &mut players {
         *intent = Intent::default();
-        inputs.budget = (inputs.budget + CMDS_PER_TICK).min(CMD_BUDGET_CAP);
+        inputs.budget = inputs
+            .budget
+            .saturating_add(CMDS_PER_TICK)
+            .min(CMD_BUDGET_CAP);
 
         // Drop a backlog rather than let it become permanent input latency.
         while inputs.queue.len() > MAX_QUEUED_CMDS {
@@ -33,7 +45,7 @@ pub fn consume_inputs(
             let Some(cmd) = inputs.queue.pop_front() else {
                 break;
             };
-            inputs.budget -= 1;
+            inputs.budget = inputs.budget.saturating_sub(1);
             inputs.last_seq = cmd.seq;
             if !vitals.alive {
                 continue;
@@ -66,8 +78,8 @@ pub fn consume_inputs(
             let stance = if cmd.crouch { CROUCH_SPEED_FACTOR } else { 1.0 };
             let speed = weapons::stats(weapon.kind).move_speed * stance;
 
-            let fwd = cmd.forward as i32 - cmd.back as i32;
-            let strafe = cmd.right as i32 - cmd.left as i32;
+            let fwd = axis(cmd.forward, cmd.back);
+            let strafe = axis(cmd.right, cmd.left);
             if fwd != 0 || strafe != 0 {
                 let (sin, cos) = yaw.sin_cos();
                 let (fx, fz) = (-sin, -cos);
