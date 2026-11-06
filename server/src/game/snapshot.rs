@@ -5,6 +5,17 @@ use super::resources::*;
 use super::*;
 use crate::pb;
 
+/// Seconds that `ticks` ticks take.
+fn seconds(ticks: u32) -> f32 {
+    ticks as f32 * TICK_DT
+}
+
+/// The match clock, in seconds: the ticks played, not counting those frozen for the augment pick
+/// and the wait after it.
+fn match_clock(tick: u32, frozen_ticks: u32) -> f32 {
+    seconds(tick.saturating_sub(frozen_ticks))
+}
+
 impl Match {
     pub fn roster(&mut self) -> Vec<pb::RosterEntry> {
         let mut query = self.world.query::<&Player>();
@@ -104,7 +115,7 @@ impl Match {
                     active: perks.active.iter().map(|a| *a as i32).collect(),
                     stun_left: vitals.stun_left,
                     level: perks.level,
-                    king_left: perks.king_ticks as f32 * TICK_DT,
+                    king_left: seconds(perks.king_ticks),
                 },
             )
             .collect();
@@ -116,7 +127,7 @@ impl Match {
             blue_score: state.blue_score,
             freeze_left: state.freeze_left,
             pick_left: state.pick_left,
-            clock: state.tick.saturating_sub(state.frozen_ticks) as f32 * TICK_DT,
+            clock: match_clock(state.tick, state.frozen_ticks),
             players,
             missiles: self
                 .world
@@ -222,6 +233,13 @@ impl Match {
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn the_clock_counts_only_the_ticks_played_after_the_freeze() {
+        assert_eq!(seconds(TICK_RATE), 1.0);
+        assert_eq!(match_clock(TICK_RATE * 3, TICK_RATE), 2.0);
+        assert_eq!(match_clock(5, 10), 0.0);
+    }
 
     #[test]
     fn a_free_for_all_tells_its_players_there_are_no_teams() {
