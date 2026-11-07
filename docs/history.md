@@ -176,6 +176,12 @@
 - 서버 전체를 `cargo fmt` 기본 설정으로 포맷
 - Claude Code Stop 훅(`.claude/hooks/server-check.sh`): 작업을 마칠 때 서버 소스가 바뀌었으면 fmt·clippy를 돌리고, 실패하면 종료를 한 번 막음
 
+### 19. 부하 테스트 봇과 모니터링
+- `tests/client/`: 브라우저와 같은 프로토콜로 접속하는 부하 테스트 봇(Rust, `--count`, `--duration`). bonsai-bt 행동 트리로 10명 단위 방 만들기·입장·준비·시작·전투·재경기·퇴장을 진행
+- 봇 AI를 서버와 공용 crate로 나누지 않고 클라이언트 쪽에 옮겨 둠. 서버 봇은 ECS 시스템이라 공용화하면 서버 구조를 크게 바꿔야 하고, 부하 테스트 봇은 스냅샷만 보고 사람과 같은 탄약 규칙을 따라야 하기 때문
+- 서버 `/metrics`(Prometheus): 틱 시간·FPS·초과, 연결·방·인원, `Match::ecs_stats`(엔티티·아키타입·테이블·컴포넌트), WebSocket 트래픽, Linux 프로세스 지표
+- `infra/`: 게임 서버 Docker 이미지, docker-compose(서버·Prometheus·Grafana·cAdvisor)와 대시보드, Google Cloud VM용 Pulumi(TypeScript)
+
 ## 설계 결정
 
 | 결정 | 이유 |
@@ -258,6 +264,8 @@
 - **play.mjs 간헐 실패**:
   - 정지 상태 예측 오차가 0.13m로 한 번, 개인전 작업 중(다른 e2e를 연달아 돌린 직후) 0.078m로 한 번 실패했습니다. 둘 다 재실행하면 0.0000m로 통과했고, 원인은 미확인입니다.
   - 별도로, 권총 확인 직후 3번(나이프)을 누르기 전에 호스트가 봇에게 죽으면 나이프 전환 대기가 30초를 넘겨 실패합니다. 죽은 동안 눌린 무기 칸 키는 버려지기 때문입니다(`game.ts`). 재실행하면 통과합니다.
+- **cAdvisor와 Docker Desktop**: Docker Desktop(containerd 이미지 저장소)에서는 cAdvisor가 컨테이너를 알아보지 못해 대시보드의 "Containers (cAdvisor)" 행이 비고 호스트 전체(`id="/"`) 값만 나옵니다. 서버의 CPU·메모리·네트워크는 서버 자체 지표(`sudden_front_process_*`, `sudden_front_ws_bytes_*`)로 봅니다. 일반 Linux Docker(GCE VM)에서의 cAdvisor 동작은 확인하지 않았습니다.
+- **Pulumi 미배포**: `infra/pulumi`는 타입 검사(`npm run check`)만 했고 `pulumi preview`·`up`은 하지 않았습니다.
 - **README 무기 표**: 루트 README의 이동속도·탄퍼짐은 공용 계수 적용 전 값입니다(실제는 이동속도 ×0.9, 탄퍼짐 ×0.75).
 - **총기 사운드 실전 청취 미검증**: 게임과 같은 경로로 렌더링한 WAV를 사람이 들어 확인했지만, 실제 경기(여러 총기 동시 발사, 거리별 소리)에서는 확인하지 않았습니다. 실내(웨어하우스)와 실외(보급창고) 맵이 같은 잔향을 씁니다.
 - **full-match.mjs 무기 교체**: 헤드리스 렌더러는 첫 화면까지 7~13초가 걸려 재투입 보호(3초) 중 즉시 교체를 확인할 수 없습니다. 첫 경기에서는 서버가 선택을 받았는지만 보고, 실제 지급은 다음 경기에서 확인합니다.

@@ -10,6 +10,7 @@
 | [augment-mode.md](augment-mode.md) | 증강모드: 진행 흐름, 카드 배분, 증강 19종과 전용 무기 |
 | [big-head-mode.md](big-head-mode.md) | 왕대두모드: 레벨과 머리 크기, 무적의 왕대두와 뿅망치, 도트 샷·큐트 샷 |
 | [development.md](development.md) | 빌드·실행, 코드 위치, 테스트(cargo test, Playwright e2e), 수치 조정 방법 |
+| [load-test.md](load-test.md) | 부하 테스트 봇(`tests/client`), 서버 지표(`/metrics`), Docker Compose의 Prometheus·Grafana, Google Cloud용 Pulumi |
 | [history.md](history.md) | 작업 이력, 설계 결정, 알려진 이슈 |
 | [credits.md](credits.md) | 에셋 출처와 라이선스 (`tools/art/build-art.mjs`가 자동 생성) |
 

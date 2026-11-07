@@ -1,0 +1,32 @@
+[package]
+name = "sudden-front-loadtest"
+version = "0.1.0"
+edition = "2021"
+description = "Load-test bots that play Sudden Front over the same WebSocket protocol as the browser"
+
+[[bin]]
+name = "loadtest"
+path = "src/main.rs"
+
+[dependencies]
+bonsai-bt = "0.14"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+prost = "0.14"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = "0.30"
+
+[build-dependencies]
+prost-build = "0.14"
+protoc-bin-vendored = "3"
+
+[profile.release]
+opt-level = 3
+
+# The same harness rules as the server (server/AGENTS.md): no unsafe code, and integer arithmetic
+# that can overflow says how it handles that.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+arithmetic_side_effects = "warn"

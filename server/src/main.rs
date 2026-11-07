@@ -1,5 +1,6 @@
 mod game;
 mod hub;
+mod metrics;
 mod net;
 
 pub mod pb {
@@ -53,16 +54,28 @@ async fn main() {
         .expect("server error");
 }
 
-/// The WebSocket, then the client's files from `dist`. A path that matches no file gets the page,
+/// The WebSocket, the metrics, then the client's files from `dist`. A path that matches no file gets the page,
 /// except under /art: a missing art file is a 404, which the client reports as a failed asset
 /// instead of trying to read index.html as a model.
 fn app(dist: &Path, hub: Sender<hub::Inbound>) -> Router {
     let static_files = ServeDir::new(dist).fallback(ServeFile::new(dist.join("index.html")));
     Router::new()
         .route("/ws", get(net::ws_handler))
+        .route("/metrics", get(serve_metrics))
         .nest_service("/art", ServeDir::new(dist.join("art")))
         .fallback_service(static_files)
         .with_state(hub)
+}
+
+/// The metrics in Prometheus' text format, for a scrape.
+async fn serve_metrics() -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        metrics::metrics().render(),
+    )
 }
 
 /// Prints a one-line error and exits, without a panic's backtrace.

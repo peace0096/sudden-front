@@ -21,3 +21,8 @@ client/public/art/_candidates/
 /.idea/modules.xml
 /.idea/sudden-front.iml
 /.idea/vcs.xml
+
+# Load-test bots and infrastructure
+tests/client/target/
+infra/pulumi/node_modules/
+infra/pulumi/bin/

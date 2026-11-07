@@ -4,6 +4,7 @@ mod room;
 mod seats;
 
 use crate::game::{weapons, Match, TICK_RATE};
+use crate::metrics::{metrics, HubStats, TickMeter};
 use crate::pb::{self, client_message::Payload as In, server_message::Payload as Out};
 use prost::Message;
 use room::{Member, Room};
@@ -63,12 +64,21 @@ pub fn run(rx: Receiver<Inbound>) {
     let mut hub = Hub::default();
     let tick = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
     let mut next_tick = Instant::now() + tick;
+    let mut meter = TickMeter::new(Instant::now());
     loop {
         let wait = next_tick.saturating_duration_since(Instant::now());
         match rx.recv_timeout(wait) {
             Ok(event) => hub.handle(event),
             Err(RecvTimeoutError::Timeout) => {
+                let started = Instant::now();
                 hub.tick();
+                let metrics = metrics();
+                metrics.record_tick(started.elapsed(), tick);
+                // Once a second: the tick rate, and what the hub holds.
+                if let Some(rate) = meter.tick(Instant::now()) {
+                    metrics.record_tick_rate(rate);
+                    metrics.record_hub(&hub.stats());
+                }
                 next_tick += tick;
                 // Don't try to catch up after a long stall.
                 if next_tick < Instant::now() {
@@ -104,11 +114,33 @@ impl Hub {
         // A client this far behind has lost its session anyway. Dropping its
         // sender closes the socket; the Disconnect event performs the cleanup.
         if client.tx.try_send(bytes).is_err() {
+            metrics().kicked.inc();
             if let Some(client) = self.clients.get_mut(&id) {
                 let (dead, _) = tokio::sync::mpsc::channel(1);
                 client.tx = dead;
             }
         }
+    }
+
+    /// What the hub holds now: connections, rooms by phase, who plays, and the matches' worlds.
+    fn stats(&self) -> HubStats {
+        let mut stats = HubStats {
+            clients: self.clients.len(),
+            ..Default::default()
+        };
+        for room in self.rooms.values() {
+            match (&room.game, room.results_left) {
+                (_, Some(_)) => stats.rooms_results = stats.rooms_results.saturating_add(1),
+                (Some(game), None) => {
+                    stats.rooms_playing = stats.rooms_playing.saturating_add(1);
+                    stats.humans_playing = stats.humans_playing.saturating_add(room.members.len());
+                    stats.bots_playing = stats.bots_playing.saturating_add(room.seats.bot_count());
+                    stats.ecs = stats.ecs.plus(game.ecs_stats());
+                }
+                (None, None) => stats.rooms_waiting = stats.rooms_waiting.saturating_add(1),
+            }
+        }
+        stats
     }
 
     fn send(&mut self, id: u32, payload: Out) {
@@ -821,7 +853,7 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::TEAM_SIZE;
+    use crate::game::{EcsStats, TEAM_SIZE};
     use tokio::sync::mpsc::{channel, Receiver};
 
     const RED: usize = 0;
@@ -997,6 +1029,31 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn the_hub_stats_count_rooms_by_phase_and_who_plays_in_them() {
+        let mut harness = Harness::new(&[1, 2, 3]);
+        assert_eq!(
+            harness.hub.stats(),
+            HubStats {
+                clients: 3,
+                ..Default::default()
+            }
+        );
+        harness.send(1, create(true));
+        harness.send(2, create(false));
+        let stats = harness.hub.stats();
+        assert_eq!((stats.rooms_waiting, stats.rooms_playing), (2, 0));
+        assert_eq!(stats.ecs, EcsStats::default(), "no match, no world");
+
+        harness.send(1, start());
+        let stats = harness.hub.stats();
+        assert_eq!((stats.rooms_waiting, stats.rooms_playing), (1, 1));
+        assert_eq!(stats.humans_playing, 1);
+        assert_eq!(stats.bots_playing, 2 * TEAM_SIZE - 1);
+        assert!(stats.ecs.entities >= 2 * TEAM_SIZE, "{stats:?}");
+        assert!(stats.ecs.archetypes > 0, "{stats:?}");
     }
 
     #[test]

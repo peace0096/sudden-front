@@ -1,0 +1,74 @@
+# The game server with its monitoring: Prometheus scrapes the server's /metrics (and the load-test
+# bots on the host, and cAdvisor's container numbers), and Grafana shows them.
+#
+#   docker compose -f infra/docker-compose.yml up -d --build
+#
+# Game: http://localhost:8800  Grafana: http://localhost:3000  Prometheus: http://localhost:9090
+name: sudden-front
+
+services:
+  server:
+    # Built here, or pulled from a registry when SERVER_IMAGE names one (the cloud VM does that).
+    image: ${SERVER_IMAGE:-sudden-front-server:local}
+    build:
+      context: ..
+      dockerfile: infra/docker/server.Dockerfile
+    environment:
+      PORT: "8800"
+    ports:
+      - "${SERVER_PORT:-8800}:8800"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    # The load-test bots run on the host and serve their counters there.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/sudden-front.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Per-container CPU, memory and network, from the Docker host.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=5s
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:

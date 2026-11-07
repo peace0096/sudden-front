@@ -1,0 +1,13 @@
+**/node_modules
+**/target
+client/dist
+client/src/gen
+client/e2e-shots
+client/public/art/_candidates
+art-src
+tests
+infra/pulumi
+.git
+.idea
+.omc
+.claude

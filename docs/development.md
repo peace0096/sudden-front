@@ -127,6 +127,14 @@ cd server; cargo fmt; cargo clippy --all-targets -- -D warnings
 
 `Cargo.toml`의 `[lints]`가 `unsafe` 코드(`forbid`)와 넘칠 수 있는 정수 연산(`clippy::arithmetic_side_effects`)을 막고, clippy는 경고 0이어야 통과입니다. 규칙은 [server/AGENTS.md](../server/AGENTS.md)에 있습니다. Claude Code에서는 Stop 훅(`.claude/hooks/server-check.sh`)이 작업을 마칠 때 서버 소스가 마지막 검사 뒤로 바뀌었으면 두 명령을 돌리고, fmt가 파일을 고쳤거나 clippy가 실패하면 종료를 한 번 막습니다. 훅을 새로 받았거나 고쳤으면 Claude Code의 `/hooks` 메뉴를 한 번 열거나 다시 시작해야 적용됩니다.
 
+### 부하 테스트
+
+```powershell
+cd tests\client; cargo run --release -- --count 50 --duration 300
+```
+
+봇 클라이언트, 서버 `/metrics`, Docker Compose 모니터링, Pulumi는 [load-test.md](load-test.md)에 있습니다. 봇 클라이언트의 검사는 `tests/client/`에서 `cargo fmt`·`cargo clippy --all-targets -- -D warnings`·`cargo test --release`입니다.
+
 ### 브라우저 e2e (Playwright)
 
 서버를 release로 켠 상태에서 실행합니다. headless Edge + SwiftShader로 렌더링하며, 두 번째 인자 폴더에 스크린샷을 남깁니다(기본 `e2e-shots`, gitignore). 첫 인자를 생략하면 `client/e2e/server.mjs`가 `PORT`(없으면 8800)로 만든 주소를 씁니다.

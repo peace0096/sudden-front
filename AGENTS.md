@@ -22,6 +22,7 @@ Rust 1.89 이상과 Node.js 22.12 이상이 필요합니다(`bevy_ecs` 0.18, `@b
    - Microsoft Edge가 필요합니다. `playwright-core`가 `msedge` 채널의 headless Edge와 SwiftShader로 렌더링합니다. Edge가 없으면 스크립트를 `client/e2e/` 안에 임시 사본으로 복사해 `channel`만 `"chrome"` 등 설치된 브라우저로 바꿔 실행하고, 끝나면 사본을 지웁니다. 사본이 `client/e2e/` 안에 있어야 `playwright-core`를 찾습니다.
    - 기본 URL은 Rust 서버가 제공하는 `client/dist`를 엽니다. 클라이언트를 고쳤으면 `npm run build`를 먼저 해야 새 코드가 테스트됩니다.
    - 이전 서버 프로세스를 종료하고 새로 빌드한 서버를 띄웁니다. 남아 있으면 옛 바이너리로 테스트하게 되고, Windows에서는 exe가 잠겨 빌드가 실패합니다.
+5. **부하 테스트와 모니터링** — `tests/client/`에서 `cargo run --release -- --count <봇 수> [--duration <초>]`(봇이 브라우저처럼 접속해 10명씩 방을 만들고 경기, `--duration`이 없으면 Ctrl+C까지). 검사는 그 폴더에서 `cargo fmt`·`cargo clippy --all-targets -- -D warnings`·`cargo test --release`(서버와 같은 lint). 서버·Prometheus·Grafana는 프로젝트 폴더에서 `docker compose -f infra/docker-compose.yml up -d --build`(게임 8800, Grafana 3000, Prometheus 9090). 서버 지표는 `/metrics`. 자세한 내용은 [docs/load-test.md](docs/load-test.md)에 있습니다.
 
 ## 작업 규칙
 
@@ -74,8 +75,9 @@ server/
   AGENTS.md                서버 코드 규칙(도메인별 패키지, 순수 함수와 단위 테스트, unsafe 금지, 정수 오버플로, fmt·clippy)
   Cargo.toml               [lints]: unsafe_code forbid, clippy::arithmetic_side_effects
 server/src/                테스트는 각 파일 맨 아래 tests 모듈
-  main.rs                  axum 라우터: /ws, /art(없는 파일은 404), client/dist 정적 파일
+  main.rs                  axum 라우터: /ws, /metrics, /art(없는 파일은 404), client/dist 정적 파일
   net.rs                   연결별 WebSocket 세션 ↔ 허브 스레드(mpsc). 16KB 초과 프레임은 연결 종료, 디코딩 실패 프레임은 버림
+  metrics.rs               Prometheus 지표(틱 시간·FPS, 연결·방·인원, ECS World 크기, WebSocket 트래픽, Linux 프로세스)
   hub/                     로비와 방, 30Hz 틱 루프
     mod.rs                 허브: 메시지 처리, 방장 권한, 방 목록·대기실 상태 전송, 틱 루프
     seats.rs               좌석(팀별 5칸, 개인전은 같은 10칸을 번호 0~9로)과 칸 배정
@@ -114,6 +116,8 @@ client/public/art/         glTF·WebP 에셋과 LICENSES.json(파일별 출처·
 client/scripts/check-art.mjs  빌드 때 에셋 등록·라이선스·예산 검사
 tools/art/                 에셋 파이프라인: sources.json·fetch(원본 팩 받기)·inspect(측정)·build-art와 recipes(변환, --check)·gallery-shots(비교 스크린샷)
 client/e2e/*.mjs           Playwright 브라우저 테스트
+tests/client/              부하 테스트 봇(Rust, 서버와 따로 빌드): bonsai-bt 행동 트리(tree.rs)·칠판과 잎 노드(agent.rs)·연결 루프(bot.rs)·10명 단위 방 배정(plan.rs)·서버 봇을 옮긴 전투(combat/)
+infra/                     docker-compose.yml(서버·Prometheus·Grafana·cAdvisor), docker/server.Dockerfile, prometheus/·grafana/ 설정과 대시보드, pulumi/(Google Cloud VM, TypeScript)
 ```
 
 수치를 바꿀 위치 전체 표는 [docs/development.md](docs/development.md)의 "수치 조정 위치"에 있습니다.

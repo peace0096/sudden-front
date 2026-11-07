@@ -74,6 +74,28 @@ pub const CROUCH_SPREAD_FACTOR: f32 = 0.5;
 pub const TEAM_SIZE: usize = 5;
 const FIRST_BOT_ID: u32 = 1_000_000;
 
+/// How big a match's ECS world is, for the server's metrics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EcsStats {
+    pub entities: usize,
+    pub archetypes: usize,
+    pub tables: usize,
+    /// Component types registered.
+    pub components: usize,
+}
+
+impl EcsStats {
+    /// Two worlds' numbers together.
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            entities: self.entities.saturating_add(other.entities),
+            archetypes: self.archetypes.saturating_add(other.archetypes),
+            tables: self.tables.saturating_add(other.tables),
+            components: self.components.saturating_add(other.components),
+        }
+    }
+}
+
 pub struct Match {
     world: World,
     schedule: Schedule,
@@ -609,12 +631,55 @@ impl Match {
     pub fn winner(&self) -> Option<Winner> {
         self.world.resource::<MatchState>().winner
     }
+
+    /// The size of this match's ECS world.
+    pub fn ecs_stats(&self) -> EcsStats {
+        EcsStats {
+            entities: self.world.entity_count() as usize,
+            archetypes: self.world.archetypes().len(),
+            tables: self.world.storages().tables.len(),
+            components: self.world.components().len(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::game::test_support::*;
+
+    #[test]
+    fn ecs_stats_add_up_field_by_field() {
+        let one = EcsStats {
+            entities: 1,
+            archetypes: 2,
+            tables: 3,
+            components: 4,
+        };
+        assert_eq!(
+            one.plus(one),
+            EcsStats {
+                entities: 2,
+                archetypes: 4,
+                tables: 6,
+                components: 8,
+            }
+        );
+        let full = EcsStats {
+            entities: usize::MAX,
+            ..one
+        };
+        assert_eq!(full.plus(one).entities, usize::MAX, "saturates");
+    }
+
+    #[test]
+    fn a_match_world_holds_an_entity_for_each_player_and_more_than_one_archetype() {
+        let game = Match::new(&[], YARD, true, 1);
+        let stats = game.ecs_stats();
+        assert!(stats.entities >= 2 * TEAM_SIZE, "{stats:?}");
+        assert!(stats.archetypes > 1 && stats.tables > 1, "{stats:?}");
+        assert!(stats.components > 0, "{stats:?}");
+    }
 
     #[test]
     fn a_timer_counts_down_a_tick_at_a_time_and_stops_at_zero() {

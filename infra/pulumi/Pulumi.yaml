@@ -1,0 +1,13 @@
+name: sudden-front
+description: Sudden Front game server with Prometheus and Grafana on one Google Compute Engine VM
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+config:
+  gcp:project:
+    description: Google Cloud project ID
+  gcp:region:
+    value: asia-northeast3
+  gcp:zone:
+    value: asia-northeast3-a

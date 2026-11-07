@@ -6,8 +6,9 @@
 proto/game.proto            패킷 정의의 단일 원본 (Rust·TS 코드 모두 여기서 생성)
 server/
   build.rs                  prost-build로 game.proto → game.v1.rs
-  src/main.rs               axum 라우터: /ws, /art (없는 파일은 404), client/dist 정적 파일, 포트 선택 (기본 8800, 사용 중이면 빈 포트)
-  src/net.rs                WebSocket 세션 ↔ 허브 스레드 (mpsc 채널)
+  src/main.rs               axum 라우터: /ws, /metrics, /art (없는 파일은 404), client/dist 정적 파일, 포트 선택 (기본 8800, 사용 중이면 빈 포트)
+  src/net.rs                WebSocket 세션 ↔ 허브 스레드 (mpsc 채널), 프레임·바이트 지표
+  src/metrics.rs            Prometheus 지표: 틱 시간·틱 수(FPS), 연결·방·인원, ECS World 크기, WebSocket 트래픽, Linux 프로세스
   AGENTS.md                 서버 코드 규칙 (도메인별 패키지, 순수 함수와 단위 테스트, unsafe 금지, 정수 오버플로, fmt·clippy)
   src/hub/                  로비와 방, 30Hz 틱 루프. 테스트는 각 파일 맨 아래
     mod.rs                  허브: 메시지 처리, 방장 권한, 방 목록·대기실 상태 전송, 틱 루프, 대기실·준비·도중 참가 흐름 테스트
@@ -61,12 +62,19 @@ client/
   public/art/               glTF·WebP 에셋과 LICENSES.json (파일별 출처·라이선스)
   scripts/check-art.mjs     빌드 때 에셋 등록·라이선스·예산 검사
   e2e/*.mjs                 Playwright 브라우저 테스트
+tests/client/               부하 테스트 봇 (Rust, 서버와 따로 빌드): bonsai-bt 행동 트리, 서버 봇을 옮긴 전투 로직. docs/load-test.md
+infra/
+  docker-compose.yml        게임 서버·Prometheus·Grafana·cAdvisor
+  docker/server.Dockerfile  클라이언트 빌드 + 서버 release 빌드 → 실행 이미지
+  prometheus/, grafana/     수집 설정, 데이터 소스·대시보드 프로비저닝
+  pulumi/                   Google Cloud: Artifact Registry + Compute Engine VM 한 대 (TypeScript)
 ```
 
 ## 서버 스레드 모델
 
 - tokio 런타임이 WebSocket 연결을 받고, 연결마다 `net::client_session`이 돕니다. 받은 바이너리 프레임은 `ClientMessage`로 디코딩해 `std::sync::mpsc`로 허브 스레드에 넘깁니다. 디코딩에 실패한 프레임은 버리고, 16KB를 넘는 프레임이 오면 연결을 끊습니다.
 - `game-hub` 스레드 하나가 모든 방을 소유합니다. 30Hz로 돌며 받은 메시지를 처리하고 진행 중인 방마다 `Match`를 한 틱씩 진행한 뒤 스냅샷을 보냅니다. 클라이언트별 송신 큐(512)가 가득 차면 그 클라이언트를 끊습니다.
+- 허브 스레드는 틱마다 걸린 시간을, 1초마다 틱 수와 허브 상태(연결·방·인원·`Match::ecs_stats`)를 `metrics.rs`에 기록하고, axum의 `/metrics`가 그것을 Prometheus 형식으로 내보냅니다([load-test.md](load-test.md)).
 - 방 상태: 대기실(Lobby) → 진행(InGame) → 결과(8초) → 대기실 복귀. 최대 10명, 팀당 5명.
 - 대기실 자리는 팀마다 위치가 고정된 5칸(사람·봇·빈칸)입니다. 경기를 시작하면 팀마다 봇 칸 수만큼 봇이 들어가고, 경기 중 나간 사람의 자리는 채우지 않습니다. 한 팀이 비면 `Match::remove_player`가 남은 팀을 승자로 정하고(기권승), 평소처럼 결과 → 대기실 복귀로 이어집니다.
 - 도중 참가: 경기 중인 방의 `JoinRoom`은 `join_running_match`가 받습니다. 빈 칸에만 앉히고(`Seats::sit_open`, 팀은 `Room::seat_mid_match`가 인원이 적은 쪽으로), `Match::add_player`가 재투입과 같은 규칙(적에게서 먼 스폰, 3초 보호, 증강모드면 카드 선택 중엔 패를 주고 그 뒤엔 즉시 무작위)으로 넣습니다. 들어온 사람에게는 `MatchStart`, 다른 사람에게는 `RosterUpdate`를 보냅니다. 결과 화면 중(또는 승자가 정해진 틱)에는 거절합니다.

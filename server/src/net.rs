@@ -1,6 +1,7 @@
 //! WebSocket transport: binary protobuf frames <-> the hub thread.
 
 use crate::hub::Inbound;
+use crate::metrics::metrics;
 use crate::pb;
 use axum::{
     extract::{
@@ -27,6 +28,7 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(hub): State<Sender<Inbound>>
 
 async fn client_session(socket: WebSocket, hub: Sender<Inbound>) {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    metrics().connections.inc();
     let (mut sink, mut stream) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(512);
 
@@ -36,6 +38,8 @@ async fn client_session(socket: WebSocket, hub: Sender<Inbound>) {
 
     let mut writer = tokio::spawn(async move {
         while let Some(bytes) = out_rx.recv().await {
+            metrics().frames_out.inc();
+            metrics().bytes_out.inc_by(bytes.len() as u64);
             if sink.send(Message::Binary(bytes.into())).await.is_err() {
                 break;
             }
@@ -46,6 +50,8 @@ async fn client_session(socket: WebSocket, hub: Sender<Inbound>) {
         tokio::select! {
             frame = stream.next() => match frame {
                 Some(Ok(Message::Binary(data))) => {
+                    metrics().frames_in.inc();
+                    metrics().bytes_in.inc_by(data.len() as u64);
                     // Malformed frames are dropped; they can't affect other players.
                     if let Ok(msg) = pb::ClientMessage::decode(data.as_ref()) {
                         if hub.send(Inbound::Message { id, msg }).is_err() {

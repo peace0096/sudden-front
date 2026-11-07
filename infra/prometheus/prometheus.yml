@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # Every game server container: the compose service name resolves to each replica
+  # (docker compose up --scale server=N).
+  - job_name: sudden-front-server
+    dns_sd_configs:
+      - names: [server]
+        type: A
+        port: 8800
+        refresh_interval: 15s
+
+  # The load-test bots (tests/client), when they run on the Docker host with --metrics-port 9900.
+  - job_name: loadtest
+    static_configs:
+      - targets: ["host.docker.internal:9900"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
