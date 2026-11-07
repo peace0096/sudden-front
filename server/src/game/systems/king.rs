@@ -105,7 +105,7 @@ mod tests {
                 SHOOTER,
                 vec![pb::InputCmd {
                     slot,
-                    ..cmd(10 + slot, tick_now(&game))
+                    ..cmd(slot.saturating_add(10), tick_now(&game))
                 }],
             );
             game.tick();
