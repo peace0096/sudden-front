@@ -95,7 +95,8 @@ Claude Code에서 `/load-test 5분 50명`처럼 부르면 에이전트가 스택
 node .claude/skills/load-test/scripts/loadtest.mjs up                          # Docker Desktop 시작, compose up --build, 수집될 때까지 대기
 node .claude/skills/load-test/scripts/loadtest.mjs run --count 50 --minutes 5  # 봇 실행(30초마다 상태 출력) 후 리포트
 node .claude/skills/load-test/scripts/loadtest.mjs status                      # 지금 서버 상태 한 줄
-node .claude/skills/load-test/scripts/loadtest.mjs report --dir tests/reports/<실행 폴더>  # 리포트 다시 만들기
+node .claude/skills/load-test/scripts/loadtest.mjs report --dir tests/reports/<실행 폴더>  # Prometheus에서 다시 수집해 리포트 다시 만들기
+node .claude/skills/load-test/scripts/loadtest.mjs render --dir tests/reports/<실행 폴더>  # metrics.json만으로 report.md·report.html 다시 만들기(분석 반영)
 node .claude/skills/load-test/scripts/loadtest.mjs down
 ```
 
@@ -103,8 +104,9 @@ node .claude/skills/load-test/scripts/loadtest.mjs down
 
 | 파일 | 내용 |
 | --- | --- |
-| `report.md` | 한국어 리포트: 종합 판정과 항목별 판정, 실행 조건(커밋·Docker CPU·메모리), 게임 루프·인원과 방·ECS·프로세스와 네트워크·봇 표, 분 단위 추이, 바로 전 실행과 비교, Grafana 링크. `## 분석`은 에이전트가 채우며 `report`로 다시 만들어도 유지 |
-| `metrics.json` | 리포트의 숫자 전체(다음 실행의 비교에 씀) |
+| `report.html` | 시각화 리포트(파일 하나, 오프라인으로 열림): 항목별 판정 타일, 분석, 틱 시간과 33 ms 예산 막대, 시계열 차트(접속·틱 레이트·틱 p99·CPU·RSS·네트워크·Ping·방 상태·ECS, 마우스를 올리면 값 표시), 바로 전 실행과 비교, 실행 조건, 접어 둔 상세 표. `scripts/report-html.mjs`가 그림 |
+| `report.md` | 짧은 요약: 종합 판정, 항목별 판정 표, `## 분석`(에이전트가 채우는 한 줄 불릿, `report`·`render`로 다시 만들어도 유지), `report.html` 링크 |
+| `metrics.json` | 리포트의 숫자 전체와 차트용 시계열(`series`, 다음 실행의 비교에 씀) |
 | `run.json` | 실행 조건과 시작·종료 시각 |
 | `bots.log` | 봇 클라이언트 콘솔 출력 |
 

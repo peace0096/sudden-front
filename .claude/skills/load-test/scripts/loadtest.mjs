@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Load test runner for the load-test skill: brings up the Docker stack (game server, Prometheus,
 // Grafana), runs the tests/client bots for a fixed time, and writes a Markdown report from what
-// Prometheus collected. Node 22, no dependencies.
+// Prometheus collected (report.md: verdict + analysis, report.html: charts
+// and tables). Node 22, no dependencies.
 //
 //   node loadtest.mjs up [--no-build]                 Docker stack up, wait until scraped
 //   node loadtest.mjs run --count 50 --minutes 5      bots for 5 minutes, then the report
-//   node loadtest.mjs report --dir <run dir>          write the report of a past run again
+//   node loadtest.mjs report --dir <run dir>          query Prometheus again for a past run
+//   node loadtest.mjs render --dir <run dir>          report.md + report.html from metrics.json
 //   node loadtest.mjs status                          one line of what the server does now
 //   node loadtest.mjs down                            Docker stack down (the data volume stays)
 //
@@ -15,6 +17,8 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+import { htmlReport } from "./report-html.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 const COMPOSE = path.join(ROOT, "infra", "docker-compose.yml");
@@ -329,8 +333,9 @@ async function commandRun(opts) {
 
   const runInfo = { ...meta, start, stop: start + durationS, end, exitCode, alerts };
   fs.writeFileSync(path.join(dir, "run.json"), `${JSON.stringify(runInfo, null, 2)}\n`);
-  const file = await writeReport(target, runInfo);
-  log(`report: ${file}`);
+  const { reportFile, htmlFile } = await writeReport(target, runInfo);
+  log(`report: ${reportFile}`);
+  log(`html: ${htmlFile}`);
   if (exitCode !== 0) process.exitCode = 1;
 }
 
@@ -339,7 +344,17 @@ async function commandReport(opts) {
   const dir = path.resolve(opts.dir);
   const runInfo = JSON.parse(fs.readFileSync(path.join(dir, "run.json"), "utf8"));
   const target = targetOf({ ...opts, target: runInfo.target });
-  log(`report: ${await writeReport(target, { ...runInfo, dir })}`);
+  const { reportFile, htmlFile } = await writeReport(target, { ...runInfo, dir });
+  log(`report: ${reportFile}`);
+  log(`html: ${htmlFile}`);
+}
+
+/** Rebuilds report.md and report.html from metrics.json (no Prometheus), keeping the analysis. */
+function commandRender(opts) {
+  if (!opts.dir) throw new Error("--dir <run dir> is required");
+  const { reportFile, htmlFile } = render(path.resolve(opts.dir));
+  log(`report: ${reportFile}`);
+  log(`html: ${htmlFile}`);
 }
 
 // ---- the report
@@ -408,9 +423,12 @@ async function collect(target, run) {
       q('sum(sudden_front_players_in_match{kind="bot"})'),
     ]);
   const roomsByPhase = {};
+  const roomSeries = {};
   for (const phase of ["waiting", "playing", "results"]) {
-    roomsByPhase[phase] = describe(await q(`sum(sudden_front_rooms{phase="${phase}"})`));
+    roomSeries[phase] = await q(`sum(sudden_front_rooms{phase="${phase}"})`);
+    roomsByPhase[phase] = describe(roomSeries[phase]);
   }
+  const tickP99 = await q("histogram_quantile(0.99, sum by (le) (rate(sudden_front_tick_duration_seconds_bucket[30s])))");
   const p99Minutes = await series(
     target,
     "histogram_quantile(0.99, sum by (le) (increase(sudden_front_tick_duration_seconds_bucket[1m])))",
@@ -491,8 +509,27 @@ async function collect(target, run) {
     });
   }
 
+  // The fine series for the HTML charts: [seconds since start, value in the chart's unit].
+  const rel = (points, scale = 1) => points.map(([t, v]) => [Math.round(t - start), Number((v * scale).toPrecision(5))]);
+  const seriesOut = {
+    clients: rel(clients),
+    botsInMatch: rel(botsInMatch),
+    tickRate: rel(rate),
+    tickP99Ms: rel(tickP99, 1000),
+    cpuPct: rel(cpu, 100),
+    rssMb: rel(rss, 1 / 2 ** 20),
+    outKBs: rel(outBytes, 1 / 1024),
+    inKBs: rel(inBytes, 1 / 1024),
+    rttMs: rel(rttSeries, 1000),
+    roomsPlaying: rel(roomSeries.playing),
+    roomsResults: rel(roomSeries.results),
+    roomsWaiting: rel(roomSeries.waiting),
+    entities: rel(entities),
+  };
+
   return {
     window: { start, stop, end, steadyStart, steadyEnd, steadyS, step },
+    series: seriesOut,
     tick: {
       rate: steady(rate),
       rateWhole: whole(rate),
@@ -567,158 +604,32 @@ function verdicts(run, m) {
   return { rows, overall };
 }
 
-function markdown(run, m, previous) {
-  const { rows, overall } = verdicts(run, m);
+/** The pieces both reports are built from: the run conditions, the detail tables, the charts. */
+function sections(run, m, previous) {
   const w = m.window;
-  const grafanaUrl = `${run.targetUrls.grafana}/d/sudden-front/?from=${Math.floor(w.start * 1000)}&to=${Math.ceil(w.end * 1000)}`;
-  const table = (head, body) => [`| ${head.join(" | ")} |`, `| ${head.map(() => "---").join(" | ")} |`, ...body.map((r) => `| ${r.join(" | ")} |`)].join("\n");
-  const mma = (d, f) => (d ? [f(d.min), f(d.avg), f(d.max)] : ["-", "-", "-"]);
-  const lines = [];
-  const p = (text = "") => lines.push(text);
-
-  p(`# 부하 테스트 리포트: 봇 ${run.bot.count}명 · ${run.bot.minutes}분`);
-  p();
-  p(`**종합 판정: ${overall}** · ${stamp(new Date(w.start * 1000))} 시작 · 대상 ${run.target} (${run.targetUrls.server})`);
-  p();
-  p("## 요약");
-  p();
-  p(table(["항목", "값", "기준", "판정"], rows));
-  p();
-  p(`판정은 안정 구간(봇의 90% 이상이 경기에 들어간 ${fmt.clock(w.steadyStart - w.start)}부터 봇 종료 신호 ${fmt.clock(w.steadyEnd - w.start)}까지, ${fmt.dur(w.steadyS)}) 기준입니다.`);
-  p();
-  p("<!-- analysis:start -->");
-  p("## 분석");
-  p();
-  p("_(에이전트가 작성: 병목, 이전 실행과의 차이, 다음에 볼 것)_");
-  p("<!-- analysis:end -->");
-  p();
-  p("## 실행 조건");
-  p();
   const d = run.docker;
-  p(
-    table(
-      ["항목", "값"],
-      [
-        ["봇", `${run.bot.count}명, ${run.bot.minutes}분 (\`${run.botArgs.join(" ")}\`)`],
-        ["방 설정", `${run.bot.mode} · ${run.bot.map} · ${run.bot.matchType}, 봇 접속 간격 ${run.bot.rampMs} ms`],
-        ["시간", `${stamp(new Date(w.start * 1000))} ~ ${stamp(new Date(w.end * 1000))} (총 ${fmt.dur(w.end - w.start)}, 수집 간격 ${w.step}초)`],
-        ["서버 코드", `\`${run.git.commit}\` ${run.git.subject}${run.git.dirty ? " **(커밋하지 않은 변경 있음)**" : ""}`],
-        ["서버 이미지", d?.imageCreated ? `sudden-front-server:local (빌드 ${d.imageCreated.slice(0, 19).replace("T", " ")})` : "-"],
-        ["Docker", d ? `${d.os}, CPU ${d.cpus}개, 메모리 ${fmt.mb(d.memBytes)}` : "-"],
-        ["호스트", `${run.host.os}, ${run.host.cpuModel} × ${run.host.cpus} (봇 클라이언트도 같은 PC에서 실행)`],
-        ["봇 종료 코드", String(run.exitCode)],
-      ],
-    ),
-  );
-  p();
-  p("## 게임 루프");
-  p();
-  p(
-    table(
-      ["지표", "최소", "평균", "최대"],
-      [
-        ["틱 레이트 (Hz)", ...mma(m.tick.rate, (v) => fmt.n(v, 1))],
-        ["CPU (1코어 = 100%)", ...mma(m.process.cpu, (v) => fmt.pct(v, 0))],
-      ],
-    ),
-  );
-  p();
-  p(
-    table(
-      ["틱 시간", "값"],
-      [
-        ["평균", fmt.ms(m.tick.mean)],
-        ["p50", fmt.ms(m.tick.p50)],
-        ["p95", fmt.ms(m.tick.p95)],
-        ["p99", fmt.ms(m.tick.p99)],
-        ["돌린 틱", fmt.n(m.tick.ticks)],
-        ["33 ms 초과", `${fmt.n(m.tick.overruns)}회`],
-      ],
-    ),
-  );
-  p();
-  p("분위수는 히스토그램 버킷(0.1·0.25·0.5·1·2·4·8·16·33·50·100·250 ms) 사이를 선형 보간한 추정값입니다.");
-  p();
-  p("## 인원과 방");
-  p();
+  const mma = (dsc, f) => (dsc ? [f(dsc.min), f(dsc.avg), f(dsc.max)] : ["-", "-", "-"]);
+  const MMA = ["지표", "최소", "평균", "최대"];
   const rooms = m.population.rooms;
-  p(
-    table(
-      ["지표", "최소", "평균", "최대"],
-      [
-        ["열린 WebSocket", ...mma(m.population.clients, (v) => fmt.n(v))],
-        ["경기 중 사람(봇 클라이언트)", ...mma(m.population.humansInMatch, (v) => fmt.n(v))],
-        ["경기 중 서버 봇", ...mma(m.population.serverBotsInMatch, (v) => fmt.n(v))],
-        ["방: 대기실", ...mma(rooms.waiting, (v) => fmt.n(v))],
-        ["방: 진행", ...mma(rooms.playing, (v) => fmt.n(v))],
-        ["방: 결과", ...mma(rooms.results, (v) => fmt.n(v))],
-      ],
-    ),
-  );
-  p();
-  p(`연 연결 ${fmt.n(m.population.connections)}개, 송신 큐가 차서 끊은 연결 ${fmt.n(m.population.kicked)}개.`);
-  p();
-  p("## ECS (진행 중인 모든 경기 World 합계)");
-  p();
-  p(
-    table(
-      ["지표", "최소", "평균", "최대"],
-      [
-        ["엔티티", ...mma(m.ecs.entities, (v) => fmt.n(v))],
-        ["아키타입", ...mma(m.ecs.archetypes, (v) => fmt.n(v))],
-        ["테이블", ...mma(m.ecs.tables, (v) => fmt.n(v))],
-        ["컴포넌트 종류", ...mma(m.ecs.components, (v) => fmt.n(v))],
-      ],
-    ),
-  );
-  p();
-  p("## 프로세스와 네트워크");
-  p();
   const perClient = (rate) => (rate && m.population.clients?.max ? rate.avg / m.population.clients.max : null);
-  p(
-    table(
-      ["지표", "최소", "평균", "최대"],
-      [
-        ["메모리 RSS", ...mma(m.process.rss, fmt.mb)],
-        ["스레드", ...mma(m.process.threads, (v) => fmt.n(v))],
-        ["열린 파일", ...mma(m.process.fds, (v) => fmt.n(v))],
-        ["송신", ...mma(m.network.outBytes, fmt.kbs)],
-        ["수신", ...mma(m.network.inBytes, fmt.kbs)],
-        ["송신 프레임/초", ...mma(m.network.outFrames, (v) => fmt.n(v))],
-        ["수신 프레임/초", ...mma(m.network.inFrames, (v) => fmt.n(v))],
-      ],
-    ),
-  );
-  p();
-  p(`접속당 평균 송신 ${fmt.kbs(perClient(m.network.outBytes))}, 수신 ${fmt.kbs(perClient(m.network.inBytes))}. 실행 전체 메모리는 ${fmt.mb(m.process.rssWhole?.first)}에서 시작해 최대 ${fmt.mb(m.process.rssWhole?.max)}였습니다.`);
-  p();
-  p("## 봇 클라이언트");
-  p();
-  p(
-    table(
-      ["지표", "값"],
-      [
-        ["경기 중 봇 (최소 / 평균 / 최대)", m.bots.inMatch ? `${fmt.n(m.bots.inMatch.min)} / ${fmt.n(m.bots.inMatch.avg, 1)} / ${fmt.n(m.bots.inMatch.max)}` : "-"],
-        ["경기 시작 / 종료 (봇 기준 누적)", `${fmt.n(m.bots.started)} / ${fmt.n(m.bots.ended)}`],
-        ["받은 스냅샷", `${fmt.n(m.bots.snapshots)} (안정 구간 평균 ${fmt.n(m.bots.snapshotsRate)}/초)`],
-        ["킬", fmt.n(m.bots.kills)],
-        ["Ping 왕복 평균 (분 단위 최대)", `${fmt.ms(m.bots.rtt)} (${fmt.ms(m.bots.rttMinutes?.max)})`],
-        ["서버 오류 메시지", fmt.n(m.bots.errors)],
-        ["서버가 끊은 연결", fmt.n(m.bots.drops)],
-        ["접속 실패", fmt.n(m.bots.connectFailures)],
-        ["보낸 / 받은 바이트", `${fmt.mb(m.bots.bytesOut)} / ${fmt.mb(m.bots.bytesIn)}`],
-      ],
-    ),
-  );
-  p();
-  p("스냅샷은 경기 중 봇마다 초당 30개가 정상입니다(경기 중 봇 × 30).");
-  p();
-  p("## 분 단위 추이");
-  p();
-  p(
-    table(
-      ["시각", "접속", "경기 중 봇", "틱 최저(Hz)", "틱 p99", "CPU", "RSS", "송신", "Ping"],
-      m.timeline.map((row) => [
+  const grafana = `${run.targetUrls.grafana}/d/sudden-front/?from=${Math.floor(w.start * 1000)}&to=${Math.ceil(w.end * 1000)}`;
+
+  const conditions = [
+    ["봇", `${run.bot.count}명, ${run.bot.minutes}분`],
+    ["방 설정", `${run.bot.mode} · ${run.bot.map} · ${run.bot.matchType}, 봇 접속 간격 ${run.bot.rampMs} ms`],
+    ["시간", `${stamp(new Date(w.start * 1000))} ~ ${stamp(new Date(w.end * 1000)).slice(11)} (안정 구간 ${fmt.clock(w.steadyStart - w.start)}~${fmt.clock(w.steadyEnd - w.start)}, 수집 간격 ${w.step}초)`],
+    ["서버 코드", `\`${run.git.commit}\` ${run.git.subject}${run.git.dirty ? " **(커밋하지 않은 변경 있음)**" : ""}`],
+    ["서버 이미지", d?.imageCreated ? `빌드 ${d.imageCreated.slice(0, 19).replace("T", " ")}` : "-"],
+    ["Docker", d ? `${d.os}, CPU ${d.cpus}개, 메모리 ${fmt.mb(d.memBytes)}` : "-"],
+    ["호스트", `${run.host.cpuModel} × ${run.host.cpus} (봇 클라이언트도 같은 PC)`],
+    ["봇 명령", `\`${run.botArgs.join(" ")}\` → 종료 코드 ${run.exitCode}`],
+  ];
+
+  const tables = [
+    {
+      title: "분 단위 추이",
+      head: ["시각", "접속", "경기 중 봇", "틱 최저(Hz)", "틱 p99", "CPU", "RSS", "송신", "Ping"],
+      rows: m.timeline.map((row) => [
         fmt.clock(row.minute * 60),
         fmt.n(row.clients),
         fmt.n(row.inMatch),
@@ -729,54 +640,182 @@ function markdown(run, m, previous) {
         fmt.kbs(row.outBytes),
         fmt.ms(row.rtt),
       ]),
-    ),
-  );
-  p();
+    },
+    {
+      title: "게임 루프",
+      head: MMA,
+      rows: [
+        ["틱 레이트 (Hz)", ...mma(m.tick.rate, (v) => fmt.n(v, 1))],
+        ["CPU (1코어 = 100%)", ...mma(m.process.cpu, (v) => fmt.pct(v, 0))],
+        ["틱 시간 평균 / p50 / p95 / p99", fmt.ms(m.tick.mean), `${fmt.ms(m.tick.p50)} / ${fmt.ms(m.tick.p95)}`, fmt.ms(m.tick.p99)],
+        ["돌린 틱 / 33 ms 초과", fmt.n(m.tick.ticks), "", `${fmt.n(m.tick.overruns)}회`],
+      ],
+      note: "분위수는 히스토그램 버킷(0.1·0.25·0.5·1·2·4·8·16·33·50·100·250 ms) 사이를 선형 보간한 추정값입니다.",
+    },
+    {
+      title: "인원과 방",
+      head: MMA,
+      rows: [
+        ["열린 WebSocket", ...mma(m.population.clients, (v) => fmt.n(v))],
+        ["경기 중 사람(봇 클라이언트)", ...mma(m.population.humansInMatch, (v) => fmt.n(v))],
+        ["경기 중 서버 봇", ...mma(m.population.serverBotsInMatch, (v) => fmt.n(v))],
+        ["방: 대기실", ...mma(rooms.waiting, (v) => fmt.n(v))],
+        ["방: 진행", ...mma(rooms.playing, (v) => fmt.n(v))],
+        ["방: 결과", ...mma(rooms.results, (v) => fmt.n(v))],
+      ],
+      note: `연 연결 ${fmt.n(m.population.connections)}개, 송신 큐가 차서 끊은 연결 ${fmt.n(m.population.kicked)}개.`,
+    },
+    {
+      title: "ECS (진행 중인 모든 경기 World 합계)",
+      head: MMA,
+      rows: [
+        ["엔티티", ...mma(m.ecs.entities, (v) => fmt.n(v))],
+        ["아키타입", ...mma(m.ecs.archetypes, (v) => fmt.n(v))],
+        ["테이블", ...mma(m.ecs.tables, (v) => fmt.n(v))],
+        ["컴포넌트 종류", ...mma(m.ecs.components, (v) => fmt.n(v))],
+      ],
+    },
+    {
+      title: "프로세스와 네트워크",
+      head: MMA,
+      rows: [
+        ["메모리 RSS", ...mma(m.process.rss, fmt.mb)],
+        ["스레드", ...mma(m.process.threads, (v) => fmt.n(v))],
+        ["열린 파일", ...mma(m.process.fds, (v) => fmt.n(v))],
+        ["송신", ...mma(m.network.outBytes, fmt.kbs)],
+        ["수신", ...mma(m.network.inBytes, fmt.kbs)],
+        ["송신 프레임/초", ...mma(m.network.outFrames, (v) => fmt.n(v))],
+        ["수신 프레임/초", ...mma(m.network.inFrames, (v) => fmt.n(v))],
+      ],
+      note: `접속당 평균 송신 ${fmt.kbs(perClient(m.network.outBytes))}, 수신 ${fmt.kbs(perClient(m.network.inBytes))}. 실행 전체 메모리는 ${fmt.mb(m.process.rssWhole?.first)}에서 시작해 최대 ${fmt.mb(m.process.rssWhole?.max)}.`,
+    },
+    {
+      title: "봇 클라이언트",
+      head: ["지표", "값"],
+      rows: [
+        ["경기 중 봇 (최소 / 평균 / 최대)", m.bots.inMatch ? `${fmt.n(m.bots.inMatch.min)} / ${fmt.n(m.bots.inMatch.avg, 1)} / ${fmt.n(m.bots.inMatch.max)}` : "-"],
+        ["경기 시작 / 종료 (봇 기준 누적)", `${fmt.n(m.bots.started)} / ${fmt.n(m.bots.ended)}`],
+        ["받은 스냅샷", `${fmt.n(m.bots.snapshots)} (안정 구간 평균 ${fmt.n(m.bots.snapshotsRate)}/초, 정상은 경기 중 봇 × 30)`],
+        ["킬", fmt.n(m.bots.kills)],
+        ["Ping 왕복 평균 (분 단위 최대)", `${fmt.ms(m.bots.rtt)} (${fmt.ms(m.bots.rttMinutes?.max)})`],
+        ["서버 오류 / 서버가 끊음 / 접속 실패", `${fmt.n(m.bots.errors)} / ${fmt.n(m.bots.drops)} / ${fmt.n(m.bots.connectFailures)}`],
+        ["보낸 / 받은 바이트", `${fmt.mb(m.bots.bytesOut)} / ${fmt.mb(m.bots.bytesIn)}`],
+      ],
+    },
+  ];
+
+  let comparison = null;
   if (previous) {
-    const pm = previous;
-    const pr = pm.run;
-    const delta = (now, before, f, lowerIsBetter = true) => {
-      if (now === null || now === undefined || before === null || before === undefined) return [f(before), f(now), "-"];
+    const pm = previous.metrics;
+    const pr = previous.run;
+    const delta = (label, now, before, f, lowerIsBetter = true) => {
+      if (now === null || now === undefined || before === null || before === undefined) return [label, f(before), f(now), "-"];
       const change = before === 0 ? null : (now - before) / before;
-      const arrow =
-        change === null || Math.abs(change) < 0.01 ? "" : (change < 0) === lowerIsBetter ? " (개선)" : " (악화)";
-      return [f(before), f(now), change === null ? "-" : `${change >= 0 ? "+" : ""}${fmt.pct(change)}${arrow}`];
+      if (change !== null && Math.abs(change) < 0.01) return [label, f(before), f(now), "변화 없음"];
+      const word = change === null || Math.abs(change) < 0.01 ? "" : (change < 0) === lowerIsBetter ? " 개선" : " 악화";
+      return [label, f(before), f(now), change === null ? "-" : `${change >= 0 ? "▲ +" : "▼ "}${fmt.pct(change)}${word}`];
     };
-    p("## 이전 실행과 비교");
-    p();
-    p(`이전: ${stamp(new Date(pr.start * 1000))}, 봇 ${pr.bot.count}명 · ${pr.bot.minutes}분 · ${pr.bot.mode}/${pr.bot.map}, 코드 \`${pr.git.commit}\`${pr.bot.count !== run.bot.count ? " **(봇 수가 달라 직접 비교에 주의)**" : ""}`);
-    p();
-    p(
-      table(
-        ["지표", "이전", "이번", "변화"],
-        [
-          ["틱 레이트 평균", ...delta(m.tick.rate?.avg, pm.metrics.tick.rate?.avg, (v) => fmt.n(v, 2), false)],
-          ["틱 시간 평균", ...delta(m.tick.mean, pm.metrics.tick.mean, fmt.ms)],
-          ["틱 시간 p99", ...delta(m.tick.p99, pm.metrics.tick.p99, fmt.ms)],
-          ["CPU 평균", ...delta(m.process.cpu?.avg, pm.metrics.process.cpu?.avg, (v) => fmt.pct(v, 0))],
-          ["RSS 최대", ...delta(m.process.rss?.max, pm.metrics.process.rss?.max, fmt.mb)],
-          ["송신 평균", ...delta(m.network.outBytes?.avg, pm.metrics.network.outBytes?.avg, fmt.kbs)],
-          ["Ping 평균", ...delta(m.bots.rtt, pm.metrics.bots.rtt, fmt.ms)],
-        ],
-      ),
-    );
-    p();
+    comparison = {
+      title: "이전 실행과 비교",
+      note: `이전: ${stamp(new Date(pr.start * 1000))}, 봇 ${pr.bot.count}명 · ${pr.bot.minutes}분 · ${pr.bot.mode}/${pr.bot.map}, 코드 \`${pr.git.commit}\`${pr.bot.count !== run.bot.count ? " — **봇 수가 달라 직접 비교에 주의**" : ""}`,
+      head: ["지표", "이전", "이번", "변화"],
+      rows: [
+        delta("틱 레이트 평균", m.tick.rate?.avg, pm.tick.rate?.avg, (v) => fmt.n(v, 2), false),
+        delta("틱 시간 평균", m.tick.mean, pm.tick.mean, fmt.ms),
+        delta("틱 시간 p99", m.tick.p99, pm.tick.p99, fmt.ms),
+        delta("CPU 평균", m.process.cpu?.avg, pm.process.cpu?.avg, (v) => fmt.pct(v, 0)),
+        delta("RSS 최대", m.process.rss?.max, pm.process.rss?.max, fmt.mb),
+        delta("송신 평균", m.network.outBytes?.avg, pm.network.outBytes?.avg, fmt.kbs),
+        delta("Ping 평균", m.bots.rtt, pm.bots.rtt, fmt.ms),
+      ],
+    };
   }
-  if (run.alerts?.length) {
-    p("## 실행 중 경고");
-    p();
-    for (const alert of run.alerts) p(`- ${alert}`);
-    p();
-  }
-  p("## 참고");
-  p();
-  p(`- Grafana(이 실행 구간): ${grafanaUrl}`);
-  p(`- Prometheus: ${run.targetUrls.prom}`);
+
   const down = m.targets.filter((t) => !t.up).map((t) => `${t.job}(${t.instance})`);
-  p(`- 끝날 때 수집 대상: ${m.targets.length - down.length}/${m.targets.length} 정상${down.length ? `, 응답 없음: ${down.join(", ")}` : ""}`);
-  p("- 같은 폴더: `bots.log`(봇 콘솔 출력), `run.json`(실행 조건), `metrics.json`(이 리포트의 숫자)");
-  p();
-  return lines.join("\n");
+  const links = [
+    `Grafana(이 실행 구간): ${grafana}`,
+    `Prometheus: ${run.targetUrls.prom}`,
+    `끝날 때 수집 대상: ${m.targets.length - down.length}/${m.targets.length} 정상${down.length ? `, 응답 없음: ${down.join(", ")}` : ""}`,
+    ...(run.alerts ?? []).map((a) => `실행 중 경고: ${a}`),
+    "같은 폴더: `report.md`(요약과 분석), `metrics.json`(숫자와 시계열), `run.json`(실행 조건), `bots.log`(봇 콘솔)",
+  ];
+
+  // Charts: one measure per chart (no second axis); a chart has one unit.
+  const s = m.series;
+  const steadyOf = (points) => describe(points.filter(([t]) => t >= w.steadyStart - w.start && t <= w.steadyEnd - w.start));
+  const note = (points, f, what = ["평균", "최대"]) => {
+    const dsc = steadyOf(points ?? []);
+    if (!dsc) return "";
+    const pick = { 최소: dsc.min, 평균: dsc.avg, 최대: dsc.max, 처음: dsc.first, 마지막: dsc.last };
+    return `안정 구간 ${what.map((k) => `${k} ${f(pick[k])}`).join(" · ")}`;
+  };
+  const n1 = (v) => fmt.n(v, 1);
+  const n0 = (v) => fmt.n(v, 0);
+  const charts = s
+    ? [
+        { id: "players", title: "접속과 경기 중 봇", unit: "명", digits: 0, note: note(s.botsInMatch, n0, ["최소", "평균"]).replace("안정 구간", "경기 중 봇"), series: [{ name: "접속", slot: 1, points: s.clients }, { name: "경기 중 봇", slot: 2, points: s.botsInMatch }] },
+        { id: "rate", title: "틱 레이트", unit: "Hz", digits: 1, ref: { y: 30, label: "목표 30 Hz" }, note: note(s.tickRate, n1, ["평균", "최소"]), series: [{ name: "틱 레이트", slot: 1, points: s.tickRate }] },
+        { id: "p99", title: "틱 시간 p99 (30초 창)", unit: "ms", digits: 2, note: `${note(s.tickP99Ms, (v) => fmt.n(v, 2))} · 예산 33.3 ms`, series: [{ name: "p99", slot: 1, points: s.tickP99Ms }] },
+        { id: "cpu", title: "서버 CPU", unit: "% (1코어 = 100%)", digits: 0, note: note(s.cpuPct, n0), series: [{ name: "CPU", slot: 1, points: s.cpuPct }] },
+        { id: "rss", title: "메모리 RSS", unit: "MB", digits: 1, note: note(s.rssMb, n1, ["처음", "마지막"]), series: [{ name: "RSS", slot: 1, points: s.rssMb }] },
+        { id: "net", title: "네트워크", unit: "KB/s", digits: 0, note: `${note(s.outKBs, n0, ["평균"]).replace("평균", "송신 평균")} · 수신 평균 ${fmt.n(steadyOf(s.inKBs ?? [])?.avg, 0)}`, series: [{ name: "송신", slot: 1, points: s.outKBs }, { name: "수신", slot: 2, points: s.inKBs }] },
+        { id: "rtt", title: "Ping 왕복 (봇 측정, 1분 창)", unit: "ms", digits: 1, note: note(s.rttMs, n1), series: [{ name: "Ping", slot: 1, points: s.rttMs }] },
+        { id: "rooms", title: "방 상태", unit: "개", digits: 0, note: note(s.roomsPlaying, n0, ["평균"]).replace("평균", "진행 평균"), series: [{ name: "진행", slot: 1, points: s.roomsPlaying }, { name: "결과", slot: 2, points: s.roomsResults }, { name: "대기실", slot: 3, points: s.roomsWaiting }] },
+        { id: "ecs", title: "ECS 엔티티 (모든 경기 합계)", unit: "개", digits: 0, note: note(s.entities, n0, ["평균", "최대"]), series: [{ name: "엔티티", slot: 1, points: s.entities }] },
+      ]
+    : [];
+
+  const tickBars = [
+    { label: "평균", ms: m.tick.mean === null ? null : m.tick.mean * 1000 },
+    { label: "p50", ms: m.tick.p50 === null ? null : m.tick.p50 * 1000 },
+    { label: "p95", ms: m.tick.p95 === null ? null : m.tick.p95 * 1000 },
+    { label: "p99", ms: m.tick.p99 === null ? null : m.tick.p99 * 1000 },
+  ];
+  return { conditions, tables, comparison, links, charts, tickBars, grafana };
+}
+
+const ANALYSIS_RE = /<!-- analysis:start -->[\s\S]*?<!-- analysis:end -->/;
+const ANALYSIS_PLACEHOLDER = "<!-- analysis:start -->\n## 분석\n\n_(에이전트가 작성: 4~6줄 불릿, 숫자 먼저)_\n<!-- analysis:end -->";
+
+/** report.md: the verdict table and the analysis only; the charts and details are in report.html. */
+function markdown(run, m, verdict, parts, analysis) {
+  const w = m.window;
+  const table = (head, body) => [`| ${head.join(" | ")} |`, `| ${head.map(() => "---").join(" | ")} |`, ...body.map((r) => `| ${r.join(" | ")} |`)].join("\n");
+  return [
+    `# 부하 테스트 리포트: 봇 ${run.bot.count}명 · ${run.bot.minutes}분`,
+    "",
+    `**종합 판정: ${verdict.overall}** · ${stamp(new Date(w.start * 1000))} · ${run.bot.mode} · ${run.bot.map} · ${run.bot.matchType} · 코드 \`${run.git.commit}\``,
+    "",
+    "📊 차트·상세 표: [report.html](report.html) (브라우저로 열기)",
+    "",
+    table(["항목", "값", "기준", "판정"], verdict.rows),
+    "",
+    analysis,
+    "",
+    `Grafana: ${parts.grafana}`,
+    "",
+  ].join("\n");
+}
+
+/** Writes report.md and report.html from metrics.json, keeping an analysis already in report.md. */
+function render(dir) {
+  const { run: runOnly, metrics: m } = JSON.parse(fs.readFileSync(path.join(dir, "metrics.json"), "utf8"));
+  const run = { ...runOnly, dir };
+  const verdict = verdicts(run, m);
+  const parts = sections(run, m, previousRun(dir));
+  const reportFile = path.join(dir, "report.md");
+  let analysis = ANALYSIS_PLACEHOLDER;
+  if (fs.existsSync(reportFile)) {
+    const old = fs.readFileSync(reportFile, "utf8").match(ANALYSIS_RE);
+    if (old && !old[0].includes("_(에이전트가 작성")) analysis = old[0];
+  }
+  fs.writeFileSync(reportFile, markdown(run, m, verdict, parts, analysis));
+  const htmlFile = path.join(dir, "report.html");
+  fs.writeFileSync(
+    htmlFile,
+    htmlReport({ run, m, verdict, budgetMs: TICK_BUDGET * 1000, analysisMd: analysis, ...parts }),
+  );
+  return { reportFile, htmlFile };
 }
 
 async function writeReport(target, run) {
@@ -784,17 +823,7 @@ async function writeReport(target, run) {
   const { overall } = verdicts(run, metrics);
   const { dir, ...runOnly } = run;
   fs.writeFileSync(path.join(dir, "metrics.json"), `${JSON.stringify({ run: runOnly, overall, metrics }, null, 2)}\n`);
-  const reportFile = path.join(dir, "report.md");
-  let text = markdown(run, metrics, previousRun(dir));
-  // Keep an analysis already written into an earlier report of this run.
-  if (fs.existsSync(reportFile)) {
-    const old = fs.readFileSync(reportFile, "utf8").match(/<!-- analysis:start -->[\s\S]*?<!-- analysis:end -->/);
-    if (old && !old[0].includes("_(에이전트가 작성")) {
-      text = text.replace(/<!-- analysis:start -->[\s\S]*?<!-- analysis:end -->/, () => old[0]);
-    }
-  }
-  fs.writeFileSync(reportFile, text);
-  return reportFile;
+  return render(dir);
 }
 
 // ---- main
@@ -804,13 +833,14 @@ const HELP = `usage: node loadtest.mjs <command> [options]
   run     --count <bots> --minutes <min>   run the bots, then write tests/reports/<run>/report.md
           [--mode normal|augment|big-head] [--map supply-yard|warehouse] [--match-type team|ffa]
           [--ramp-ms 50] [--out <dir>]
-  report  --dir <run dir>                  write the report of a past run again
+  report  --dir <run dir>                  query Prometheus again and rewrite the reports of a past run
+  render  --dir <run dir>                  rewrite report.md/report.html from metrics.json (after the analysis)
   status                                   what the server does now
   down                                     Docker stack down
 every command: [--target local] [--server-port 8800] [--prometheus URL] [--grafana URL]`;
 
 const { command, opts } = parseArgs(process.argv.slice(2));
-const commands = { up: commandUp, run: commandRun, report: commandReport, status: commandStatus, down: commandDown };
+const commands = { up: commandUp, run: commandRun, report: commandReport, render: commandRender, status: commandStatus, down: commandDown };
 if (!commands[command]) {
   console.log(HELP);
   process.exitCode = command === "help" ? 0 : 1;

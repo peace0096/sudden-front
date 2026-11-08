@@ -1,6 +1,6 @@
 ---
 name: load-test
-description: Run a Sudden Front load test — M bots for N minutes against the game server in Docker, watched by Prometheus/Grafana — and write a Korean summary report (tick rate, tick time p99, CPU, memory, network, ECS size, bot errors, minute-by-minute trend, comparison with the last run) with an analysis for developers. Use when the user asks for a load test, stress test, 부하 테스트, or how the server holds up with many players. Target is localhost only for now (remote is not deployed).
+description: Run a Sudden Front load test — M bots for N minutes against the game server in Docker, watched by Prometheus/Grafana — and write a Korean report with charts (report.html) and a short summary (report.md) (tick rate, tick time p99, CPU, memory, network, ECS size, bot errors, minute-by-minute trend, comparison with the last run) with an analysis for developers. Use when the user asks for a load test, stress test, 부하 테스트, or how the server holds up with many players. Target is localhost only for now (remote is not deployed).
 argument-hint: "<minutes> <bots> [mode] [map] [team|ffa]  e.g. 5분 50명"
 ---
 
@@ -53,9 +53,19 @@ node .claude/skills/load-test/scripts/loadtest.mjs run --count <M> --minutes <N>
 
 It builds the bots (`cargo build --release` in `tests/client`), starts them with
 `--duration N*60`, prints a status line every 30 s (clients, bots in match, tick Hz, tick p99, CPU,
-memory, bot errors) next to the bots' own 10 s summary, waits for the last scrape, and writes
-`report.md`, `metrics.json`, `run.json` and `bots.log` into the run folder (the last line names
-`report.md`).
+memory, bot errors) next to the bots' own 10 s summary, waits for the last scrape, and writes into
+the run folder (the last two lines name the reports):
+
+- `report.html` — the visual report, self-contained (opens from disk, no network): verdict tiles,
+  the analysis, tick time against the 33 ms budget, time-series charts with hover (players, tick
+  rate, tick p99, CPU, RSS, network, Ping, room phases, ECS entities; the ramp-up and wind-down
+  are shaded), comparison with the last run, run conditions, detail tables folded in `<details>`.
+  Drawn by `scripts/report-html.mjs`.
+- `report.md` — short: verdict table + analysis + link to `report.html`. The analysis lives here.
+- `metrics.json` (numbers and the fine series), `run.json`, `bots.log`.
+
+`render --dir <run folder>` rebuilds both reports from `metrics.json` without Prometheus;
+`report --dir` queries Prometheus again (needed for runs whose `metrics.json` has no `series`).
 
 While it runs:
 - Tell the user the run started, how long it takes, and the Grafana link; then wait for the
@@ -66,10 +76,15 @@ While it runs:
 
 ## 4. Write the analysis
 
-When the run finishes, read `report.md` (and `metrics.json` if you need exact numbers; `bots.log` if
-the bots reported errors). Replace the placeholder between `<!-- analysis:start -->` and
-`<!-- analysis:end -->` with a `## 분석` section in Korean, keeping both markers (a later `report`
-keeps what is between them). Write 4–8 bullets a developer can act on:
+When the run finishes, read `report.md` and `metrics.json` (the `timeline` and `series` hold the
+trends; `bots.log` if the bots reported errors). Replace the placeholder between
+`<!-- analysis:start -->` and `<!-- analysis:end -->` with a `## 분석` section in Korean, keeping
+both markers (a later `report`/`render` keeps what is between them). Then run
+`render --dir <run folder>` so `report.html` shows the analysis too.
+
+The charts and tables already show the numbers, so the analysis is not prose: **4–6 bullets, each
+one line**, a bold 2–4 word label then the numbers and the conclusion (`**선형 증가**: 50→500명에서
+틱 평균 0.24→2.34 ms, CPU 7→71%`). No sentences restating a table. Cover what a developer can act on:
 
 - The verdict in one sentence: did the server keep 30 Hz with M bots, and how much headroom is left
   (tick p99 against the 33 ms budget, CPU against the Docker CPU count in 실행 조건).
@@ -88,8 +103,8 @@ same PC and the host CPU may have limited them.
 ## 5. Report back
 
 Answer the user in Korean with: the overall verdict, the 3–5 numbers that matter (tick Hz avg/min,
-tick p99, CPU, RSS, errors), the analysis in short, and the full path of `report.md` plus the
-Grafana link of the run (in 참고). Leave the Docker stack running so they can look at Grafana, and
+tick p99, CPU, RSS, errors), the analysis in short, the full paths of `report.html` (the one to
+open) and `report.md`, plus the Grafana link of the run (in 참고). Leave the Docker stack running so they can look at Grafana, and
 tell them `node .claude/skills/load-test/scripts/loadtest.mjs down` stops it (the Prometheus data
 volume stays, so later reports can still be rebuilt with `report --dir <run folder>`).
 
