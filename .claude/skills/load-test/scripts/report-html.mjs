@@ -62,7 +62,7 @@ const table = (head, rows) =>
  * @param {number} p.budgetMs
  * @param {object[]} p.charts     [{ id, title, unit, note, series: [{ name, slot, points }] , ref? }]
  * @param {{title: string, head: string[], rows: string[][], note?: string}[]} p.tables
- * @param {{title: string, head: string[], rows: string[][], note: string}|null} p.comparison
+ * @param {{title: string, note: string, tables: {title: string, head: string[], rows: string[][]}[]}|null} p.comparison  the last run against this one
  * @param {string[][]} p.conditions  [label, value]
  * @param {string[]} p.links      Markdown lines for 참고
  * @param {string} p.analysisMd
@@ -117,8 +117,10 @@ export function htmlReport(p) {
   };
 
   const comparison = p.comparison
-    ? `<section class="card"><h2>${esc(p.comparison.title)}</h2><p class="muted">${inline(p.comparison.note)}</p>${table(p.comparison.head, p.comparison.rows)}</section>`
-    : "";
+    ? `<section class="card compare"><h2>${esc(p.comparison.title)}</h2><p class="sub">${inline(p.comparison.note)}</p>${p.comparison.tables
+        .map((t) => `<h3>${esc(t.title)}</h3>${table(t.head, t.rows)}`)
+        .join("")}</section>`
+    : '<section class="card compare"><h2>이전 실행과 비교</h2><p class="muted">비교할 이전 실행이 없습니다(<code>tests/reports/</code>의 첫 실행).</p></section>';
 
   const details = p.tables
     .map(
@@ -215,6 +217,8 @@ th { color: var(--ink-2); font-weight: 600; }
 details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; margin-bottom: 8px; }
 summary { cursor: pointer; font-weight: 600; }
 details[open] summary { margin-bottom: 8px; }
+h3 { font-size: 13px; color: var(--ink-2); margin: 16px 0 4px; }
+.compare td:last-child { white-space: nowrap; }
 .links { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
 </style>
 </head>
@@ -233,6 +237,8 @@ details[open] summary { margin-bottom: 8px; }
 
   <section class="card analysis"><h2>분석</h2>${analysisHtml(p.analysisMd)}</section>
 
+  ${comparison}
+
   <section class="card">
     <h2>틱 시간과 예산(${budget.toFixed(1)} ms)</h2>
     ${bars}
@@ -244,7 +250,6 @@ details[open] summary { margin-bottom: 8px; }
   <section class="charts">${chartCards}</section>
 
   <div style="height:16px"></div>
-  ${comparison}
 
   <section class="card"><h2>실행 조건</h2>${table(["항목", "값"], p.conditions)}</section>
 

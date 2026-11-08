@@ -604,6 +604,76 @@ function verdicts(run, m) {
   return { rows, overall };
 }
 
+/**
+ * The last run before this one against this one: what differs in the setup, the results, and the
+ * results per bot (comparable even when the bot counts differ). Null when there is no earlier run.
+ */
+function compare(run, m, previous) {
+  if (!previous) return null;
+  const pm = previous.metrics;
+  const pr = previous.run;
+  const change = (label, before, now, f, lowerIsBetter = true) => {
+    if (now === null || now === undefined || before === null || before === undefined) return [label, f(before), f(now), "-"];
+    if (before === 0) return [label, f(before), f(now), now === 0 ? "변화 없음" : "▲ 새로 생김"];
+    const c = (now - before) / before;
+    if (Math.abs(c) < 0.01) return [label, f(before), f(now), "변화 없음"];
+    const word = lowerIsBetter === null ? "" : (c < 0) === lowerIsBetter ? " 개선" : " 악화";
+    return [label, f(before), f(now), `${c >= 0 ? "▲ +" : "▼ "}${fmt.pct(c)}${word}`];
+  };
+  const same = (label, before, now) => [label, before, now, before === now ? "같음" : "**다름**"];
+  const errorsOf = (x) => [x.bots.errors, x.bots.drops, x.bots.connectFailures, x.population.kicked].reduce((a, v) => a + (v ?? 0), 0);
+  // Per bot: divided by the bots that played (steady average); per client: by the open connections.
+  const perBot = (x, v, count) => {
+    const bots = x.population.humansInMatch?.avg || count;
+    return v === null || v === undefined || !bots ? null : v / bots;
+  };
+  const perClient = (x, v) => (v === null || v === undefined || !x.population.clients?.max ? null : v / x.population.clients.max);
+  const us = (v) => (v === null || v === undefined ? "-" : `${(v * 1e6).toFixed(1)} µs`);
+  const kb = (v) => (v === null || v === undefined ? "-" : `${(v / 1024).toFixed(0)} KB`);
+  const code = (r) => `\`${r.git.commit}\`${r.git.dirty ? " +변경" : ""}`;
+  const setup = [
+    same("봇 수", `${pr.bot.count}명`, `${run.bot.count}명`),
+    same("시간", `${pr.bot.minutes}분`, `${run.bot.minutes}분`),
+    same("모드 · 맵 · 방식", `${pr.bot.mode} · ${pr.bot.map} · ${pr.bot.matchType}`, `${run.bot.mode} · ${run.bot.map} · ${run.bot.matchType}`),
+    same("서버 코드", code(pr), code(run)),
+  ];
+  // With another bot count, the absolute numbers move with the load: show the change, not a grade.
+  const scaled = pr.bot.count !== run.bot.count;
+  const abs = (label, before, now, f, lowerIsBetter = true) => change(label, before, now, f, scaled ? null : lowerIsBetter);
+  const results = [
+    same("종합 판정", previous.overall ?? "-", verdicts(run, m).overall),
+    abs("틱 레이트 평균", pm.tick.rate?.avg, m.tick.rate?.avg, (v) => `${fmt.n(v, 2)} Hz`, false),
+    abs("틱 시간 평균", pm.tick.mean, m.tick.mean, fmt.ms),
+    abs("틱 시간 p99", pm.tick.p99, m.tick.p99, fmt.ms),
+    change("33 ms 초과 틱", pm.tick.overruns, m.tick.overruns, (v) => `${fmt.n(v)}회`),
+    abs("CPU 평균", pm.process.cpu?.avg, m.process.cpu?.avg, (v) => fmt.pct(v, 0)),
+    abs("RSS 최대", pm.process.rss?.max, m.process.rss?.max, fmt.mb),
+    abs("송신 평균", pm.network.outBytes?.avg, m.network.outBytes?.avg, fmt.kbs),
+    abs("Ping 평균", pm.bots.rtt, m.bots.rtt, fmt.ms),
+    change("오류·끊김·접속 실패·강제 종료", errorsOf(pm), errorsOf(m), (v) => fmt.n(v)),
+  ];
+  const normalized = [
+    change("틱 시간 평균 ÷ 경기 중 봇", perBot(pm, pm.tick.mean, pr.bot.count), perBot(m, m.tick.mean, run.bot.count), us),
+    change("CPU 평균 ÷ 경기 중 봇", perBot(pm, pm.process.cpu?.avg, pr.bot.count), perBot(m, m.process.cpu?.avg, run.bot.count), (v) => fmt.pct(v, 2)),
+    change("RSS 최대 ÷ 경기 중 봇", perBot(pm, pm.process.rss?.max, pr.bot.count), perBot(m, m.process.rss?.max, run.bot.count), kb),
+    change("송신 ÷ 접속", perClient(pm, pm.network.outBytes?.avg), perClient(m, m.network.outBytes?.avg), fmt.kbs),
+    change("수신 ÷ 접속", perClient(pm, pm.network.inBytes?.avg), perClient(m, m.network.inBytes?.avg), fmt.kbs),
+  ];
+  const differs = setup.filter((r) => r[3] !== "같음").map((r) => r[0]);
+  const head = ["지표", "이전", "이번", "변화"];
+  return {
+    title: "이전 실행과 비교",
+    note: `이전 실행: ${stamp(new Date(pr.start * 1000))}. ${
+      differs.length ? `다른 조건: **${differs.join(", ")}**.` : "조건이 같아 결과를 그대로 비교할 수 있습니다."} ${scaled ? "봇 수가 달라 결과의 절대값은 부하만큼 달라지므로 개선·악화를 매기지 않습니다. 봇 1명당 표로 비교합니다." : ""
+    } 개선·악화는 틱 레이트만 높을수록, 나머지는 낮을수록 좋은 것으로 매깁니다.`,
+    tables: [
+      { title: "조건", head: ["항목", "이전", "이번", "비교"], rows: setup },
+      { title: "결과", head, rows: results },
+      { title: "봇 1명당 (봇 수가 달라도 비교 가능)", head, rows: normalized },
+    ],
+  };
+}
+
 /** The pieces both reports are built from: the run conditions, the detail tables, the charts. */
 function sections(run, m, previous) {
   const w = m.window;
@@ -704,32 +774,7 @@ function sections(run, m, previous) {
     },
   ];
 
-  let comparison = null;
-  if (previous) {
-    const pm = previous.metrics;
-    const pr = previous.run;
-    const delta = (label, now, before, f, lowerIsBetter = true) => {
-      if (now === null || now === undefined || before === null || before === undefined) return [label, f(before), f(now), "-"];
-      const change = before === 0 ? null : (now - before) / before;
-      if (change !== null && Math.abs(change) < 0.01) return [label, f(before), f(now), "변화 없음"];
-      const word = change === null || Math.abs(change) < 0.01 ? "" : (change < 0) === lowerIsBetter ? " 개선" : " 악화";
-      return [label, f(before), f(now), change === null ? "-" : `${change >= 0 ? "▲ +" : "▼ "}${fmt.pct(change)}${word}`];
-    };
-    comparison = {
-      title: "이전 실행과 비교",
-      note: `이전: ${stamp(new Date(pr.start * 1000))}, 봇 ${pr.bot.count}명 · ${pr.bot.minutes}분 · ${pr.bot.mode}/${pr.bot.map}, 코드 \`${pr.git.commit}\`${pr.bot.count !== run.bot.count ? " — **봇 수가 달라 직접 비교에 주의**" : ""}`,
-      head: ["지표", "이전", "이번", "변화"],
-      rows: [
-        delta("틱 레이트 평균", m.tick.rate?.avg, pm.tick.rate?.avg, (v) => fmt.n(v, 2), false),
-        delta("틱 시간 평균", m.tick.mean, pm.tick.mean, fmt.ms),
-        delta("틱 시간 p99", m.tick.p99, pm.tick.p99, fmt.ms),
-        delta("CPU 평균", m.process.cpu?.avg, pm.process.cpu?.avg, (v) => fmt.pct(v, 0)),
-        delta("RSS 최대", m.process.rss?.max, pm.process.rss?.max, fmt.mb),
-        delta("송신 평균", m.network.outBytes?.avg, pm.network.outBytes?.avg, fmt.kbs),
-        delta("Ping 평균", m.bots.rtt, pm.bots.rtt, fmt.ms),
-      ],
-    };
-  }
+  const comparison = compare(run, m, previous);
 
   const down = m.targets.filter((t) => !t.up).map((t) => `${t.job}(${t.instance})`);
   const links = [
@@ -792,6 +837,11 @@ function markdown(run, m, verdict, parts, analysis) {
     "",
     analysis,
     "",
+    "## 이전 실행과 비교",
+    "",
+    ...(parts.comparison
+      ? [parts.comparison.note, "", ...parts.comparison.tables.flatMap((t) => [`**${t.title}**`, "", table(t.head, t.rows), ""])]
+      : ["비교할 이전 실행이 없습니다(`tests/reports/`의 첫 실행).", ""]),
     `Grafana: ${parts.grafana}`,
     "",
   ].join("\n");

@@ -59,9 +59,18 @@ the run folder (the last two lines name the reports):
 - `report.html` — the visual report, self-contained (opens from disk, no network): verdict tiles,
   the analysis, tick time against the 33 ms budget, time-series charts with hover (players, tick
   rate, tick p99, CPU, RSS, network, Ping, room phases, ECS entities; the ramp-up and wind-down
-  are shaded), comparison with the last run, run conditions, detail tables folded in `<details>`.
+  are shaded), run conditions, detail tables folded in `<details>`.
   Drawn by `scripts/report-html.mjs`.
-- `report.md` — short: verdict table + analysis + link to `report.html`. The analysis lives here.
+- `report.md` — short: verdict table + analysis + 이전 실행과 비교 + link to `report.html`. The
+  analysis lives here.
+
+Both reports carry **이전 실행과 비교** right after the analysis: the latest earlier run in
+`tests/reports/` (by start time) against this one, in three tables — 조건 (bot count, minutes,
+mode·map·type, server commit: 같음/다름), 결과 (verdict, tick Hz, tick mean/p99, overruns, CPU, RSS,
+send, Ping, errors with ▲▼ %), and 봇 1명당 (tick time and CPU per bot in a match, RSS per bot,
+send/receive per connection), which stays comparable when the bot counts differ. With another bot
+count the 결과 table shows the change without 개선/악화. The first run says there is nothing to
+compare.
 - `metrics.json` (numbers and the fine series), `run.json`, `bots.log`.
 
 `render --dir <run folder>` rebuilds both reports from `metrics.json` without Prometheus;
@@ -93,8 +102,9 @@ one line**, a bold 2–4 word label then the numbers and the conclusion (`**선�
   spikes at match starts).
 - Anything wrong: errors, drops, kicked connections, bots that never got into a match, a minute
   with a low tick rate, Prometheus targets down. Quote the numbers.
-- Against 이전 실행과 비교, when present: what changed and whether the code commit differs (a
-  different bot count makes the comparison weak — say so).
+- **Always one bullet on 이전 실행과 비교** ("첫 실행" when there is none): with the same bot count,
+  the 결과 changes; with another bot count, the 봇 1명당 table (same per-bot cost = linear scaling,
+  a rise = something grew per player). Name the conditions that differ (code commit, mode, map).
 - What to try next (more bots, another mode/map, profiling a system), only if the data suggests it.
 
 Don't invent causes the data doesn't show; say "확인 필요" instead. Mention when the bots ran on the
@@ -103,7 +113,7 @@ same PC and the host CPU may have limited them.
 ## 5. Report back
 
 Answer the user in Korean with: the overall verdict, the 3–5 numbers that matter (tick Hz avg/min,
-tick p99, CPU, RSS, errors), the analysis in short, the full paths of `report.html` (the one to
+tick p99, CPU, RSS, errors), a short line on the comparison with the last run, the analysis in short, the full paths of `report.html` (the one to
 open) and `report.md`, plus the Grafana link of the run (in 참고). Leave the Docker stack running so they can look at Grafana, and
 tell them `node .claude/skills/load-test/scripts/loadtest.mjs down` stops it (the Prometheus data
 volume stays, so later reports can still be rebuilt with `report --dir <run folder>`).
