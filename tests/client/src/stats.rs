@@ -123,6 +123,11 @@ impl Stats {
                 &self.snapshots,
             ),
             (
+                "loadtest_kills_total",
+                "Kills the bots scored.",
+                &self.kills,
+            ),
+            (
                 "loadtest_frames_in_total",
                 "WebSocket frames received.",
                 &self.frames_in,
@@ -198,7 +203,9 @@ mod tests {
     fn the_exposition_names_every_metric_with_its_type_and_value() {
         let stats = Stats::default();
         add(&stats.snapshots, 42);
+        add(&stats.kills, 3);
         let text = stats.exposition();
+        assert!(text.contains("# TYPE loadtest_kills_total counter\nloadtest_kills_total 3\n"));
         assert!(
             text.contains("# TYPE loadtest_snapshots_total counter\nloadtest_snapshots_total 42\n")
         );

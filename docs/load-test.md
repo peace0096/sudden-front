@@ -85,6 +85,33 @@ docker compose -f infra/docker-compose.yml down
 - 대시보드 JSON(`infra/grafana/dashboards/sudden-front.json`)은 Grafana에서 고친 뒤 JSON으로 내보내 이 파일에 덮어씁니다. 행: 개요, 게임 루프(FPS·틱 시간 p50/p95/p99·초과), 인원, ECS, 프로세스·네트워크, 컨테이너(cAdvisor), 부하 테스트 봇.
 - `.dockerignore`가 `node_modules`·`target`·`tests`·`infra/pulumi` 등을 빌드 컨텍스트에서 뺍니다.
 
+## 부하 테스트 스킬 (`/load-test`)
+
+Claude Code에서 `/load-test 5분 50명`처럼 부르면 에이전트가 스택 띄우기 → 봇 실행 → 지표 수집 → 리포트 작성을 진행합니다(`.claude/skills/load-test/SKILL.md`). 대상은 지금 로컬(`--target local`)만 됩니다. 원격(Pulumi VM)은 배포 전이라 거절합니다.
+
+스킬이 쓰는 스크립트는 사람이 직접 돌려도 됩니다(프로젝트 폴더에서, Node 22, 의존성 없음).
+
+```powershell
+node .claude/skills/load-test/scripts/loadtest.mjs up                          # Docker Desktop 시작, compose up --build, 수집될 때까지 대기
+node .claude/skills/load-test/scripts/loadtest.mjs run --count 50 --minutes 5  # 봇 실행(30초마다 상태 출력) 후 리포트
+node .claude/skills/load-test/scripts/loadtest.mjs status                      # 지금 서버 상태 한 줄
+node .claude/skills/load-test/scripts/loadtest.mjs report --dir tests/reports/<실행 폴더>  # 리포트 다시 만들기
+node .claude/skills/load-test/scripts/loadtest.mjs down
+```
+
+`run`은 `--mode`·`--map`·`--match-type`·`--ramp-ms`도 받아 봇 클라이언트에 넘깁니다. 결과는 `tests/reports/<시각>-<M>bots-<N>m/`(gitignore)에 남습니다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `report.md` | 한국어 리포트: 종합 판정과 항목별 판정, 실행 조건(커밋·Docker CPU·메모리), 게임 루프·인원과 방·ECS·프로세스와 네트워크·봇 표, 분 단위 추이, 바로 전 실행과 비교, Grafana 링크. `## 분석`은 에이전트가 채우며 `report`로 다시 만들어도 유지 |
+| `metrics.json` | 리포트의 숫자 전체(다음 실행의 비교에 씀) |
+| `run.json` | 실행 조건과 시작·종료 시각 |
+| `bots.log` | 봇 클라이언트 콘솔 출력 |
+
+- 판정은 안정 구간(서버의 경기 중 사람 수가 봇의 90% 이상이 된 때부터 봇 종료 신호까지) 기준입니다. 틱 레이트 평균 ≥ 29.5 Hz, 틱 시간 p99 < 16.7 ms(예산 33 ms의 절반), 예산 초과 틱 < 0.1%, 봇 전원 경기 입장, 오류·끊김·접속 실패·강제 종료 0, Ping 평균 < 50 ms, 메모리 증가 < 20%이면 정상이고, 벗어난 정도에 따라 주의·문제입니다.
+- 틱 시간 분위수는 히스토그램 버킷 사이를 보간한 추정값입니다.
+- 봇과 서버가 같은 PC에서 돌기 때문에, 봇 수가 많으면 봇 클라이언트가 먼저 CPU를 차지해 결과가 나빠질 수 있습니다.
+
 ## Google Cloud (`infra/pulumi/`)
 
 TypeScript Pulumi 프로젝트입니다. Artifact Registry 저장소, 이미지 읽기 권한을 가진 서비스 계정, 고정 IP, 방화벽(게임 8800은 전체, Grafana 3000·Prometheus 9090은 `adminCidr`만), Debian 12 VM 한 대를 만듭니다. VM 시작 스크립트가 Docker를 설치하고, 메타데이터로 받은 `infra/`의 compose·Prometheus·Grafana 파일을 쓴 뒤, 게임 서버 이미지를 Artifact Registry에서 받아 `docker compose up -d --no-build`로 띄웁니다. 방을 한 프로세스 메모리에 두고 WebSocket을 오래 유지하는 서버라 자동으로 인스턴스를 늘리는 서비스 대신 VM을 씁니다.

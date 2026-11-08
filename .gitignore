@@ -26,3 +26,4 @@ client/public/art/_candidates/
 tests/client/target/
 infra/pulumi/node_modules/
 infra/pulumi/bin/
+tests/reports/

@@ -182,6 +182,11 @@
 - 서버 `/metrics`(Prometheus): 틱 시간·FPS·초과, 연결·방·인원, `Match::ecs_stats`(엔티티·아키타입·테이블·컴포넌트), WebSocket 트래픽, Linux 프로세스 지표
 - `infra/`: 게임 서버 Docker 이미지, docker-compose(서버·Prometheus·Grafana·cAdvisor)와 대시보드, Google Cloud VM용 Pulumi(TypeScript)
 
+### 20. 부하 테스트 스킬
+- Claude Code 스킬 `/load-test`(`.claude/skills/load-test/`): N분 동안 봇 M명을 로컬 Docker 스택에 붙이고, Prometheus 지표로 `tests/reports/<실행>/report.md`를 만든 뒤 에이전트가 분석을 덧붙임. 원격 대상은 Pulumi 배포 전이라 막아 둠
+- 수집·리포트는 스크립트(`scripts/loadtest.mjs`)가 하고 에이전트는 분석만 씀. 같은 쿼리와 판정 기준으로 매번 같은 형식이 나와야 실행끼리 비교할 수 있기 때문
+- 봇 클라이언트가 킬 수를 `loadtest_kills_total`로도 내보냄
+
 ## 설계 결정
 
 | 결정 | 이유 |

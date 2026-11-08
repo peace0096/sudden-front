@@ -133,7 +133,7 @@ cd server; cargo fmt; cargo clippy --all-targets -- -D warnings
 cd tests\client; cargo run --release -- --count 50 --duration 300
 ```
 
-봇 클라이언트, 서버 `/metrics`, Docker Compose 모니터링, Pulumi는 [load-test.md](load-test.md)에 있습니다. 봇 클라이언트의 검사는 `tests/client/`에서 `cargo fmt`·`cargo clippy --all-targets -- -D warnings`·`cargo test --release`입니다.
+봇 클라이언트, 서버 `/metrics`, Docker Compose 모니터링, 부하 테스트 스킬(`/load-test`)과 리포트, Pulumi는 [load-test.md](load-test.md)에 있습니다. 봇 클라이언트의 검사는 `tests/client/`에서 `cargo fmt`·`cargo clippy --all-targets -- -D warnings`·`cargo test --release`입니다.
 
 ### 브라우저 e2e (Playwright)
 
